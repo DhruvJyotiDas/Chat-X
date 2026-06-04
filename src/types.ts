@@ -1,14 +1,82 @@
-/**
- * Types and interfaces for IB Connect dashboard application.
- */
+export type AppView = 'chats' | 'debrief' | 'active_meeting' | 'security' | 'support' | 'calls' | 'calendar';
 
-export type AppView = 'chats' | 'debrief' | 'active_meeting' | 'security' | 'support';
+export interface IBUser {
+  id: string;
+  username: string;
+  displayName: string;
+  email: string;
+  avatar?: string;
+  bio?: string;
+  status: 'online' | 'offline' | 'idle';
+  createdAt: string;
+}
 
+export interface RealChatMessage {
+  id: string;
+  threadId: string;
+  senderId: string;
+  senderName: string;
+  senderAvatar?: string;
+  text: string;
+  time: string;
+  timestamp: number;
+  isBold?: boolean;
+  fileAttachment?: {
+    name: string;
+    size: number;
+    type: string;
+    dataUrl?: string;
+  };
+}
+
+export interface RealChatThread {
+  id: string;
+  type: 'dm' | 'group';
+  name: string;
+  avatar?: string;
+  participants: string[];
+  lastMessage: string;
+  lastTimestamp: number;
+  unreadCount?: number;
+}
+
+export interface CalendarEvent {
+  id: string;
+  title: string;
+  date: string;
+  startTime: string;
+  endTime?: string;
+  description?: string;
+  color: string;
+  creatorId: string;
+}
+
+export interface CallRecord {
+  id: string;
+  type: 'incoming' | 'outgoing' | 'missed';
+  callType: 'video' | 'audio';
+  participantId: string;
+  participantName: string;
+  participantAvatar?: string;
+  duration?: string;
+  timestamp: number;
+  roomId?: string;
+}
+
+export interface ExtractedItem {
+  id: string;
+  type: 'meeting' | 'deadline' | 'action' | 'reminder' | 'decision';
+  text: string;
+  time?: string;
+  confidence: number;
+}
+
+// Legacy types for meeting/debrief/security/support views
 export interface Participant {
   id: string;
   name: string;
   avatar: string;
-  status?: string; // e.g., 'Confident', 'Low Light', 'Speaking', 'Muted'
+  status?: string;
   isSpeaking?: boolean;
   isMuted?: boolean;
   videoSrc?: string;
@@ -29,7 +97,7 @@ export interface ActionItem {
 
 export interface ChatMessage {
   id: string;
-  sender: 'user' | 'sarah' | 'marcus' | 'system';
+  sender: string;
   senderName: string;
   avatar?: string;
   time: string;
