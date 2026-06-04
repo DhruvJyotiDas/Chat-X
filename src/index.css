@@ -1,0 +1,203 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;700&display=swap');
+@import "tailwindcss";
+
+@theme {
+  --color-primary: #0066FF;
+  --color-on-primary: #ffffff;
+  --color-primary-container: #0044cc;
+  --color-on-primary-container: #ffffff;
+  --color-surface-dim: #050505;
+  --color-surface-bright: #1d1d1d;
+  --color-surface-container-lowest: #040404;
+  --color-surface-container-low: #0c0c0c;
+  --color-surface-container: #121212;
+  --color-surface-container-high: #1a1a1a;
+  --color-surface-container-highest: #242424;
+  --color-on-surface: #ffffff;
+  --color-on-surface-variant: #aaaaaa;
+  --color-inverse-surface: #ffffff;
+  --color-inverse-on-surface: #0e0e0e;
+  --color-outline: rgba(255, 255, 255, 0.15);
+  --color-outline-variant: rgba(255, 255, 255, 0.08);
+  --color-surface-tint: #0066FF;
+  
+  --color-secondary: #00FF41;
+  --color-on-secondary: #000000;
+  --color-secondary-container: rgba(0, 255, 65, 0.1);
+  --color-on-secondary-container: #00FF41;
+  
+  --color-tertiary: #c0c1ff;
+  --color-on-tertiary: #1000a9;
+  --color-tertiary-container: #8083ff;
+  --color-on-tertiary-container: #0d0096;
+  
+  --color-error: #ffb4ab;
+  --color-on-error: #690005;
+  --color-error-container: #93000a;
+  --color-on-error-container: #ffdad6;
+  
+  --color-background: #080808;
+  --color-on-background: #ffffff;
+  --color-surface-variant: #1a1a1a;
+
+  --font-sans: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, monospace;
+}
+
+@layer utilities {
+  .scrollbar-hide::-webkit-scrollbar {
+    display: none;
+  }
+  .scrollbar-hide {
+    -ms-overflow-style: none;
+    scrollbar-width: none;
+  }
+}
+
+.material-symbols-outlined {
+  font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 24;
+}
+.material-symbols-outlined.fill {
+  font-variation-settings: 'FILL' 1, 'wght' 400, 'GRAD' 0, 'opsz' 24;
+}
+
+/* Glass panel background representing the bento cards */
+.glass-panel {
+  background: rgba(18, 18, 18, 0.8) !important;
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  border: 1px solid rgba(255, 255, 255, 0.08) !important;
+  border-radius: 24px !important;
+}
+
+/* Base body styles */
+body {
+  background-color: #080808;
+  color: #ffffff;
+  font-family: var(--font-sans);
+}
+
+/* Bento Grid System-Wide Color Mapping Strategy */
+
+/* 1. Global background overrides */
+body,
+.bg-\[\#131313\],
+.bg-background {
+  background-color: #080808 !important;
+}
+
+/* Sidebar and inner lists backgrounds should be dark and sleek */
+.bg-\[\#0e0e0e\],
+.bg-\[\#131313\/85\] {
+  background-color: #080808 !important;
+}
+
+/* 2. Premium Bento Card containers */
+.bg-\[\#1c1b1b\],
+.bg-\[\#201f1f\],
+.bg-surface-container,
+.bg-\[\#1c1b1b\/30\],
+.bg-\[\#1c1b1b\/50\],
+.bg-\[\#1c1b1b\/95\],
+.bg-\[\#1c1b1b\/55\] {
+  background: #121212 !important;
+  background-image: linear-gradient(135deg, #1A1A1A 0%, #0D0D0D 100%) !important;
+  border-color: rgba(255, 255, 255, 0.08) !important;
+}
+
+/* Active call screens / support blocks */
+.bg-\[\#2a2a2a\],
+.bg-\[\#131313\/55\] {
+  background-color: #121212 !important;
+  border-color: rgba(255, 255, 255, 0.08) !important;
+}
+
+/* 3. High-precision separation borders */
+.border-\[\#424655\],
+.border-outline-variant,
+.border-t-\[\#424655\/30\],
+.border-b-\[\#424655\],
+.border-b-\[\#424655\/40\],
+.border-b-\[\#424655\/50\],
+.border-r-\[\#424655\],
+.border-l-\[\#424655\],
+.border-\[\#424655\/60\],
+.border-\[\#424655\/50\],
+.border-\[\#424655\/30\] {
+  border-color: rgba(255, 255, 255, 0.08) !important;
+}
+
+/* 4. Increase rounded corners to Bento standard 24px */
+.rounded-2xl,
+.rounded-xl {
+  border-radius: 24px !important;
+}
+
+/* 5. Core Bento Accent Color overrides (Primary Blue: #0066FF) */
+.bg-\[\#568dff\],
+.bg-primary {
+  background-color: #0066FF !important;
+  color: #ffffff !important;
+}
+
+.text-\[\#b0c6ff\],
+.text-\[\#568dff\],
+.text-primary,
+.hover\:text-\[\#b0c6ff\]:hover {
+  color: #0066FF !important;
+}
+
+.bg-\[\#568dff\/10\],
+.bg-\[\#568dff\/20\],
+.bg-\[\#568dff\/15\],
+.bg-\[\#c0c1ff\/5\] {
+  background-color: rgba(0, 102, 255, 0.12) !important;
+  border-color: rgba(0, 102, 255, 0.25) !important;
+}
+
+/* 6. Live Status and Success Tones (Bright cyber green: #00FF41) */
+.bg-\[\#00e296\],
+.bg-\[\#00e598\],
+.bg-\[\#4dffb1\] {
+  background-color: #00FF41 !important;
+}
+
+.text-\[\#70ffba\],
+.text-\[\#00e296\] {
+  color: #00FF41 !important;
+}
+
+.bg-\[\#00e598\/10\] {
+  background-color: rgba(0, 255, 65, 0.08) !important;
+  color: #00FF41 !important;
+}
+
+.border-\[\#00e296\/30\],
+.border-\[\#00e296\/20\] {
+  border-color: rgba(0, 255, 65, 0.25) !important;
+}
+
+/* 7. Tags & Accent glowing elements */
+.tag,
+.bento-tag {
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  background-color: rgba(255, 255, 255, 0.05) !important;
+  padding: 4px 10px !important;
+  border-radius: 6px !important;
+  color: #999999 !important;
+  border: 1px solid rgba(255, 255, 255, 0.05);
+}
+
+.accent-glow {
+  position: absolute;
+  top: -50%;
+  left: -50%;
+  width: 200%;
+  height: 200%;
+  background: radial-gradient(circle at center, rgba(0, 102, 255, 0.1) 0%, transparent 70%);
+  pointer-events: none;
+}
+

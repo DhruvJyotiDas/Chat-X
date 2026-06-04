@@ -1,0 +1,6 @@
+{
+  "name": "IB Connect",
+  "description": "Intelligent enterprise sync hub featuring live call grids, secure chat threads, completed meeting debrief checklists, GDPR Swiss enclaves sovereignty toggles, and help guides.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
