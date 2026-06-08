@@ -43,6 +43,7 @@ function AppContent({ pendingRoomCode }: { pendingRoomCode?: string }) {
     if (isInMeeting) setCurrentView('active_meeting');
   }, [isInMeeting]);
 
+  // If a room code came from the URL, go to the meetings view after login
   useEffect(() => {
     if (currentUser && autoJoinCode) {
       setCurrentView('debrief');
@@ -77,14 +78,16 @@ function AppContent({ pendingRoomCode }: { pendingRoomCode?: string }) {
 
   const handleClearLogs = () => setLogs([]);
 
+  // Always snap back to the active meeting when isInMeeting is true.
+  // This handles the case where the user navigates away via the sidebar
+  // while still inside a WebRTC room.
   const effectiveView: AppView = isInMeeting ? 'active_meeting' : currentView;
 
   return (
-    <div className="min-h-screen text-[#e5e2e1] bg-[#0e0e0e] flex font-sans overflow-hidden w-full max-w-full">
+    <div className="min-h-screen text-[#e5e2e1] bg-[#0e0e0e] flex font-sans overflow-hidden">
       <Sidebar currentView={effectiveView} onViewChange={setCurrentView} isInMeeting={isInMeeting} />
 
-      {/* FIXED: pl-0 on mobile, pl-[72px] on desktop */}
-      <div className="flex-1 pl-0 md:pl-[72px] flex flex-col h-screen overflow-hidden w-full">
+      <div className="flex-1 pl-[72px] flex flex-col h-screen overflow-hidden">
         {effectiveView !== 'active_meeting' && (
           <TopBar
             currentView={effectiveView}
@@ -157,10 +160,13 @@ export default function App() {
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     const urlToken = params.get('token');
-
+    
     if (urlToken) {
       console.log("SSO: Processing new token from URL...");
+      
+      // CRITICAL FIX: Save using the exact key AuthContext expects
       localStorage.setItem('ibconnect_jwt', urlToken);
+      
       fetch(`/api/auth/me?token=${urlToken}`)
         .then(res => res.json())
         .then(user => {

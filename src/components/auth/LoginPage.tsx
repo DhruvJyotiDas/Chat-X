@@ -1,8 +1,8 @@
 import React, { useState, useRef } from 'react';
-import { Hexagon, Eye, EyeOff, User, Mail, Lock, Camera } from 'lucide-react';
+import { Hexagon, Eye, EyeOff, User, Mail, Lock, Camera, Building } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
 
-export default function LoginPage() {
+export default function LoginPage({ pendingJoinCode }: { pendingJoinCode?: string }) {
   const { login, signup } = useAuth();
   const [mode, setMode] = useState<'login' | 'signup'>('login');
   const [email, setEmail] = useState('');
@@ -60,6 +60,11 @@ export default function LoginPage() {
           </div>
           <h1 className="text-2xl font-bold text-[#e5e2e1]">IB Connect</h1>
           <p className="text-sm text-[#8c90a1] mt-1">Secure Enterprise Communication</p>
+          {pendingJoinCode && (
+            <div className="mt-3 px-3 py-2 rounded-lg bg-[#568dff]/10 border border-[#568dff]/30 text-xs text-[#b0c6ff] text-center">
+              Sign in to join meeting <span className="font-mono font-bold">{pendingJoinCode}</span>
+            </div>
+          )}
         </div>
 
         {/* Card */}
@@ -176,10 +181,26 @@ export default function LoginPage() {
             </button>
           </form>
 
+          {/* BEAUTIFIED ENTERPRISE SSO BUTTON */}
+          <div className="mt-8 pt-6 border-t border-[#424655]/50 flex flex-col items-center">
+            <p className="text-center text-[10px] text-[#8c90a1] uppercase font-bold tracking-widest mb-4">
+              Enterprise Access
+            </p>
+            <button
+              type="button"
+              onClick={() => window.location.href = 'https://icebrkr.space'}
+              className="group relative w-full flex items-center justify-center gap-3 bg-gradient-to-r from-[#1a1c23] to-[#131313] text-[#b0c6ff] border border-[#568dff]/20 font-bold py-3.5 rounded-xl hover:border-[#568dff]/60 hover:shadow-[0_0_20px_rgba(86,141,255,0.15)] transition-all overflow-hidden"
+            >
+              <div className="absolute inset-0 bg-[#568dff]/5 group-hover:bg-[#568dff]/10 transition-colors" />
+              <Building className="w-5 h-5 z-10 text-[#568dff] group-hover:scale-110 transition-transform" />
+              <span className="z-10 tracking-wide">Sign in via IB Connect</span>
+            </button>
+          </div>
+
           {mode === 'login' && (
-            <p className="text-center text-xs text-[#8c90a1] mt-4">
+            <p className="text-center text-xs text-[#8c90a1] mt-5">
               Don't have an account?{' '}
-              <button onClick={() => { setMode('signup'); setError(''); }} className="text-[#b0c6ff] hover:text-[#568dff] font-semibold">
+              <button onClick={() => { setMode('signup'); setError(''); }} className="text-[#b0c6ff] hover:text-[#568dff] font-semibold transition-colors">
                 Create one
               </button>
             </p>

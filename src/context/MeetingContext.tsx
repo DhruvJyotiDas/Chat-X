@@ -1,77 +1,25 @@
-import React, {
-  createContext,
-  useCallback,
-  useContext,
-  useRef,
-  useState,
-} from 'react';
+import React, { createContext, useCallback, useContext, useEffect, useRef, useState } from 'react';
 import { SignalingSocket } from '../lib/signalingSocket';
 import { useWebRTC, PeerInfo } from '../hooks/useWebRTC';
+import { api } from '../lib/api';
 
-// ---- User ----
-
-export interface AppUser {
-  id: string;
-  name: string;
-  isGuest: boolean;
-}
-
-function getOrCreateUserId(): string {
-  let id = sessionStorage.getItem('ibconnect_user_id');
-  if (!id) {
-    id = `user-${Math.random().toString(36).slice(2, 10)}`;
-    sessionStorage.setItem('ibconnect_user_id', id);
-  }
-  return id;
-}
-
-function getStoredName(): string | null {
-  return sessionStorage.getItem('ibconnect_user_name');
-}
-
-// ---- Chat ----
-
-export interface LiveChatMessage {
-  id: string;
-  fromId: string;
-  fromName: string;
-  text: string;
-  time: string;
-  isSelf: boolean;
-}
-
-// ---- Scheduled Meeting ----
-
-export interface ScheduledMeeting {
-  id: string;
-  title: string;
-  date: string;
-  time: string;
-  code: string;
-}
-
-// ---- Context shape ----
+export interface AppUser { id: string; name: string; isGuest: boolean; }
+export interface LiveChatMessage { id: string; fromId: string; fromName: string; text: string; time: string; isSelf: boolean; }
+export interface ScheduledMeeting { id: string; title: string; date: string; time: string; code: string; }
 
 interface MeetingContextType {
-  // User
   user: AppUser;
   setUserName: (name: string, isGuest?: boolean) => void;
-
-  // Meeting state
   isInMeeting: boolean;
   roomId: string | null;
   isHost: boolean;
-
-  // Actions
-  createMeeting: () => Promise<void>;
-  joinMeeting: (code: string) => Promise<void>;
+  createMeeting: (customCode?: string, title?: string) => Promise<string>;
+  joinMeeting: (code: string, title?: string) => Promise<string>;
   leaveMeeting: () => void;
-
-  // Scheduling
   scheduledMeetings: ScheduledMeeting[];
-  scheduleMeeting: (title: string, date: string, time: string) => string;
-
-  // WebRTC
+  refreshScheduledMeetings: () => Promise<void>;
+  scheduleMeeting: (title: string, date: string, time: string, invitedUsers?: string[]) => Promise<string>;
+  deleteScheduledMeeting: (id: string) => Promise<void>;
   localStream: MediaStream | null;
   peers: PeerInfo[];
   isMuted: boolean;
@@ -80,51 +28,36 @@ interface MeetingContextType {
   toggleMic: () => void;
   toggleCamera: () => void;
   toggleScreenShare: () => Promise<void>;
-
-  // In-meeting chat
   chatMessages: LiveChatMessage[];
   sendChatMessage: (text: string) => void;
-
-  // Guest modal
   showGuestModal: boolean;
   pendingJoinCode: string | null;
   setPendingAction: (code: string | null) => void;
   dismissGuestModal: () => void;
-
-  // Error
   meetingError: string | null;
   clearMeetingError: () => void;
 }
 
 const MeetingContext = createContext<MeetingContextType | null>(null);
 
-// Use Vite proxy path '/ws' so it works both in dev (proxied) and when deployed
-const WS_URL =
-  import.meta.env.VITE_WS_URL ??
-  (typeof window !== 'undefined'
-    ? `${window.location.protocol === 'https:' ? 'wss' : 'ws'}://${window.location.host}/ws`
-    : 'ws://localhost:3000/ws');
+const WS_URL = import.meta.env.VITE_WS_URL ?? (typeof window !== 'undefined' ? `${window.location.protocol === 'https:' ? 'wss' : 'ws'}://${window.location.host}/ws` : 'ws://localhost:3000/ws');
+
+function getOrCreateUserId(): string {
+  let id = sessionStorage.getItem('ibconnect_user_id');
+  if (!id) { id = `user-${Math.random().toString(36).slice(2, 10)}`; sessionStorage.setItem('ibconnect_user_id', id); }
+  return id;
+}
 
 export function MeetingProvider({ children }: { children: React.ReactNode }) {
   const socketRef = useRef<SignalingSocket | null>(null);
   const [socketInstance, setSocketInstance] = useState<SignalingSocket | null>(null);
 
   const [user, setUser] = useState<AppUser>(() => {
-    // Read from the auth system if available
     try {
-      const session = JSON.parse(localStorage.getItem('ibconnect_session') || 'null');
-      if (session?.userId) {
-        const users = JSON.parse(localStorage.getItem('ibconnect_users') || '[]');
-        const authUser = users.find((u: { id: string; displayName: string }) => u.id === session.userId);
-        if (authUser) return { id: authUser.id, name: authUser.displayName, isGuest: false };
-      }
+      const me = localStorage.getItem('ibconnect_me');
+      if (me) { const parsed = JSON.parse(me); return { id: parsed.id, name: parsed.displayName, isGuest: false }; }
     } catch {}
-    const storedName = getStoredName();
-    return {
-      id: getOrCreateUserId(),
-      name: storedName ?? 'Guest',
-      isGuest: true,
-    };
+    return { id: getOrCreateUserId(), name: sessionStorage.getItem('ibconnect_user_name') ?? 'Guest', isGuest: true };
   });
 
   const [isInMeeting, setIsInMeeting] = useState(false);
@@ -132,9 +65,63 @@ export function MeetingProvider({ children }: { children: React.ReactNode }) {
   const [isHost, setIsHost] = useState(false);
   const [chatMessages, setChatMessages] = useState<LiveChatMessage[]>([]);
   const [scheduledMeetings, setScheduledMeetings] = useState<ScheduledMeeting[]>([]);
+  const [meetingError, setMeetingError] = useState<string | null>(null);
   const [showGuestModal, setShowGuestModal] = useState(false);
   const [pendingJoinCode, setPendingJoinCode] = useState<string | null>(null);
-  const [meetingError, setMeetingError] = useState<string | null>(null);
+
+  const userIdRef = useRef(user.id);
+  useEffect(() => { userIdRef.current = user.id; }, [user.id]);
+  const currentRecordIdRef = useRef<string | null>(null);
+
+  const refreshScheduledMeetings = useCallback(async () => {
+    try {
+      if (user.isGuest) return;
+      const data = await api.getScheduledMeetings();
+      setScheduledMeetings(data);
+    } catch (e) { console.error('Failed to load meetings', e); }
+  }, [user.isGuest]);
+
+  useEffect(() => { refreshScheduledMeetings(); }, [refreshScheduledMeetings]);
+
+  const scheduleMeeting = useCallback(async (title: string, date: string, time: string, invitedUsers: string[] = []): Promise<string> => {
+    try {
+      const newMeeting = await api.scheduleMeeting({ title, date, time, invitedUsers });
+      setScheduledMeetings(prev => [...prev, newMeeting]);
+      return newMeeting.code;
+    } catch (err: any) {
+      setMeetingError(err.message || 'Failed to schedule meeting');
+      throw err;
+    }
+  }, []);
+
+  const deleteScheduledMeeting = useCallback(async (id: string) => {
+    try {
+      await api.deleteScheduledMeeting(id);
+      setScheduledMeetings(prev => prev.filter(m => m.id !== id));
+    } catch (err) { setMeetingError('Failed to delete meeting'); }
+  }, []);
+
+  const saveMeetingRecord = useCallback((roomCode: string, isHostVal: boolean, title?: string) => {
+    const id = `mr-${Date.now()}`;
+    const key = `ibconnect_meeting_history_${userIdRef.current}`;
+    try {
+      const history = JSON.parse(localStorage.getItem(key) || '[]');
+      const record = { id, roomCode, title: title || roomCode, isHost: isHostVal, startedAt: new Date().toISOString(), participantCount: 1 };
+      localStorage.setItem(key, JSON.stringify([...history, record].slice(-50)));
+    } catch {}
+    currentRecordIdRef.current = id;
+  }, []);
+
+  const updateMeetingRecord = useCallback((participantCount: number) => {
+    if (!currentRecordIdRef.current) return;
+    const key = `ibconnect_meeting_history_${userIdRef.current}`;
+    try {
+      const history = JSON.parse(localStorage.getItem(key) || '[]');
+      const updated = history.map((r: any) => r.id === currentRecordIdRef.current ? { ...r, endedAt: new Date().toISOString(), participantCount } : r);
+      localStorage.setItem(key, JSON.stringify(updated));
+    } catch {}
+    currentRecordIdRef.current = null;
+  }, []);
 
   const webrtc = useWebRTC(socketInstance);
 
@@ -142,207 +129,112 @@ export function MeetingProvider({ children }: { children: React.ReactNode }) {
     const trimmed = name.trim() || 'Guest';
     sessionStorage.setItem('ibconnect_user_name', trimmed);
     setUser((prev) => ({ ...prev, name: trimmed, isGuest }));
-  }, []);
+    
+    // Auto-update peers in room without duplicating profile
+    if (isInMeeting) {
+        webrtc.registerPeerName(user.id, trimmed);
+    }
+  }, [isInMeeting, webrtc, user.id]);
 
   const connectSocket = useCallback(async (): Promise<SignalingSocket> => {
     if (socketRef.current?.isOpen) return socketRef.current;
-
     const s = new SignalingSocket(WS_URL);
-
-    // Wire chat relay
-    s.on('chat_message', (payload) => {
-      const p = payload as {
-        from_id: string;
-        from_name: string;
-        text: string;
-        time: string;
-      };
-      setChatMessages((prev) => [
-        ...prev,
-        {
-          id: `chat-${Date.now()}-${Math.random()}`,
-          fromId: p.from_id,
-          fromName: p.from_name,
-          text: p.text,
-          time: p.time,
-          isSelf: p.from_id === getOrCreateUserId(),
-        },
-      ]);
-    });
-
-    s.on('error', (payload) => {
-      const p = payload as { message: string };
-      setMeetingError(p.message);
-    });
-
+    s.on('chat_message', (p: any) => setChatMessages(prev => [...prev, { id: `chat-${Date.now()}-${Math.random()}`, fromId: p.from_id, fromName: p.from_name, text: p.text, time: p.time, isSelf: p.from_id === getOrCreateUserId() }]));
+    s.on('error', (p: any) => setMeetingError(p.message));
     await s.connect();
-    socketRef.current = s;
-    setSocketInstance(s);
-    return s;
+    socketRef.current = s; setSocketInstance(s); return s;
   }, []);
 
-  const createMeeting = useCallback(async () => {
-    // If no name is set (fresh guest), show modal first
-    if (!getStoredName() && user.name === 'David') {
-      // Default user — proceed directly
-    }
+  const getFreshName = () => {
+    let freshName = user.name;
+    try {
+      const meStr = localStorage.getItem('ibconnect_me');
+      if (meStr) { const meObj = JSON.parse(meStr); if (meObj.displayName) freshName = meObj.displayName; }
+    } catch (e) {}
+    return freshName;
+  };
 
+  const createMeeting = useCallback(async (customCode?: string, title?: string): Promise<string> => {
     try {
       setMeetingError(null);
       await webrtc.initMedia();
       const s = await connectSocket();
-
-      await new Promise<void>((resolve, reject) => {
-        const unsub = s.on('room_created', (payload) => {
-          const p = payload as { room_id: string };
-          unsub();
-          setRoomId(p.room_id);
-          setIsHost(true);
-          setIsInMeeting(true);
-          resolve();
+      return await new Promise<string>((resolve, reject) => {
+        const unsub = s.on('room_created', (p: any) => {
+          unsub(); setRoomId(p.room_id); setIsHost(true); setIsInMeeting(true);
+          saveMeetingRecord(p.room_id, true, title); resolve(p.room_id);
         });
-        s.on('error', (payload) => {
-          const p = payload as { message: string };
-          unsub();
-          reject(new Error(p.message));
-        });
-        s.send('create_room', { user_id: user.id, user_name: user.name });
+        const errUnsub = s.on('error', (p: any) => { errUnsub(); unsub(); reject(new Error(p.message)); });
+        s.send('create_room', { room_id: customCode, user_id: user.id, user_name: user.name, meeting_title: title });
       });
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : 'Failed to create meeting';
-      setMeetingError(msg);
-      throw err;
-    }
-  }, [user, webrtc, connectSocket]);
+    } catch (err: any) { setMeetingError(err.message || 'Failed to create meeting'); throw err; }
+  }, [user, webrtc, connectSocket, saveMeetingRecord]);
 
-  const joinMeeting = useCallback(
-    async (code: string) => {
-      const trimmedCode = code.trim().toUpperCase();
-      if (!trimmedCode) {
-        setMeetingError('Please enter a meeting code.');
-        return;
+  const joinMeeting = useCallback(async (code: string, knownTitle?: string): Promise<string> => {
+    const trimmedCode = code.trim().toUpperCase();
+    if (!trimmedCode) throw new Error('No code');
+    try {
+      setMeetingError(null);
+      if (trimmedCode.startsWith('SCHED-') && !user.isGuest) {
+        try { await api.validateRoomCode(trimmedCode); }
+        catch (e) { throw new Error('Meeting code is invalid, deleted, or has not started yet.'); }
       }
-
-      try {
-        setMeetingError(null);
-        await webrtc.initMedia();
-        const s = await connectSocket();
-
-        await new Promise<void>((resolve, reject) => {
-          const unsub = s.on('room_joined', (payload) => {
-            const p = payload as {
-              room_id: string;
-              peers: Array<{ id: string; name: string }>;
-            };
-            unsub();
-            setRoomId(p.room_id);
-            setIsHost(false);
-            setIsInMeeting(true);
-
-            // Create offers to all existing peers
-            p.peers.forEach((peer) => {
-              webrtc.createOfferFor(peer.id);
-            });
-            resolve();
-          });
-
-          const errUnsub = s.on('error', (payload) => {
-            const ep = payload as { message: string };
-            errUnsub();
-            unsub();
-            reject(new Error(ep.message));
-          });
-
-          s.send('join_room', {
-            room_id: trimmedCode,
-            user_id: user.id,
-            user_name: user.name,
-          });
+      await webrtc.initMedia();
+      const s = await connectSocket();
+      return await new Promise<string>((resolve, reject) => {
+        const unsub = s.on('room_joined', (p: any) => {
+          unsub(); setRoomId(p.room_id); setIsHost(false); setIsInMeeting(true);
+          const resolvedTitle = knownTitle || scheduledMeetings.find(m => m.code === trimmedCode)?.title;
+          saveMeetingRecord(trimmedCode, false, resolvedTitle);
+          p.peers.forEach((peer: any) => { webrtc.registerPeerName(peer.id, peer.name); webrtc.createOfferFor(peer.id); });
+          resolve(trimmedCode);
         });
-      } catch (err) {
-        const msg = err instanceof Error ? err.message : 'Failed to join meeting';
-        setMeetingError(msg);
-        throw err;
+        const errUnsub = s.on('error', (p: any) => { errUnsub(); unsub(); reject(new Error(p.message)); });
+        s.send('join_room', { room_id: trimmedCode, user_id: user.id, user_name: user.name });
+      });
+    } catch (err: any) {
+      const ownedMeeting = scheduledMeetings.find(m => m.code === trimmedCode);
+      if (err.message.includes('Room not found') && ownedMeeting) {
+        return await createMeeting(trimmedCode, ownedMeeting.title);
       }
-    },
-    [user, webrtc, connectSocket]
-  );
+      setMeetingError(err.message || 'Failed to join meeting'); throw err;
+    }
+  }, [user, webrtc, connectSocket, saveMeetingRecord, createMeeting, scheduledMeetings]);
 
   const leaveMeeting = useCallback(() => {
-    socketRef.current?.send('leave_room', {});
-    socketRef.current?.disconnect();
-    socketRef.current = null;
-    setSocketInstance(null);
-    webrtc.cleanup();
-    setIsInMeeting(false);
-    setRoomId(null);
-    setIsHost(false);
-    setChatMessages([]);
-  }, [webrtc]);
+    updateMeetingRecord(webrtc.peers.length + 1);
+    socketRef.current?.send('leave_room', {}); socketRef.current?.disconnect();
+    socketRef.current = null; setSocketInstance(null); webrtc.cleanup();
+    setIsInMeeting(false); setRoomId(null); setIsHost(false); setChatMessages([]);
+  }, [webrtc, updateMeetingRecord]);
 
-  const sendChatMessage = useCallback(
-    (text: string) => {
-      if (!socketRef.current?.isOpen || !text.trim()) return;
-      socketRef.current.send('chat_message', { text: text.trim() });
-    },
-    []
-  );
+  const sendChatMessage = useCallback((text: string) => { 
+    if (socketRef.current?.isOpen && text.trim()) {
+      const localMsg: LiveChatMessage = {
+        id: `chat-local-${Date.now()}`,
+        fromId: getOrCreateUserId(),
+        fromName: user.name,
+        text: text.trim(),
+        time: new Date().toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' }),
+        isSelf: true
+      };
+      setChatMessages(prev => [...prev, localMsg]);
+      socketRef.current.send('chat_message', { text: text.trim() }); 
+    }
+  }, [user.name]);
 
-  const scheduleMeeting = useCallback(
-    (title: string, date: string, time: string): string => {
-      const code = `SCHED-${Math.random().toString(36).slice(2, 6).toUpperCase()}`;
-      setScheduledMeetings((prev) => [
-        ...prev,
-        { id: `sm-${Date.now()}`, title, date, time, code },
-      ]);
-      return code;
-    },
-    []
-  );
-
-  const setPendingAction = useCallback((code: string | null) => {
-    setPendingJoinCode(code);
-    setShowGuestModal(true);
-  }, []);
-
-  const dismissGuestModal = useCallback(() => {
-    setShowGuestModal(false);
-    setPendingJoinCode(null);
-  }, []);
-
+  const setPendingAction = useCallback((code: string | null) => { setPendingJoinCode(code); setShowGuestModal(true); }, []);
+  const dismissGuestModal = useCallback(() => { setShowGuestModal(false); setPendingJoinCode(null); }, []);
   const clearMeetingError = useCallback(() => setMeetingError(null), []);
 
   return (
-    <MeetingContext.Provider
-      value={{
-        user,
-        setUserName,
-        isInMeeting,
-        roomId,
-        isHost,
-        createMeeting,
-        joinMeeting,
-        leaveMeeting,
-        scheduledMeetings,
-        scheduleMeeting,
-        localStream: webrtc.localStream,
-        peers: webrtc.peers,
-        isMuted: webrtc.isMuted,
-        isVideoOff: webrtc.isVideoOff,
-        isScreenSharing: webrtc.isScreenSharing,
-        toggleMic: webrtc.toggleMic,
-        toggleCamera: webrtc.toggleCamera,
-        toggleScreenShare: webrtc.toggleScreenShare,
-        chatMessages,
-        sendChatMessage,
-        showGuestModal,
-        pendingJoinCode,
-        setPendingAction,
-        dismissGuestModal,
-        meetingError,
-        clearMeetingError,
-      }}
-    >
+    <MeetingContext.Provider value={{
+      user, setUserName, isInMeeting, roomId, isHost, createMeeting, joinMeeting, leaveMeeting,
+      scheduledMeetings, refreshScheduledMeetings, scheduleMeeting, deleteScheduledMeeting,
+      localStream: webrtc.localStream, peers: webrtc.peers, isMuted: webrtc.isMuted, isVideoOff: webrtc.isVideoOff, isScreenSharing: webrtc.isScreenSharing,
+      toggleMic: webrtc.toggleMic, toggleCamera: webrtc.toggleCamera, toggleScreenShare: webrtc.toggleScreenShare,
+      chatMessages, sendChatMessage, showGuestModal, pendingJoinCode, setPendingAction, dismissGuestModal, meetingError, clearMeetingError
+    }}>
       {children}
     </MeetingContext.Provider>
   );

@@ -1,5 +1,6 @@
 import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
 import { IBUser } from '../types';
+import { api, ApiUser } from '../lib/api';
 
 interface AuthContextType {
   currentUser: IBUser | null;
@@ -9,29 +10,27 @@ interface AuthContextType {
   signup: (username: string, displayName: string, email: string, password: string, avatar?: string) => Promise<IBUser>;
   logout: () => void;
   updateUser: (updates: Partial<IBUser>) => void;
+  updateProfile: (fields: { displayName?: string; bio?: string; avatar?: string }) => Promise<IBUser>;
   getUserById: (id: string) => IBUser | undefined;
 }
 
 const AuthContext = createContext<AuthContextType | null>(null);
 
-const USERS_KEY = 'ibconnect_users';
-const SESSION_KEY = 'ibconnect_session';
-const PASSWORDS_KEY = 'ibconnect_passwords';
+const JWT_KEY = 'ibconnect_jwt';
+const USER_KEY = 'ibconnect_me';
 
-function loadUsers(): IBUser[] {
-  try { return JSON.parse(localStorage.getItem(USERS_KEY) || '[]'); } catch { return []; }
+function toIBUser(u: ApiUser): IBUser {
+  return { ...u, status: (u.status as IBUser['status']) ?? 'offline' };
 }
-function saveUsers(users: IBUser[]) {
-  localStorage.setItem(USERS_KEY, JSON.stringify(users));
-  // Broadcast user list update
-  try {
-    const ch = new BroadcastChannel('ibconnect_realtime');
-    ch.postMessage({ type: 'users_updated', users });
-    ch.close();
-  } catch {}
+
+function saveSession(token: string, user: ApiUser) {
+  localStorage.setItem(JWT_KEY, token);
+  localStorage.setItem(USER_KEY, JSON.stringify(user));
 }
-function loadPasswords(): Record<string, string> {
-  try { return JSON.parse(localStorage.getItem(PASSWORDS_KEY) || '{}'); } catch { return {}; }
+
+function clearSession() {
+  localStorage.removeItem(JWT_KEY);
+  localStorage.removeItem(USER_KEY);
 }
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
@@ -39,128 +38,94 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [allUsers, setAllUsers] = useState<IBUser[]>([]);
   const [isLoading, setIsLoading] = useState(true);
 
-  // Listen for user list updates from other tabs
+  // On mount: restore session from stored JWT
   useEffect(() => {
-    let ch: BroadcastChannel | null = null;
-    try {
-      ch = new BroadcastChannel('ibconnect_realtime');
-      ch.onmessage = (e) => {
-        if (e.data?.type === 'users_updated') {
-          setAllUsers(e.data.users);
-          // Update current user status if changed
-          if (currentUser) {
-            const updated = e.data.users.find((u: IBUser) => u.id === currentUser.id);
-            if (updated) setCurrentUser(updated);
-          }
-        }
-      };
-    } catch {}
-    return () => ch?.close();
-  }, [currentUser]);
+    const jwt = localStorage.getItem(JWT_KEY);
+    const cached = localStorage.getItem(USER_KEY);
+    if (!jwt) { setIsLoading(false); return; }
 
-  useEffect(() => {
-    const users = loadUsers();
-    setAllUsers(users);
-
-    const sessionStr = localStorage.getItem(SESSION_KEY);
-    if (sessionStr) {
-      try {
-        const session = JSON.parse(sessionStr);
-        const user = users.find(u => u.id === session.userId);
-        if (user) {
-          const online = { ...user, status: 'online' as const };
-          setCurrentUser(online);
-          // Persist online status
-          const updated = users.map(u => u.id === user.id ? online : u);
-          saveUsers(updated);
-          setAllUsers(updated);
-        }
-      } catch {}
+    // Optimistically load cached user while verifying token
+    if (cached) {
+      try { setCurrentUser(toIBUser(JSON.parse(cached) as ApiUser)); } catch {}
     }
-    setIsLoading(false);
+
+    api.me()
+      .then(u => {
+        setCurrentUser(toIBUser(u));
+        localStorage.setItem(USER_KEY, JSON.stringify(u));
+        // Also fetch full user list
+        return api.getUsers();
+      })
+      .then(users => setAllUsers(users.map(toIBUser)))
+      .catch(() => {
+        // Token expired or invalid
+        clearSession();
+        setCurrentUser(null);
+      })
+      .finally(() => setIsLoading(false));
   }, []);
 
   const signup = useCallback(async (
-    username: string,
-    displayName: string,
-    email: string,
-    password: string,
-    avatar?: string
+    username: string, displayName: string, email: string, password: string, avatar?: string,
   ): Promise<IBUser> => {
-    const users = loadUsers();
-    if (users.find(u => u.email === email.toLowerCase())) throw new Error('Email already registered');
-    if (users.find(u => u.username.toLowerCase() === username.toLowerCase())) throw new Error('Username already taken');
-
-    const newUser: IBUser = {
-      id: `user-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-      username: username.toLowerCase(),
-      displayName: displayName.trim(),
-      email: email.toLowerCase(),
-      avatar,
-      status: 'online',
-      createdAt: new Date().toISOString(),
-    };
-
-    const passwords = loadPasswords();
-    passwords[newUser.id] = password;
-    localStorage.setItem(PASSWORDS_KEY, JSON.stringify(passwords));
-
-    const updatedUsers = [...users, newUser];
-    saveUsers(updatedUsers);
-    setAllUsers(updatedUsers);
-
-    // Set cookie-style persistent session
-    document.cookie = `ibconnect_session=${newUser.id}; max-age=2592000; path=/; SameSite=Strict`;
-    localStorage.setItem(SESSION_KEY, JSON.stringify({ userId: newUser.id }));
-    setCurrentUser(newUser);
-    return newUser;
+    const { token, user } = await api.signup(username, displayName, email, password, avatar);
+    saveSession(token, user);
+    const ibUser = toIBUser(user);
+    setCurrentUser(ibUser);
+    // Refresh user list
+    api.getUsers().then(users => setAllUsers(users.map(toIBUser))).catch(() => {});
+    return ibUser;
   }, []);
 
   const login = useCallback(async (email: string, password: string): Promise<IBUser> => {
-    const users = loadUsers();
-    const user = users.find(u => u.email === email.toLowerCase());
-    if (!user) throw new Error('No account found with this email');
-
-    const passwords = loadPasswords();
-    if (passwords[user.id] !== password) throw new Error('Incorrect password');
-
-    const online = { ...user, status: 'online' as const };
-    const updated = users.map(u => u.id === user.id ? online : u);
-    saveUsers(updated);
-    setAllUsers(updated);
-
-    document.cookie = `ibconnect_session=${user.id}; max-age=2592000; path=/; SameSite=Strict`;
-    localStorage.setItem(SESSION_KEY, JSON.stringify({ userId: user.id }));
-    setCurrentUser(online);
-    return online;
+    const { token, user } = await api.login(email, password);
+    saveSession(token, user);
+    const ibUser = toIBUser(user);
+    setCurrentUser(ibUser);
+    api.getUsers().then(users => setAllUsers(users.map(toIBUser))).catch(() => {});
+    return ibUser;
   }, []);
 
   const logout = useCallback(() => {
-    if (currentUser) {
-      const users = loadUsers();
-      const updated = users.map(u => u.id === currentUser.id ? { ...u, status: 'offline' as const } : u);
-      saveUsers(updated);
-    }
-    document.cookie = 'ibconnect_session=; max-age=0; path=/';
-    localStorage.removeItem(SESSION_KEY);
+    clearSession();
     setCurrentUser(null);
-  }, [currentUser]);
-
-  const updateUser = useCallback((updates: Partial<IBUser>) => {
-    if (!currentUser) return;
-    const users = loadUsers();
-    const updated = users.map(u => u.id === currentUser.id ? { ...u, ...updates } : u);
-    saveUsers(updated);
-    setAllUsers(updated);
-    setCurrentUser(prev => prev ? { ...prev, ...updates } : null);
-  }, [currentUser]);
-
-  const getUserById = useCallback((id: string) => {
-    return loadUsers().find(u => u.id === id);
+    setAllUsers([]);
   }, []);
 
+  const updateProfile = useCallback(async (fields: { displayName?: string; bio?: string; avatar?: string }): Promise<IBUser> => {
+    const updated = await api.updateProfile(fields);
+    const ibUser = toIBUser(updated);
+    setCurrentUser(ibUser);
+    localStorage.setItem(USER_KEY, JSON.stringify(updated));
+    setAllUsers(prev => prev.map(u => u.id === ibUser.id ? ibUser : u));
+    return ibUser;
+  }, []);
+
+  const updateUser = useCallback((updates: Partial<IBUser>) => {
+    setCurrentUser(prev => {
+      if (!prev) return null;
+      const updated = { ...prev, ...updates };
+      localStorage.setItem(USER_KEY, JSON.stringify(updated));
+      return updated;
+    });
+  }, []);
+
+  // getUserById: checks allUsers first, then fetches from API
+  const getUserById = useCallback((id: string): IBUser | undefined => {
+    return allUsers.find(u => u.id === id);
+  }, [allUsers]);
+
+  // Update allUsers list when status events arrive via ChatContext (forwarded externally)
+  const updateUserStatus = useCallback((userId: string, status: string) => {
+    setAllUsers(prev => prev.map(u => u.id === userId ? { ...u, status: status as IBUser['status'] } : u));
+    setCurrentUser(prev => prev?.id === userId ? { ...prev, status: status as IBUser['status'] } : prev);
+  }, []);
+
+  // Expose updateUserStatus on the context via a ref so ChatContext can call it
+  (AuthProvider as unknown as { _updateStatus?: typeof updateUserStatus })._updateStatus = updateUserStatus;
+
   return (
-    <AuthContext.Provider value={{ currentUser, allUsers, isLoading, login, signup, logout, updateUser, getUserById }}>
+    <AuthContext.Provider value={{ currentUser, allUsers, isLoading, login, signup, logout, updateUser, updateProfile, getUserById }}>
       {children}
     </AuthContext.Provider>
   );
@@ -172,12 +137,6 @@ export function useAuth() {
   return ctx;
 }
 
-// Helper for other contexts to read current user without hook
-export function getAuthUser(): IBUser | null {
-  try {
-    const session = JSON.parse(localStorage.getItem(SESSION_KEY) || 'null');
-    if (!session?.userId) return null;
-    const users: IBUser[] = JSON.parse(localStorage.getItem(USERS_KEY) || '[]');
-    return users.find(u => u.id === session.userId) || null;
-  } catch { return null; }
+export function getStoredJWT(): string {
+  return localStorage.getItem(JWT_KEY) ?? '';
 }

@@ -33,7 +33,8 @@ export default function TopBar({ currentView, onViewChange, searchFilter, onSear
   };
 
   return (
-    <header className="h-14 w-full flex justify-between items-center px-5 border-b border-[#424655] bg-[#131313]/90 backdrop-blur-xl z-40 sticky top-0 shrink-0 select-none">
+    // THE FIX: Changed 'px-5' to 'pl-16 pr-5 md:px-5' to clear the hamburger button on mobile
+    <header className="h-14 w-full flex justify-between items-center pl-16 pr-5 md:px-5 border-b border-[#424655] bg-[#131313]/90 backdrop-blur-xl z-40 sticky top-0 shrink-0 select-none">
       <div className="flex items-center gap-3 min-w-0">
         <h1
           className="font-bold text-base tracking-tight text-[#e5e2e1] cursor-pointer whitespace-nowrap"
