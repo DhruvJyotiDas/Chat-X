@@ -25,6 +25,8 @@ import ActiveMeetingView from './components/meeting/ActiveMeetingView';
 
 // Context
 import { MeetingProvider, useMeeting } from './context/MeetingContext';
+import { useChat } from './context/ChatContext';
+import IncomingCallModal from './components/meeting/IncomingCallModal';
 
 // Types & data
 import { AppView, ComplianceLog } from './types';
@@ -32,7 +34,8 @@ import { initialComplianceLogs } from './data';
 
 function AppContent({ pendingRoomCode }: { pendingRoomCode?: string }) {
   const { currentUser, isLoading } = useAuth();
-  const { isInMeeting } = useMeeting();
+  const { isInMeeting, joinMeeting } = useMeeting();
+  const { incomingCall, dismissIncomingCall, notifyCallAccepted, notifyCallDeclined } = useChat();
 
   const [currentView, setCurrentView] = useState<AppView>('chats');
   const [logs, setLogs] = useState<ComplianceLog[]>(initialComplianceLogs);
@@ -51,6 +54,24 @@ function AppContent({ pendingRoomCode }: { pendingRoomCode?: string }) {
 
   const handleLeaveMeeting = () => {
     setCurrentView('debrief');
+  };
+
+  const handleAcceptCall = async () => {
+    if (!incomingCall) return;
+    notifyCallAccepted(incomingCall.fromId);
+    dismissIncomingCall();
+    try {
+      await joinMeeting(incomingCall.roomId);
+      setCurrentView('active_meeting');
+    } catch {
+      // error shown via MeetingContext.meetingError
+    }
+  };
+
+  const handleDeclineCall = () => {
+    if (!incomingCall) return;
+    notifyCallDeclined(incomingCall.fromId);
+    dismissIncomingCall();
   };
 
   if (isLoading) {
@@ -80,6 +101,7 @@ function AppContent({ pendingRoomCode }: { pendingRoomCode?: string }) {
   const effectiveView: AppView = isInMeeting ? 'active_meeting' : currentView;
 
   return (
+    <>
     <div className="min-h-screen text-[#e5e2e1] bg-[#0e0e0e] flex font-sans overflow-hidden w-full max-w-full">
       <Sidebar currentView={effectiveView} onViewChange={setCurrentView} isInMeeting={isInMeeting} />
 
@@ -145,6 +167,15 @@ function AppContent({ pendingRoomCode }: { pendingRoomCode?: string }) {
         </div>
       </div>
     </div>
+
+    {incomingCall && !isInMeeting && (
+      <IncomingCallModal
+        call={incomingCall}
+        onAccept={handleAcceptCall}
+        onDecline={handleDeclineCall}
+      />
+    )}
+    </>
   );
 }
 

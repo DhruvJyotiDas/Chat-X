@@ -141,9 +141,15 @@ export type ChatWSEvent =
   | { type: 'new_message'; payload: { threadId: string; message: ApiMessage } }
   | { type: 'thread_created'; payload: ApiThread }
   | { type: 'typing_start'; payload: { threadId: string; userId: string; userName: string } }
-  | { type: 'typing_stop'; payload: { threadId: string; userId: string } };
+  | { type: 'typing_stop'; payload: { threadId: string; userId: string } }
+  | { type: 'call_invite'; payload: { fromId: string; fromName: string; roomId: string } }
+  | { type: 'call_declined'; payload: { fromId: string } }
+  | { type: 'call_accepted'; payload: { fromId: string } };
 
-export function connectChatWS(onEvent: (e: ChatWSEvent) => void): () => void {
+export function connectChatWS(
+  onEvent: (e: ChatWSEvent) => void,
+  onWS?: (ws: WebSocket | null) => void,
+): () => void {
   const jwt = token();
   if (!jwt) return () => {};
 
@@ -154,6 +160,7 @@ export function connectChatWS(onEvent: (e: ChatWSEvent) => void): () => void {
 
   const connect = () => {
     ws = new WebSocket(url);
+    ws.onopen = () => { onWS?.(ws); };
     ws.onmessage = (ev) => {
       try {
         const msg = JSON.parse(ev.data as string) as ChatWSEvent;
@@ -161,6 +168,7 @@ export function connectChatWS(onEvent: (e: ChatWSEvent) => void): () => void {
       } catch {}
     };
     ws.onclose = () => {
+      onWS?.(null);
       if (!closed) setTimeout(connect, 3000); // auto-reconnect
     };
   };
@@ -170,10 +178,26 @@ export function connectChatWS(onEvent: (e: ChatWSEvent) => void): () => void {
   return () => {
     closed = true;
     ws?.close();
+    onWS?.(null);
   };
 }
 
 export function sendTyping(ws: WebSocket | null, threadId: string, userName: string, isTyping: boolean) {
   if (!ws || ws.readyState !== WebSocket.OPEN) return;
   ws.send(JSON.stringify({ type: isTyping ? 'typing_start' : 'typing_stop', threadId, userName }));
+}
+
+export function sendCallInvite(ws: WebSocket | null, toUserId: string, roomId: string, fromName: string) {
+  if (!ws || ws.readyState !== WebSocket.OPEN) return;
+  ws.send(JSON.stringify({ type: 'call_invite', to: toUserId, roomId, fromName }));
+}
+
+export function sendCallDeclined(ws: WebSocket | null, toUserId: string) {
+  if (!ws || ws.readyState !== WebSocket.OPEN) return;
+  ws.send(JSON.stringify({ type: 'call_declined', to: toUserId }));
+}
+
+export function sendCallAccepted(ws: WebSocket | null, toUserId: string) {
+  if (!ws || ws.readyState !== WebSocket.OPEN) return;
+  ws.send(JSON.stringify({ type: 'call_accepted', to: toUserId }));
 }

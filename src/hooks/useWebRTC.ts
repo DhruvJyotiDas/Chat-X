@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { SignalingSocket } from '../lib/signalingSocket';
 
-const TURN_HOST = 'meet.icebrkr.space';
+const TURN_HOST = '163.128.34.19';
 const TURN_USER = 'webrtc';
 const TURN_PASS = 'webrtc123';
 
@@ -61,20 +61,29 @@ export function useWebRTC(socket: SignalingSocket | null) {
       setLocalStream(cameraStreamRef.current);
       return cameraStreamRef.current;
     }
+    if (!navigator.mediaDevices?.getUserMedia) {
+      throw new Error('Camera/microphone access is not available. The site must be opened over HTTPS. Please use https:// in the address bar.');
+    }
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
       cameraStreamRef.current = stream;
       setLocalStream(stream);
       return stream;
-    } catch {
+    } catch (err: any) {
+      if (err?.name === 'NotAllowedError' || err?.name === 'PermissionDeniedError') {
+        throw new Error('Camera/microphone permission denied. Please allow access in your browser settings and try again.');
+      }
       try {
         const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
         cameraStreamRef.current = stream;
         setLocalStream(stream);
         setIsVideoOff(true);
         return stream;
-      } catch {
-        return null;
+      } catch (audioErr: any) {
+        if (audioErr?.name === 'NotAllowedError' || audioErr?.name === 'PermissionDeniedError') {
+          throw new Error('Microphone permission denied. Please allow access in your browser settings and try again.');
+        }
+        throw new Error('No camera or microphone found. Please connect a device and try again.');
       }
     }
   }, []);
@@ -287,6 +296,43 @@ export function useWebRTC(socket: SignalingSocket | null) {
     }
   }, [isScreenSharing]);
 
+  const switchCamera = useCallback(async (deviceId: string) => {
+    try {
+      const newStream = await navigator.mediaDevices.getUserMedia({ video: { deviceId: { exact: deviceId } }, audio: false });
+      const newTrack = newStream.getVideoTracks()[0];
+      if (!newTrack) return;
+      // Replace track in all peer connections
+      await Promise.all([...pcsRef.current.values()].map(pc => {
+        const sender = pc.getSenders().find(s => s.track?.kind === 'video');
+        return sender ? sender.replaceTrack(newTrack) : Promise.resolve();
+      }));
+      // Swap track in local camera stream
+      if (cameraStreamRef.current) {
+        cameraStreamRef.current.getVideoTracks().forEach(t => { t.stop(); cameraStreamRef.current!.removeTrack(t); });
+        cameraStreamRef.current.addTrack(newTrack);
+      } else {
+        cameraStreamRef.current = newStream;
+      }
+      setLocalStream(cameraStreamRef.current);
+    } catch (err) { console.error('[switchCamera]', err); }
+  }, []);
+
+  const switchMic = useCallback(async (deviceId: string) => {
+    try {
+      const newStream = await navigator.mediaDevices.getUserMedia({ audio: { deviceId: { exact: deviceId } }, video: false });
+      const newTrack = newStream.getAudioTracks()[0];
+      if (!newTrack) return;
+      await Promise.all([...pcsRef.current.values()].map(pc => {
+        const sender = pc.getSenders().find(s => s.track?.kind === 'audio');
+        return sender ? sender.replaceTrack(newTrack) : Promise.resolve();
+      }));
+      if (cameraStreamRef.current) {
+        cameraStreamRef.current.getAudioTracks().forEach(t => { t.stop(); cameraStreamRef.current!.removeTrack(t); });
+        cameraStreamRef.current.addTrack(newTrack);
+      }
+    } catch (err) { console.error('[switchMic]', err); }
+  }, []);
+
   const cleanup = useCallback(() => {
     pcsRef.current.forEach((pc) => pc.close());
     pcsRef.current.clear();
@@ -314,7 +360,9 @@ export function useWebRTC(socket: SignalingSocket | null) {
     toggleMic,
     toggleCamera,
     toggleScreenShare,
+    switchCamera,
+    switchMic,
     cleanup,
-    registerPeerName, // <--- EXPORTED FIX
+    registerPeerName,
   };
 }

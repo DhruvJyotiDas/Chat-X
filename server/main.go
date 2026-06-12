@@ -9,18 +9,19 @@ import (
 	"log"
 	"math/big"
 	"net/http"
+	"net/http/httputil"
+	"net/url"
 	"strings"
 	"sync"
 	"time"
 
+	"github.com/go-sql-driver/mysql"
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/gorilla/websocket"
-	"github.com/lib/pq"
 	"golang.org/x/crypto/bcrypt"
 )
 
 const (
-	dbConnStr = "host=localhost dbname=ibconnect user=ibconnect password=ibconnect2024 sslmode=disable"
 	jwtKey    = "ibconnect_jwt_secret_prod_2024_change_me"
 	jwtExpiry = 30 * 24 * time.Hour
 )
@@ -150,7 +151,7 @@ func chatConnect(uid string, c *ChatConn) {
 	chatMu.Lock()
 	chatClients[uid] = c
 	chatMu.Unlock()
-	db.Exec(`UPDATE users SET status='online' WHERE id=$1`, uid) //nolint
+	db.Exec(`UPDATE users SET status='online' WHERE id=?`, uid) //nolint
 	broadcastStatus(uid, "online")
 }
 
@@ -158,7 +159,7 @@ func chatDisconnect(uid string) {
 	chatMu.Lock()
 	delete(chatClients, uid)
 	chatMu.Unlock()
-	db.Exec(`UPDATE users SET status='offline' WHERE id=$1`, uid) //nolint
+	db.Exec(`UPDATE users SET status='offline' WHERE id=?`, uid) //nolint
 	broadcastStatus(uid, "offline")
 }
 
@@ -190,7 +191,7 @@ func newID() string {
 }
 
 func threadMembers(threadID string) []string {
-	rows, err := db.Query(`SELECT user_id FROM thread_members WHERE thread_id=$1`, threadID)
+	rows, err := db.Query(`SELECT user_id FROM thread_members WHERE thread_id=?`, threadID)
 	if err != nil {
 		return nil
 	}
@@ -206,7 +207,7 @@ func threadMembers(threadID string) []string {
 
 func isMember(threadID, uid string) bool {
 	var n int
-	db.QueryRow(`SELECT COUNT(*) FROM thread_members WHERE thread_id=$1 AND user_id=$2`, threadID, uid).Scan(&n) //nolint
+	db.QueryRow(`SELECT COUNT(*) FROM thread_members WHERE thread_id=? AND user_id=?`, threadID, uid).Scan(&n) //nolint
 	return n > 0
 }
 
@@ -217,12 +218,12 @@ func loadThread(threadID, forUID string) (Thread, error) {
 	err := db.QueryRow(`
 		SELECT t.id, t.type, t.name, COALESCE(t.avatar,''),
 			(SELECT text FROM messages WHERE thread_id=t.id ORDER BY created_at DESC LIMIT 1),
-			EXTRACT(EPOCH FROM (SELECT created_at FROM messages WHERE thread_id=t.id ORDER BY created_at DESC LIMIT 1))*1000,
-			(SELECT COUNT(*) FROM messages m 
-			 JOIN thread_members tm ON tm.thread_id=m.thread_id AND tm.user_id=$2
+			UNIX_TIMESTAMP((SELECT created_at FROM messages WHERE thread_id=t.id ORDER BY created_at DESC LIMIT 1))*1000,
+			(SELECT COUNT(*) FROM messages m
+			 JOIN thread_members tm ON tm.thread_id=m.thread_id AND tm.user_id=?
 			 WHERE m.thread_id=t.id AND (tm.last_read_at IS NULL OR m.created_at > tm.last_read_at))
-		FROM threads t WHERE t.id=$1
-	`, threadID, forUID).Scan(&t.ID, &t.Type, &t.Name, &t.Avatar, &lastMsg, &ts, &t.UnreadCount)
+		FROM threads t WHERE t.id=?
+	`, forUID, threadID).Scan(&t.ID, &t.Type, &t.Name, &t.Avatar, &lastMsg, &ts, &t.UnreadCount)
 	if err != nil {
 		return t, err
 	}
@@ -285,7 +286,7 @@ func handleSignup(w http.ResponseWriter, r *http.Request) {
 	}
 	id := "user-" + newID()
 	_, err = db.Exec(
-		`INSERT INTO users(id,username,display_name,email,password_hash,avatar,status) VALUES($1,$2,$3,$4,$5,$6,'online')`,
+		`INSERT INTO users(id,username,display_name,email,password_hash,avatar,status) VALUES(?,?,?,?,?,?,'online')`,
 		id, strings.ToLower(b.Username), b.DisplayName, strings.ToLower(b.Email), string(hash), b.Avatar,
 	)
 	if err != nil {
@@ -332,7 +333,7 @@ func handleSSO(w http.ResponseWriter, r *http.Request) {
 	var u User
 	var hash string
 	err = db.QueryRow(
-		`SELECT id,username,display_name,email,COALESCE(avatar,''),COALESCE(bio,''),status,created_at,password_hash FROM users WHERE email=$1`,
+		`SELECT id,username,display_name,email,COALESCE(avatar,''),COALESCE(bio,''),status,created_at,password_hash FROM users WHERE email=?`,
 		emailParam,
 	).Scan(&u.ID, &u.Username, &u.DisplayName, &u.Email, &u.Avatar, &u.Bio, &u.Status, &u.CreatedAt, &hash)
 
@@ -342,7 +343,7 @@ func handleSSO(w http.ResponseWriter, r *http.Request) {
 		id := "user-" + newID()
 
 		_, err = db.Exec(
-			`INSERT INTO users(id,username,display_name,email,password_hash,avatar,status) VALUES($1,$2,$3,$4,$5,'','online')`,
+			`INSERT INTO users(id,username,display_name,email,password_hash,avatar,status) VALUES(?,?,?,?,?,'','online')`,
 			id, strings.ToLower(baseUsername), baseUsername, emailParam, string(fallbackHash),
 		)
 		if err != nil {
@@ -351,7 +352,7 @@ func handleSSO(w http.ResponseWriter, r *http.Request) {
 		}
 		u.ID = id
 	} else {
-		db.Exec(`UPDATE users SET status='online' WHERE id=$1`, u.ID) //nolint
+		db.Exec(`UPDATE users SET status='online' WHERE id=?`, u.ID) //nolint
 		broadcastStatus(u.ID, "online")
 	}
 
@@ -369,7 +370,7 @@ func handleLogin(w http.ResponseWriter, r *http.Request) {
 	var u User
 	var hash string
 	err := db.QueryRow(
-		`SELECT id,username,display_name,email,COALESCE(avatar,''),COALESCE(bio,''),status,created_at,password_hash FROM users WHERE email=$1`,
+		`SELECT id,username,display_name,email,COALESCE(avatar,''),COALESCE(bio,''),status,created_at,password_hash FROM users WHERE email=?`,
 		strings.ToLower(b.Email),
 	).Scan(&u.ID, &u.Username, &u.DisplayName, &u.Email, &u.Avatar, &u.Bio, &u.Status, &u.CreatedAt, &hash)
 	if err != nil {
@@ -380,7 +381,7 @@ func handleLogin(w http.ResponseWriter, r *http.Request) {
 		fail(w, "Incorrect password", 401)
 		return
 	}
-	db.Exec(`UPDATE users SET status='online' WHERE id=$1`, u.ID) //nolint
+	db.Exec(`UPDATE users SET status='online' WHERE id=?`, u.ID) //nolint
 	u.Status = "online"
 	broadcastStatus(u.ID, "online")
 	token, _ := signToken(u.ID)
@@ -409,7 +410,7 @@ func handleMe(w http.ResponseWriter, r *http.Request) {
 
 	var u User
 	err = db.QueryRow(
-		`SELECT id,username,display_name,email,COALESCE(avatar,''),COALESCE(bio,''),status,created_at FROM users WHERE id=$1`, uid,
+		`SELECT id,username,display_name,email,COALESCE(avatar,''),COALESCE(bio,''),status,created_at FROM users WHERE id=?`, uid,
 	).Scan(&u.ID, &u.Username, &u.DisplayName, &u.Email, &u.Avatar, &u.Bio, &u.Status, &u.CreatedAt)
 
 	if err != nil {
@@ -417,7 +418,7 @@ func handleMe(w http.ResponseWriter, r *http.Request) {
 		fallbackEmail := uid + "@sso.icebrkr.space"
 		_, insertErr := db.Exec(`
 			INSERT INTO users (id, username, display_name, email, password_hash, status, created_at)
-			VALUES ($1, $2, $3, $4, $5, $6, NOW())
+			VALUES (?, ?, ?, ?, ?, ?, NOW())
 		`, uid, uid, fallbackName, fallbackEmail, "", "online")
 
 		if insertErr != nil {
@@ -426,7 +427,7 @@ func handleMe(w http.ResponseWriter, r *http.Request) {
 		}
 
 		db.QueryRow(
-			`SELECT id,username,display_name,email,COALESCE(avatar,''),COALESCE(bio,''),status,created_at FROM users WHERE id=$1`, uid,
+			`SELECT id,username,display_name,email,COALESCE(avatar,''),COALESCE(bio,''),status,created_at FROM users WHERE id=?`, uid,
 		).Scan(&u.ID, &u.Username, &u.DisplayName, &u.Email, &u.Avatar, &u.Bio, &u.Status, &u.CreatedAt)
 	}
 
@@ -446,21 +447,21 @@ func handleUpdateMe(w http.ResponseWriter, r *http.Request) {
 	}
 	json.NewDecoder(r.Body).Decode(&b) //nolint
 	if b.DisplayName == "" {
-		db.QueryRow(`SELECT display_name FROM users WHERE id=$1`, uid).Scan(&b.DisplayName) //nolint
+		db.QueryRow(`SELECT display_name FROM users WHERE id=?`, uid).Scan(&b.DisplayName) //nolint
 	}
 	_, err = db.Exec(`UPDATE users SET
-		display_name = $1,
-		bio          = $2,
-		avatar       = CASE WHEN $3 != '' THEN $3 ELSE avatar END
-		WHERE id = $4`,
-		b.DisplayName, b.Bio, b.Avatar, uid)
+		display_name = ?,
+		bio          = ?,
+		avatar       = CASE WHEN ? != '' THEN ? ELSE avatar END
+		WHERE id = ?`,
+		b.DisplayName, b.Bio, b.Avatar, b.Avatar, uid)
 	if err != nil {
 		fail(w, "db error", 500)
 		return
 	}
 
 	var u User
-	db.QueryRow(`SELECT id,username,display_name,email,COALESCE(avatar,''),COALESCE(bio,''),status,created_at FROM users WHERE id=$1`, uid).
+	db.QueryRow(`SELECT id,username,display_name,email,COALESCE(avatar,''),COALESCE(bio,''),status,created_at FROM users WHERE id=?`, uid).
 		Scan(&u.ID, &u.Username, &u.DisplayName, &u.Email, &u.Avatar, &u.Bio, &u.Status, &u.CreatedAt) //nolint
 	chatMu.RLock()
 	for _, c := range chatClients {
@@ -486,7 +487,7 @@ func handleChangePassword(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var hash string
-	if db.QueryRow(`SELECT password_hash FROM users WHERE id=$1`, uid).Scan(&hash) != nil {
+	if db.QueryRow(`SELECT password_hash FROM users WHERE id=?`, uid).Scan(&hash) != nil {
 		fail(w, "user not found", 404)
 		return
 	}
@@ -495,7 +496,7 @@ func handleChangePassword(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	newHash, _ := bcrypt.GenerateFromPassword([]byte(b.NewPassword), 12)
-	db.Exec(`UPDATE users SET password_hash=$1 WHERE id=$2`, string(newHash), uid) //nolint
+	db.Exec(`UPDATE users SET password_hash=? WHERE id=?`, string(newHash), uid) //nolint
 	ok(w, map[string]string{"message": "Password updated successfully"})
 }
 
@@ -530,7 +531,7 @@ func handleGetScheduledMeetings(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	rows, err := db.Query(`SELECT id, code, title, date, time, creator_id, invitee_ids FROM scheduled_meetings WHERE creator_id=$1 OR $1 = ANY(invitee_ids) ORDER BY date ASC, time ASC`, uid)
+	rows, err := db.Query(`SELECT id, code, title, date, time, creator_id, invitee_ids FROM scheduled_meetings WHERE creator_id=? OR JSON_CONTAINS(invitee_ids, JSON_QUOTE(?)) ORDER BY date ASC, time ASC`, uid, uid)
 	if err != nil {
 		fail(w, "db error", 500)
 		return
@@ -540,7 +541,9 @@ func handleGetScheduledMeetings(w http.ResponseWriter, r *http.Request) {
 	meetings := []ScheduledMeeting{}
 	for rows.Next() {
 		var m ScheduledMeeting
-		rows.Scan(&m.ID, &m.Code, &m.Title, &m.Date, &m.Time, &m.CreatorID, pq.Array(&m.InviteeIDs)) //nolint
+		var invJSON string
+		rows.Scan(&m.ID, &m.Code, &m.Title, &m.Date, &m.Time, &m.CreatorID, &invJSON) //nolint
+		json.Unmarshal([]byte(invJSON), &m.InviteeIDs)                                 //nolint
 		meetings = append(meetings, m)
 	}
 	ok(w, meetings)
@@ -569,9 +572,10 @@ func handleScheduleMeeting(w http.ResponseWriter, r *http.Request) {
 	code := "SCHED-" + strings.ToUpper(newID()[:4])
 	id := "sm-" + newID()
 
+	invJSON, _ := json.Marshal(b.InvitedUsers)
 	_, err = db.Exec(
-		`INSERT INTO scheduled_meetings(id, code, title, date, time, creator_id, invitee_ids) VALUES($1, $2, $3, $4, $5, $6, $7)`,
-		id, code, b.Title, b.Date, b.Time, uid, pq.Array(b.InvitedUsers),
+		`INSERT INTO scheduled_meetings(id, code, title, date, time, creator_id, invitee_ids) VALUES(?, ?, ?, ?, ?, ?, ?)`,
+		id, code, b.Title, b.Date, b.Time, uid, string(invJSON),
 	)
 	if err != nil {
 		fail(w, "failed to schedule meeting", 500)
@@ -590,7 +594,7 @@ func handleDeleteScheduledMeeting(w http.ResponseWriter, r *http.Request) {
 	}
 
 	id := strings.TrimPrefix(r.URL.Path, "/api/meetings/scheduled/")
-	_, err = db.Exec(`DELETE FROM scheduled_meetings WHERE id=$1 AND creator_id=$2`, id, uid)
+	_, err = db.Exec(`DELETE FROM scheduled_meetings WHERE id=? AND creator_id=?`, id, uid)
 	if err != nil {
 		fail(w, "failed to delete meeting", 500)
 		return
@@ -606,7 +610,7 @@ func handleValidateRoomCode(w http.ResponseWriter, r *http.Request) {
 
 	code := strings.TrimPrefix(r.URL.Path, "/api/meetings/validate/")
 	var exists int
-	db.QueryRow(`SELECT COUNT(*) FROM scheduled_meetings WHERE code=$1`, code).Scan(&exists) //nolint
+	db.QueryRow(`SELECT COUNT(*) FROM scheduled_meetings WHERE code=?`, code).Scan(&exists) //nolint
 
 	if exists == 0 {
 		fail(w, "Room code not found", 404)
@@ -627,8 +631,10 @@ func handleThreads(w http.ResponseWriter, r *http.Request) {
 	if r.Method == "GET" {
 		rows, err := db.Query(`
 			SELECT t.id FROM threads t
-			JOIN thread_members tm ON tm.thread_id=t.id AND tm.user_id=$1
-			ORDER BY (SELECT created_at FROM messages WHERE thread_id=t.id ORDER BY created_at DESC LIMIT 1) DESC NULLS LAST, t.created_at DESC
+			JOIN thread_members tm ON tm.thread_id=t.id AND tm.user_id=?
+			ORDER BY (SELECT created_at FROM messages WHERE thread_id=t.id ORDER BY created_at DESC LIMIT 1) IS NULL ASC,
+			         (SELECT created_at FROM messages WHERE thread_id=t.id ORDER BY created_at DESC LIMIT 1) DESC,
+			         t.created_at DESC
 		`, uid)
 		if err != nil {
 			fail(w, "db error", 500)
@@ -670,14 +676,14 @@ func handleThreads(w http.ResponseWriter, r *http.Request) {
 		}
 		threadID := "dm_" + ids[0] + "_" + ids[1]
 		var exists int
-		db.QueryRow(`SELECT COUNT(*) FROM threads WHERE id=$1`, threadID).Scan(&exists) //nolint
+		db.QueryRow(`SELECT COUNT(*) FROM threads WHERE id=?`, threadID).Scan(&exists) //nolint
 		if exists == 0 {
 			var otherName, otherAvatar string
-			db.QueryRow(`SELECT display_name,COALESCE(avatar,'') FROM users WHERE id=$1`, b.OtherUserID).Scan(&otherName, &otherAvatar) //nolint
+			db.QueryRow(`SELECT display_name,COALESCE(avatar,'') FROM users WHERE id=?`, b.OtherUserID).Scan(&otherName, &otherAvatar) //nolint
 			tx, _ := db.Begin()
-			tx.Exec(`INSERT INTO threads(id,type,name,avatar,created_by) VALUES($1,'dm',$2,$3,$4)`, threadID, otherName, otherAvatar, uid)
-			tx.Exec(`INSERT INTO thread_members(thread_id,user_id) VALUES($1,$2) ON CONFLICT DO NOTHING`, threadID, uid)
-			tx.Exec(`INSERT INTO thread_members(thread_id,user_id) VALUES($1,$2) ON CONFLICT DO NOTHING`, threadID, b.OtherUserID)
+			tx.Exec(`INSERT INTO threads(id,type,name,avatar,created_by) VALUES(?,'dm',?,?,?)`, threadID, otherName, otherAvatar, uid)
+			tx.Exec(`INSERT IGNORE INTO thread_members(thread_id,user_id) VALUES(?,?)`, threadID, uid)
+			tx.Exec(`INSERT IGNORE INTO thread_members(thread_id,user_id) VALUES(?,?)`, threadID, b.OtherUserID)
 			tx.Commit() //nolint
 			if mt, e := loadThread(threadID, b.OtherUserID); e == nil {
 				pushTo([]string{b.OtherUserID}, "thread_created", mt)
@@ -698,9 +704,9 @@ func handleThreads(w http.ResponseWriter, r *http.Request) {
 		threadID := "group_" + newID()
 		all := append([]string{uid}, b.MemberIDs...)
 		tx, _ := db.Begin()
-		tx.Exec(`INSERT INTO threads(id,type,name,created_by) VALUES($1,'group',$2,$3)`, threadID, b.Name, uid)
+		tx.Exec(`INSERT INTO threads(id,type,name,created_by) VALUES(?,'group',?,?)`, threadID, b.Name, uid)
 		for _, m := range all {
-			tx.Exec(`INSERT INTO thread_members(thread_id,user_id) VALUES($1,$2) ON CONFLICT DO NOTHING`, threadID, m)
+			tx.Exec(`INSERT IGNORE INTO thread_members(thread_id,user_id) VALUES(?,?)`, threadID, m)
 		}
 		tx.Commit() //nolint
 		t, _ := loadThread(threadID, uid)
@@ -734,12 +740,12 @@ func handleMessages(w http.ResponseWriter, r *http.Request) {
 	if r.Method == "GET" {
 		rows, err := db.Query(`
 			SELECT m.id, m.thread_id, m.sender_id, u.display_name, COALESCE(u.avatar,''),
-				m.text, TO_CHAR(m.created_at AT TIME ZONE 'UTC','HH12:MI AM'),
-				EXTRACT(EPOCH FROM m.created_at)*1000,
+				m.text, DATE_FORMAT(m.created_at,'%h:%i %p'),
+				UNIX_TIMESTAMP(m.created_at)*1000,
 				COALESCE(m.file_name,''), COALESCE(m.file_size,0),
 				COALESCE(m.file_type,''), COALESCE(m.file_data,'')
 			FROM messages m JOIN users u ON u.id=m.sender_id
-			WHERE m.thread_id=$1 ORDER BY m.created_at ASC LIMIT 500
+			WHERE m.thread_id=? ORDER BY m.created_at ASC LIMIT 500
 		`, threadID)
 		if err != nil {
 			fail(w, "db error", 500)
@@ -758,7 +764,7 @@ func handleMessages(w http.ResponseWriter, r *http.Request) {
 			}
 			msgs = append(msgs, m)
 		}
-		db.Exec(`UPDATE thread_members SET last_read_at=NOW() WHERE thread_id=$1 AND user_id=$2`, threadID, uid) //nolint
+		db.Exec(`UPDATE thread_members SET last_read_at=NOW() WHERE thread_id=? AND user_id=?`, threadID, uid) //nolint
 		ok(w, msgs)
 		return
 	}
@@ -778,7 +784,7 @@ func handleMessages(w http.ResponseWriter, r *http.Request) {
 		fs = sql.NullInt64{Int64: b.File.Size, Valid: true}
 	}
 	_, err = db.Exec(
-		`INSERT INTO messages(id,thread_id,sender_id,text,file_name,file_size,file_type,file_data) VALUES($1,$2,$3,$4,$5,$6,$7,$8)`,
+		`INSERT INTO messages(id,thread_id,sender_id,text,file_name,file_size,file_type,file_data) VALUES(?,?,?,?,?,?,?,?)`,
 		msgID, threadID, uid, b.Text, fn, fs, ft, fd,
 	)
 	if err != nil {
@@ -789,9 +795,9 @@ func handleMessages(w http.ResponseWriter, r *http.Request) {
 	var ts float64
 	db.QueryRow(`
 		SELECT m.id, m.thread_id, m.sender_id, u.display_name, COALESCE(u.avatar,''),
-			m.text, TO_CHAR(m.created_at AT TIME ZONE 'UTC','HH12:MI AM'),
-			EXTRACT(EPOCH FROM m.created_at)*1000
-		FROM messages m JOIN users u ON u.id=m.sender_id WHERE m.id=$1
+			m.text, DATE_FORMAT(m.created_at,'%h:%i %p'),
+			UNIX_TIMESTAMP(m.created_at)*1000
+		FROM messages m JOIN users u ON u.id=m.sender_id WHERE m.id=?
 	`, msgID).Scan(&m.ID, &m.ThreadID, &m.SenderID, &m.SenderName, &m.SenderAvatar, &m.Text, &m.Time, &ts) //nolint
 	m.Timestamp = int64(ts)
 	if b.File != nil {
@@ -799,7 +805,7 @@ func handleMessages(w http.ResponseWriter, r *http.Request) {
 	}
 	members := threadMembers(threadID)
 	pushTo(members, "new_message", map[string]any{"threadId": threadID, "message": m})
-	db.Exec(`UPDATE thread_members SET last_read_at=NOW() WHERE thread_id=$1 AND user_id=$2`, threadID, uid) //nolint
+	db.Exec(`UPDATE thread_members SET last_read_at=NOW() WHERE thread_id=? AND user_id=?`, threadID, uid) //nolint
 	ok(w, m)
 }
 
@@ -847,6 +853,9 @@ func handleChatWS(w http.ResponseWriter, r *http.Request) {
 			Type     string `json:"type"`
 			ThreadID string `json:"threadId"`
 			UserName string `json:"userName"`
+			To       string `json:"to"`
+			RoomID   string `json:"roomId"`
+			FromName string `json:"fromName"`
 		}
 		if json.Unmarshal(data, &msg) != nil {
 			continue
@@ -862,6 +871,21 @@ func handleChatWS(w http.ResponseWriter, r *http.Request) {
 				"threadId": msg.ThreadID, "userId": claims.UserID, "userName": msg.UserName,
 			})
 		}
+		if msg.Type == "call_invite" && msg.To != "" && msg.RoomID != "" {
+			pushTo([]string{msg.To}, "call_invite", map[string]string{
+				"fromId": claims.UserID, "fromName": msg.FromName, "roomId": msg.RoomID,
+			})
+		}
+		if msg.Type == "call_declined" && msg.To != "" {
+			pushTo([]string{msg.To}, "call_declined", map[string]string{
+				"fromId": claims.UserID,
+			})
+		}
+		if msg.Type == "call_accepted" && msg.To != "" {
+			pushTo([]string{msg.To}, "call_accepted", map[string]string{
+				"fromId": claims.UserID,
+			})
+		}
 	}
 }
 
@@ -870,27 +894,32 @@ func handleChatWS(w http.ResponseWriter, r *http.Request) {
 func migrate() {
 	for _, s := range []string{
 		`CREATE TABLE IF NOT EXISTS users (
-			id TEXT PRIMARY KEY, username TEXT UNIQUE NOT NULL, display_name TEXT NOT NULL,
-			email TEXT UNIQUE NOT NULL, password_hash TEXT NOT NULL, avatar TEXT, bio TEXT,
-			status TEXT DEFAULT 'offline', created_at TIMESTAMPTZ DEFAULT NOW())`,
+			id VARCHAR(255) PRIMARY KEY, username VARCHAR(255) UNIQUE NOT NULL, display_name VARCHAR(255) NOT NULL,
+			email VARCHAR(255) UNIQUE NOT NULL, password_hash TEXT NOT NULL, avatar TEXT, bio TEXT,
+			status VARCHAR(50) DEFAULT 'offline', created_at DATETIME(6) DEFAULT NOW(6))`,
 		`CREATE TABLE IF NOT EXISTS threads (
-			id TEXT PRIMARY KEY, type TEXT NOT NULL, name TEXT NOT NULL, avatar TEXT,
-			created_by TEXT, created_at TIMESTAMPTZ DEFAULT NOW())`,
+			id VARCHAR(255) PRIMARY KEY, type VARCHAR(50) NOT NULL, name VARCHAR(255) NOT NULL, avatar TEXT,
+			created_by VARCHAR(255), created_at DATETIME(6) DEFAULT NOW(6))`,
 		`CREATE TABLE IF NOT EXISTS thread_members (
-			thread_id TEXT REFERENCES threads(id) ON DELETE CASCADE,
-			user_id TEXT REFERENCES users(id) ON DELETE CASCADE,
-			last_read_at TIMESTAMPTZ, PRIMARY KEY (thread_id, user_id))`,
+			thread_id VARCHAR(255) NOT NULL, user_id VARCHAR(255) NOT NULL,
+			last_read_at DATETIME(6),
+			PRIMARY KEY (thread_id, user_id),
+			FOREIGN KEY (thread_id) REFERENCES threads(id) ON DELETE CASCADE,
+			FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE)`,
 		`CREATE TABLE IF NOT EXISTS messages (
-			id TEXT PRIMARY KEY, thread_id TEXT REFERENCES threads(id) ON DELETE CASCADE,
-			sender_id TEXT REFERENCES users(id) ON DELETE SET NULL,
+			id VARCHAR(255) PRIMARY KEY,
+			thread_id VARCHAR(255), sender_id VARCHAR(255),
 			text TEXT NOT NULL DEFAULT '', file_name TEXT, file_size BIGINT,
-			file_type TEXT, file_data TEXT, created_at TIMESTAMPTZ DEFAULT NOW())`,
+			file_type TEXT, file_data LONGTEXT, created_at DATETIME(6) DEFAULT NOW(6),
+			FOREIGN KEY (thread_id) REFERENCES threads(id) ON DELETE CASCADE,
+			FOREIGN KEY (sender_id) REFERENCES users(id) ON DELETE SET NULL)`,
 		`CREATE TABLE IF NOT EXISTS scheduled_meetings (
-			id TEXT PRIMARY KEY, code TEXT UNIQUE NOT NULL, title TEXT NOT NULL,
-			date TEXT NOT NULL, time TEXT NOT NULL,
-			creator_id TEXT REFERENCES users(id) ON DELETE CASCADE,
-			invitee_ids TEXT[] DEFAULT '{}',
-			created_at TIMESTAMPTZ DEFAULT NOW())`,
+			id VARCHAR(255) PRIMARY KEY, code VARCHAR(255) UNIQUE NOT NULL, title TEXT NOT NULL,
+			date VARCHAR(50) NOT NULL, time VARCHAR(50) NOT NULL,
+			creator_id VARCHAR(255),
+			invitee_ids JSON,
+			created_at DATETIME(6) DEFAULT NOW(6),
+			FOREIGN KEY (creator_id) REFERENCES users(id) ON DELETE CASCADE)`,
 		`CREATE INDEX IF NOT EXISTS idx_msg_thread ON messages(thread_id, created_at)`,
 		`CREATE INDEX IF NOT EXISTS idx_tm_user ON thread_members(user_id)`,
 	} {
@@ -1102,7 +1131,15 @@ func handleHealth(w http.ResponseWriter, r *http.Request) {
 
 func main() {
 	var err error
-	db, err = sql.Open("postgres", dbConnStr)
+	cfg := mysql.NewConfig()
+	cfg.User = "lolafire_admin"
+	cfg.Passwd = "admin@100"
+	cfg.Net = "tcp"
+	cfg.Addr = "lolafire.mysql.db.hostpoint.ch:3306"
+	cfg.DBName = "lolafire_IBConnect"
+	cfg.ParseTime = true
+	cfg.Params = map[string]string{"charset": "utf8mb4", "collation": "utf8mb4_unicode_ci"}
+	db, err = sql.Open("mysql", cfg.FormatDSN())
 	if err != nil {
 		log.Fatalf("db open: %v", err)
 	}
@@ -1111,7 +1148,7 @@ func main() {
 	if err = db.Ping(); err != nil {
 		log.Fatalf("db ping: %v", err)
 	}
-	log.Println("[DB] connected to PostgreSQL")
+	log.Println("[DB] connected to MariaDB")
 	migrate()
 
 	mux := http.NewServeMux()
@@ -1158,6 +1195,14 @@ func main() {
 		} else {
 			fail(w, "Method not allowed", 405)
 		}
+	})
+
+	// Proxy /asr → ws://localhost:8765 (NeMo ASR server)
+	asrTarget, _ := url.Parse("http://localhost:8765")
+	asrProxy := httputil.NewSingleHostReverseProxy(asrTarget)
+	mux.HandleFunc("/asr", func(w http.ResponseWriter, r *http.Request) {
+		r.URL.Path = "/"
+		asrProxy.ServeHTTP(w, r)
 	})
 
 	log.Println("[Server] listening on :8080")

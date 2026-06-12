@@ -4,12 +4,17 @@ export class SignalingSocket {
   private ws: WebSocket | null = null;
   private handlers: Map<string, Set<EventHandler>> = new Map();
   private readonly url: string;
+  private intentionalClose = false;
+  private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+  private onReconnect?: () => void;
 
-  constructor(url: string) {
+  constructor(url: string, onReconnect?: () => void) {
     this.url = url;
+    this.onReconnect = onReconnect;
   }
 
   connect(): Promise<void> {
+    this.intentionalClose = false;
     return new Promise((resolve, reject) => {
       this.ws = new WebSocket(this.url);
 
@@ -26,6 +31,12 @@ export class SignalingSocket {
       this.ws.onclose = () => {
         console.log('[SignalingSocket] disconnected');
         this.ws = null;
+        if (!this.intentionalClose) {
+          this.reconnectTimer = setTimeout(() => {
+            console.log('[SignalingSocket] reconnecting…');
+            this.connect().then(() => this.onReconnect?.()).catch(() => {});
+          }, 3000);
+        }
       };
 
       this.ws.onmessage = (event) => {
@@ -43,6 +54,8 @@ export class SignalingSocket {
   }
 
   disconnect() {
+    this.intentionalClose = true;
+    if (this.reconnectTimer) { clearTimeout(this.reconnectTimer); this.reconnectTimer = null; }
     this.ws?.close();
     this.ws = null;
   }

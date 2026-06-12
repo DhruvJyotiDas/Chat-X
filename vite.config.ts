@@ -15,10 +15,25 @@ export default defineConfig(() => {
       hmr: process.env.DISABLE_HMR !== 'true',
       watch: process.env.DISABLE_HMR === 'true' ? null : {},
       proxy: {
+        '/api': {
+          target: 'http://localhost:8080',
+          changeOrigin: true,
+        },
+        '/chat-ws': {
+          target: 'ws://localhost:8080',
+          ws: true,
+          changeOrigin: true,
+        },
         '/ws': {
           target: 'ws://localhost:8080',
           ws: true,
           changeOrigin: true,
+        },
+        '/asr': {
+          target: 'ws://localhost:8765',
+          ws: true,
+          changeOrigin: true,
+          rewrite: (path) => path.replace(/^\/asr/, ''),
         },
       },
     },

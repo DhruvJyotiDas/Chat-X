@@ -1,10 +1,16 @@
 import React, { createContext, useContext, useState, useEffect, useCallback, useRef } from 'react';
 import { RealChatMessage, RealChatThread } from '../types';
 import { useAuth } from './AuthContext';
-import { api, connectChatWS, ChatWSEvent } from '../lib/api';
+import { api, connectChatWS, ChatWSEvent, sendCallInvite, sendCallDeclined, sendCallAccepted } from '../lib/api';
 
 interface TypingState {
   [threadId: string]: { userId: string; userName: string }[];
+}
+
+export interface IncomingCall {
+  fromId: string;
+  fromName: string;
+  roomId: string;
 }
 
 interface ChatContextType {
@@ -19,6 +25,11 @@ interface ChatContextType {
   setTyping: (threadId: string, isTyping: boolean) => void;
   markRead: (threadId: string) => void;
   refreshThreads: () => Promise<void>;
+  incomingCall: IncomingCall | null;
+  dismissIncomingCall: () => void;
+  notifyCallInvite: (toUserId: string, roomId: string, fromName: string) => void;
+  notifyCallDeclined: (toUserId: string) => void;
+  notifyCallAccepted: (toUserId: string) => void;
 }
 
 const ChatContext = createContext<ChatContextType | null>(null);
@@ -60,6 +71,7 @@ export function ChatProvider({ children }: { children: React.ReactNode }) {
   const [threads, setThreads] = useState<RealChatThread[]>([]);
   const [activeThreadId, setActiveThreadId] = useState<string | null>(null);
   const [typingUsers, setTypingUsers] = useState<TypingState>({});
+  const [incomingCall, setIncomingCall] = useState<IncomingCall | null>(null);
 
   // Message cache: threadId -> RealChatMessage[]
   const msgCache = useRef<Map<string, RealChatMessage[]>>(new Map());
@@ -145,25 +157,23 @@ export function ChatProvider({ children }: { children: React.ReactNode }) {
           }));
           break;
         }
+        case 'call_invite': {
+          setIncomingCall(event.payload);
+          break;
+        }
+        case 'call_declined':
+        case 'call_accepted': {
+          // Notify callers via window event so MeetingContext / CallsView can react
+          window.dispatchEvent(new CustomEvent('ibconnect_call_response', { detail: event }));
+          break;
+        }
       }
-    });
+    }, (ws) => { wsRef.current = ws; }); // reuse the same WS for typing — avoids opening a second connection
 
-    // Grab the WS for typing sends — the WS is internal to connectChatWS
-    // We'll send typing via the WS we open separately here
-    const jwt = localStorage.getItem('ibconnect_jwt') ?? '';
-    if (jwt) {
-      const proto = window.location.protocol === 'https:' ? 'wss' : 'ws';
-      const ws = new WebSocket(`${proto}://${window.location.host}/chat-ws?token=${encodeURIComponent(jwt)}`);
-      ws.onopen = () => { wsRef.current = ws; };
-      ws.onclose = () => { wsRef.current = null; };
-      return () => {
-        disconnect();
-        ws.close();
-        wsRef.current = null;
-      };
-    }
-
-    return disconnect;
+    return () => {
+      disconnect();
+      wsRef.current = null;
+    };
   }, [currentUser?.id]);
 
   // Listen for status events from WebSocket (forwarded by ChatContext)
@@ -258,6 +268,20 @@ export function ChatProvider({ children }: { children: React.ReactNode }) {
     setThreads(prev => prev.map(t => t.id === threadId ? { ...t, unreadCount: 0 } : t));
   }, []);
 
+  const dismissIncomingCall = useCallback(() => setIncomingCall(null), []);
+
+  const notifyCallInvite = useCallback((toUserId: string, roomId: string, fromName: string) => {
+    sendCallInvite(wsRef.current, toUserId, roomId, fromName);
+  }, []);
+
+  const notifyCallDeclined = useCallback((toUserId: string) => {
+    sendCallDeclined(wsRef.current, toUserId);
+  }, []);
+
+  const notifyCallAccepted = useCallback((toUserId: string) => {
+    sendCallAccepted(wsRef.current, toUserId);
+  }, []);
+
   // Expose loadMessages so ChatsView can call it
   (ChatProvider as unknown as { _loadMessages?: typeof loadMessages })._loadMessages = loadMessages;
 
@@ -266,6 +290,8 @@ export function ChatProvider({ children }: { children: React.ReactNode }) {
       threads, activeThreadId, setActiveThreadId,
       getMessages, sendMessage, startDM, createGroup,
       typingUsers, setTyping, markRead, refreshThreads,
+      incomingCall, dismissIncomingCall,
+      notifyCallInvite, notifyCallDeclined, notifyCallAccepted,
     }}>
       {children}
     </ChatContext.Provider>

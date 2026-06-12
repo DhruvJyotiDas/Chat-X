@@ -28,6 +28,8 @@ interface MeetingContextType {
   toggleMic: () => void;
   toggleCamera: () => void;
   toggleScreenShare: () => Promise<void>;
+  switchCamera: (deviceId: string) => Promise<void>;
+  switchMic: (deviceId: string) => Promise<void>;
   chatMessages: LiveChatMessage[];
   sendChatMessage: (text: string) => void;
   showGuestModal: boolean;
@@ -233,6 +235,7 @@ export function MeetingProvider({ children }: { children: React.ReactNode }) {
       scheduledMeetings, refreshScheduledMeetings, scheduleMeeting, deleteScheduledMeeting,
       localStream: webrtc.localStream, peers: webrtc.peers, isMuted: webrtc.isMuted, isVideoOff: webrtc.isVideoOff, isScreenSharing: webrtc.isScreenSharing,
       toggleMic: webrtc.toggleMic, toggleCamera: webrtc.toggleCamera, toggleScreenShare: webrtc.toggleScreenShare,
+      switchCamera: webrtc.switchCamera, switchMic: webrtc.switchMic,
       chatMessages, sendChatMessage, showGuestModal, pendingJoinCode, setPendingAction, dismissGuestModal, meetingError, clearMeetingError
     }}>
       {children}

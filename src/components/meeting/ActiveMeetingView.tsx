@@ -21,9 +21,16 @@ function LocalTile({ stream, isVideoOff, name, bgMode }: { stream: MediaStream |
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const rafRef = useRef<number>(0);
-  const segRef = useRef<{ send: (o: { image: HTMLVideoElement }) => void } | null>(null);
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const segRef = useRef<any>(null);
   const segReadyRef = useRef(false);
+  const bgModeRef = useRef<BgMode>(bgMode);
+  const offscreenRef = useRef<HTMLCanvasElement | null>(null);
 
+  // Keep bgModeRef current so callbacks always see the latest mode
+  useEffect(() => { bgModeRef.current = bgMode; }, [bgMode]);
+
+  // Video stream attachment
   useEffect(() => {
     const vid = videoRef.current;
     if (!vid || !stream) return;
@@ -31,88 +38,136 @@ function LocalTile({ stream, isVideoOff, name, bgMode }: { stream: MediaStream |
     vid.play().catch(() => {});
   }, [stream, isVideoOff]);
 
+  // MediaPipe init — runs once on mount, pipeline is: send → onResults(draw + scheduleNextRAF)
   useEffect(() => {
-    const vid = videoRef.current;
-    const canvas = canvasRef.current;
-    if (bgMode === 'none' || !vid || !canvas) {
-      cancelAnimationFrame(rafRef.current); return;
-    }
-    let alive = true;
-
-    const loadSeg = async () => {
-      if (segReadyRef.current) return;
-      try {
-        const { SelfieSegmentation } = await import('@mediapipe/selfie_segmentation');
-        const seg = new SelfieSegmentation({
-          locateFile: (f: string) => `https://cdn.jsdelivr.net/npm/@mediapipe/selfie_segmentation@0.1/${f}`,
-        });
-        seg.setOptions({ modelSelection: 1, selfieMode: false });
-        await seg.initialize();
-        segRef.current = seg; segReadyRef.current = true;
-      } catch {}
-    };
-    loadSeg();
-
     const offscreen = document.createElement('canvas');
-    const offCtx = offscreen.getContext('2d')!;
+    offscreenRef.current = offscreen;
 
-    const draw = () => {
-      if (!alive) return;
-      if (vid.readyState < 2 || vid.videoWidth === 0) { rafRef.current = requestAnimationFrame(draw); return; }
-
-      const w = vid.videoWidth; const h = vid.videoHeight;
-      if (canvas.width !== w) canvas.width = w;
-      if (canvas.height !== h) { canvas.height = h; offscreen.width = w; offscreen.height = h; }
-      const ctx = canvas.getContext('2d')!;
-
-      if (segRef.current && segReadyRef.current) {
-        try { segRef.current.send({ image: vid }); } catch { applyFallbackBlur(ctx, vid, canvas, offscreen, offCtx, bgMode); }
-      } else {
-        applyFallbackBlur(ctx, vid, canvas, offscreen, offCtx, bgMode);
-      }
-      rafRef.current = requestAnimationFrame(draw);
-    };
-
-    const wireSegResults = () => {
-      if (!segRef.current) return;
+    import('@mediapipe/selfie_segmentation').then(({ SelfieSegmentation }) => {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      (segRef.current as any).onResults((results: any) => {
-        if (!alive) return;
-        const ctx2 = canvas.getContext('2d')!;
-        ctx2.clearRect(0, 0, canvas.width, canvas.height);
+      const seg = new (SelfieSegmentation as any)({ locateFile: (f: string) => `/mediapipe/${f}` });
+      seg.setOptions({ modelSelection: 1, selfieMode: false });
 
-        if (bgMode === 'blur' || bgMode === 'blur-heavy') {
-          const blurPx = bgMode === 'blur-heavy' ? '20px' : '12px';
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          (ctx2 as any).filter = `blur(${blurPx})`;
-          ctx2.drawImage(results.image, 0, 0, canvas.width, canvas.height);
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          (ctx2 as any).filter = 'none';
+      seg.onResults((results: { image: CanvasImageSource; segmentationMask: CanvasImageSource }) => {
+        const canvas = canvasRef.current;
+        const offsc = offscreenRef.current;
+        const mode = bgModeRef.current;
+        if (!canvas || !offsc || mode === 'none') return;
 
-          offCtx.clearRect(0, 0, offscreen.width, offscreen.height);
-          offCtx.drawImage(results.image, 0, 0, offscreen.width, offscreen.height);
-          offCtx.globalCompositeOperation = 'destination-in';
-          offCtx.drawImage(results.segmentationMask, 0, 0, offscreen.width, offscreen.height);
-          offCtx.globalCompositeOperation = 'source-over';
-          ctx2.drawImage(offscreen, 0, 0);
+        const vid = videoRef.current;
+        if (vid && vid.videoWidth > 0) {
+          if (canvas.width !== vid.videoWidth)  canvas.width  = vid.videoWidth;
+          if (canvas.height !== vid.videoHeight) canvas.height = vid.videoHeight;
+        }
+        if (offsc.width !== canvas.width)  offsc.width  = canvas.width;
+        if (offsc.height !== canvas.height) offsc.height = canvas.height;
+
+        const ctx  = canvas.getContext('2d')!;
+        const octx = offsc.getContext('2d')!;
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+        if (mode === 'blur' || mode === 'blur-heavy') {
+          const blurPx = mode === 'blur-heavy' ? '20px' : '12px';
+          (ctx as CanvasRenderingContext2D & { filter: string }).filter = `blur(${blurPx})`;
+          ctx.drawImage(results.image, 0, 0, canvas.width, canvas.height);
+          (ctx as CanvasRenderingContext2D & { filter: string }).filter = 'none';
+          // Composite sharp person on top
+          octx.clearRect(0, 0, offsc.width, offsc.height);
+          octx.drawImage(results.image, 0, 0, offsc.width, offsc.height);
+          octx.globalCompositeOperation = 'destination-in';
+          octx.drawImage(results.segmentationMask, 0, 0, offsc.width, offsc.height);
+          octx.globalCompositeOperation = 'source-over';
+          ctx.drawImage(offsc, 0, 0);
         } else {
-          const bg = bgMode === 'color-dark' ? '#1a1a2e' : '#0f0c29';
-          ctx2.fillStyle = bg; ctx2.fillRect(0, 0, canvas.width, canvas.height);
-          offCtx.clearRect(0, 0, offscreen.width, offscreen.height);
-          offCtx.drawImage(results.image, 0, 0, offscreen.width, offscreen.height);
-          offCtx.globalCompositeOperation = 'destination-in';
-          offCtx.drawImage(results.segmentationMask, 0, 0, offscreen.width, offscreen.height);
-          offCtx.globalCompositeOperation = 'source-over';
-          ctx2.drawImage(offscreen, 0, 0);
+          // Solid color background + person cutout
+          ctx.fillStyle = mode === 'color-dark' ? '#1a1a2e' : '#0f0c29';
+          ctx.fillRect(0, 0, canvas.width, canvas.height);
+          octx.clearRect(0, 0, offsc.width, offsc.height);
+          octx.drawImage(results.image, 0, 0, offsc.width, offsc.height);
+          octx.globalCompositeOperation = 'destination-in';
+          octx.drawImage(results.segmentationMask, 0, 0, offsc.width, offsc.height);
+          octx.globalCompositeOperation = 'source-over';
+          ctx.drawImage(offsc, 0, 0);
+        }
+
+        // Correct pipeline: draw → schedule next send via RAF (never call send before onResults fires)
+        if (bgModeRef.current !== 'none') {
+          rafRef.current = requestAnimationFrame(() => {
+            const v = videoRef.current;
+            if (bgModeRef.current !== 'none' && v && v.readyState >= 2) {
+              seg.send({ image: v }).catch(() => {});
+            }
+          });
         }
       });
+
+      seg.initialize().then(() => {
+        segRef.current = seg;
+        segReadyRef.current = true;
+        // If a bg mode is already active, kick off the pipeline (replaces fallback loop)
+        cancelAnimationFrame(rafRef.current);
+        const v = videoRef.current;
+        if (bgModeRef.current !== 'none' && v && v.readyState >= 2) {
+          seg.send({ image: v }).catch(() => {});
+        }
+      }).catch(() => {});
+    }).catch(() => {});
+
+    return () => { cancelAnimationFrame(rafRef.current); };
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Start/stop loop when bgMode changes
+  useEffect(() => {
+    cancelAnimationFrame(rafRef.current);
+    if (bgMode === 'none') return;
+
+    const vid = videoRef.current;
+    const canvas = canvasRef.current;
+    if (!vid || !canvas) return;
+
+    if (segReadyRef.current && segRef.current) {
+      // MediaPipe already ready — start pipeline immediately
+      const kick = () => {
+        if (vid.readyState >= 2) { segRef.current.send({ image: vid }).catch(() => {}); }
+        else rafRef.current = requestAnimationFrame(kick);
+      };
+      kick();
+      return;
+    }
+
+    // Fallback loop (runs while MediaPipe is still loading)
+    const offsc = offscreenRef.current ?? document.createElement('canvas');
+    const offCtx = offsc.getContext('2d')!;
+
+    const fallback = () => {
+      if (bgModeRef.current === 'none') return;
+      if (segReadyRef.current) return; // MediaPipe ready now, its pipeline takes over
+      if (!vid || vid.readyState < 2 || vid.videoWidth === 0) { rafRef.current = requestAnimationFrame(fallback); return; }
+
+      const w = vid.videoWidth, h = vid.videoHeight;
+      if (canvas.width !== w || canvas.height !== h) { canvas.width = w; canvas.height = h; offsc.width = w; offsc.height = h; }
+
+      const ctx = canvas.getContext('2d')!;
+      const mode = bgModeRef.current;
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+      if (mode === 'blur' || mode === 'blur-heavy') {
+        const blurPx = mode === 'blur-heavy' ? '20px' : '12px';
+        (ctx as CanvasRenderingContext2D & { filter: string }).filter = `blur(${blurPx})`;
+        ctx.drawImage(vid, -20, -20, canvas.width + 40, canvas.height + 40);
+        (ctx as CanvasRenderingContext2D & { filter: string }).filter = 'none';
+      } else {
+        // Color fallback: draw video then lay a dark tint on top
+        ctx.drawImage(vid, 0, 0, canvas.width, canvas.height);
+        ctx.fillStyle = mode === 'color-dark' ? 'rgba(10,10,40,0.65)' : 'rgba(5,4,25,0.75)';
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+      }
+
+      rafRef.current = requestAnimationFrame(fallback);
     };
 
-    const pollSeg = setInterval(() => { if (segReadyRef.current) { wireSegResults(); clearInterval(pollSeg); } }, 200);
-    rafRef.current = requestAnimationFrame(draw);
-
-    return () => { alive = false; clearInterval(pollSeg); cancelAnimationFrame(rafRef.current); };
-  }, [bgMode, stream]);
+    rafRef.current = requestAnimationFrame(fallback);
+  }, [bgMode]);
 
   const showCanvas = bgMode !== 'none' && !isVideoOff;
 
@@ -134,21 +189,6 @@ function LocalTile({ stream, isVideoOff, name, bgMode }: { stream: MediaStream |
       )}
     </div>
   );
-}
-
-function applyFallbackBlur(ctx: CanvasRenderingContext2D, vid: HTMLVideoElement, canvas: HTMLCanvasElement, offscreen: HTMLCanvasElement, offCtx: CanvasRenderingContext2D, bgMode: BgMode) {
-  ctx.clearRect(0, 0, canvas.width, canvas.height);
-  if (bgMode === 'color-dark' || bgMode === 'color-space') {
-    ctx.fillStyle = bgMode === 'color-dark' ? '#1a1a2e' : '#0f0c29'; ctx.fillRect(0, 0, canvas.width, canvas.height);
-    offCtx.clearRect(0, 0, offscreen.width, offscreen.height); offCtx.drawImage(vid, 0, 0, offscreen.width, offscreen.height);
-    ctx.drawImage(offscreen, 0, 0);
-  } else {
-    const blurPx = bgMode === 'blur-heavy' ? '20px' : '12px';
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    (ctx as any).filter = `blur(${blurPx})`; ctx.drawImage(vid, -20, -20, canvas.width + 40, canvas.height + 40);
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    (ctx as any).filter = 'none';
-  }
 }
 
 // ─── Remote tile ─────────────────────────────────────────────────────────────
@@ -411,11 +451,11 @@ const KP_COLORS: Record<string, string> = {
 };
 
 export default function ActiveMeetingView({ onLeaveMeeting }: Props) {
-  const { user, roomId, localStream, peers, isMuted, isVideoOff, isScreenSharing, toggleMic, toggleCamera, toggleScreenShare, leaveMeeting, chatMessages, sendChatMessage } = useMeeting();
+  const { user, roomId, localStream, peers, isMuted, isVideoOff, isScreenSharing, toggleMic, toggleCamera, toggleScreenShare, switchCamera, switchMic, leaveMeeting, chatMessages, sendChatMessage } = useMeeting();
   const { currentUser } = useAuth();
   const displayName = currentUser?.displayName ?? user.name;
 
-  const { isActive: transcribing, isSupported: speechSupported, lines: transcriptLines, keyPoints, start: startTranscription, stop: stopTranscription } = useSpeechTranscription(displayName);
+  const { isActive: transcribing, isSupported: speechSupported, lines: transcriptLines, keyPoints, start: startTranscription, stop: stopTranscription } = useSpeechTranscription(displayName, peers);
 
   const [bgMode, setBgMode] = useState<BgMode>('none');
   const [rightTab, setRightTab] = useState<'chat' | 'people' | 'transcript'>('people');
@@ -447,6 +487,11 @@ export default function ActiveMeetingView({ onLeaveMeeting }: Props) {
   }, [settingsOpen, selectedCamera, selectedMic, selectedSpeaker]);
 
   const transcriptEndRef = useRef<HTMLDivElement>(null);
+  const transcriptEndDesktopRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    transcriptEndDesktopRef.current?.scrollIntoView({ behavior: 'smooth' });
+  }, [transcriptLines]);
 
   const handleLeave = useCallback(() => {
     stopTranscription(); leaveMeeting();
@@ -492,13 +537,14 @@ export default function ActiveMeetingView({ onLeaveMeeting }: Props) {
       <section className="hidden lg:flex w-72 shrink-0 flex-col border-r border-[#3c4043] bg-[#202124] h-full">
         <div className="px-4 py-3 border-b border-[#3c4043] flex items-center justify-between shrink-0">
           <span className="text-xs font-semibold text-[#e8eaed] flex items-center gap-1.5">
-            <Activity className="w-3.5 h-3.5 text-[#8ab4f8]" />Live Intelligence
+            <Activity className="w-3.5 h-3.5 text-[#8ab4f8]" />Live Transcript
+            <span className="text-[9px] text-[#9aa0a6] font-normal">• Hindi2Hinglish ASR</span>
           </span>
           <button
             onClick={transcribing ? stopTranscription : startTranscription}
             className={`flex items-center gap-1 px-2 py-1 rounded-lg text-[10px] font-bold cursor-pointer transition-all ${transcribing ? 'bg-[#f28b82]/15 text-[#f28b82] border border-[#f28b82]/30' : 'bg-[#8ab4f8]/10 text-[#8ab4f8] border border-[#8ab4f8]/30 hover:bg-[#8ab4f8]/20'}`}
           >
-            <Mic2 className="w-3 h-3" /> {transcribing ? 'Stop' : (speechSupported ? 'Transcribe' : 'Chrome only')}
+            <Mic2 className="w-3 h-3" /> {transcribing ? 'Stop' : (speechSupported ? 'Transcribe' : 'No mic')}
           </button>
         </div>
 
@@ -532,7 +578,7 @@ export default function ActiveMeetingView({ onLeaveMeeting }: Props) {
               <p className="text-[11px] text-[#e8eaed] leading-relaxed bg-[#3c4043]/40 rounded-lg px-2.5 py-2">{line.text}</p>
             </div>
           ))}
-          <div ref={transcriptEndRef} />
+          <div ref={transcriptEndDesktopRef} />
         </div>
 
         {keyPoints.length > 0 && (
@@ -631,7 +677,9 @@ export default function ActiveMeetingView({ onLeaveMeeting }: Props) {
               bgMode={bgMode} onBgChange={setBgMode}
               videoDevices={videoDevices} audioDevices={audioDevices} outputDevices={outputDevices}
               selectedCamera={selectedCamera} selectedMic={selectedMic} selectedSpeaker={selectedSpeaker}
-              onCameraChange={setSelectedCamera} onMicChange={setSelectedMic} onSpeakerChange={setSelectedSpeaker}
+              onCameraChange={(id) => { setSelectedCamera(id); switchCamera(id); }}
+              onMicChange={(id) => { setSelectedMic(id); switchMic(id); }}
+              onSpeakerChange={setSelectedSpeaker}
               onClose={() => setSettingsOpen(false)}
             />
           )}

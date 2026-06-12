@@ -14,31 +14,6 @@ export interface KeyPoint {
   text: string;
 }
 
-// Browser Speech Recognition types
-interface ISpeechRecognition extends EventTarget {
-  continuous: boolean;
-  interimResults: boolean;
-  lang: string;
-  maxAlternatives: number;
-  onresult: ((e: ISpeechRecognitionEvent) => void) | null;
-  onerror: ((e: ISpeechRecognitionErrorEvent) => void) | null;
-  onend: (() => void) | null;
-  start(): void;
-  stop(): void;
-}
-interface ISpeechRecognitionEvent { resultIndex: number; results: ISpeechRecognitionResultList; }
-interface ISpeechRecognitionResultList { length: number; [i: number]: ISpeechRecognitionResult; }
-interface ISpeechRecognitionResult { isFinal: boolean; [i: number]: { transcript: string }; }
-interface ISpeechRecognitionErrorEvent { error: string; }
-type SpeechRecognitionCtor = new () => ISpeechRecognition;
-
-declare global {
-  interface Window {
-    SpeechRecognition?: SpeechRecognitionCtor;
-    webkitSpeechRecognition?: SpeechRecognitionCtor;
-  }
-}
-
 const KEY_PATTERNS = [
   { type: 'action' as const,   re: /\b(?:will|need to|must|should|going to|let's|we'll)\s+([a-z][^.!?\n]{4,60})/gi },
   { type: 'decision' as const, re: /\b(?:decided|agreed|confirmed|approved|resolved|let's go with|we're going with)\b[^.!?\n]{3,60}/gi },
@@ -46,13 +21,38 @@ const KEY_PATTERNS = [
   { type: 'number' as const,   re: /\b(?:\$|€|£)?\d[\d,.]*\s*(?:million|billion|percent|%|k\b|m\b)?/gi },
 ];
 
-export function useSpeechTranscription(speakerName: string) {
+const ASR_WS_URL = import.meta.env.VITE_ASR_WS_URL
+  ?? (typeof window !== 'undefined'
+    ? `${window.location.protocol === 'https:' ? 'wss' : 'ws'}://${window.location.host}/asr`
+    : 'ws://localhost:8765');
+const SAMPLE_RATE = 16000;
+
+interface RemotePeer { id: string; name: string; stream: MediaStream | null }
+
+interface AudioPipeline {
+  ws: WebSocket;
+  audioCtx: AudioContext;
+  processor: ScriptProcessorNode;
+  buffer: Float32Array[];
+}
+
+export function useSpeechTranscription(speakerName: string, remotePeers: RemotePeer[] = []) {
   const [isActive, setIsActive] = useState(false);
-  const [isSupported] = useState(() => 'SpeechRecognition' in window || 'webkitSpeechRecognition' in window);
+  const [isSupported] = useState(() => !!(navigator.mediaDevices && window.AudioContext));
   const [lines, setLines] = useState<TranscriptLine[]>([]);
   const [keyPoints, setKeyPoints] = useState<KeyPoint[]>([]);
-  const recognitionRef = useRef<ISpeechRecognition | null>(null);
-  const interimIdRef = useRef<string>(`interim-${Date.now()}`);
+
+  // Local mic pipeline
+  const localPipelineRef = useRef<{
+    ws: WebSocket | null;
+    audioCtx: AudioContext | null;
+    processor: ScriptProcessorNode | null;
+    stream: MediaStream | null;
+  }>({ ws: null, audioCtx: null, processor: null, stream: null });
+
+  // Remote peer pipelines keyed by peer id
+  const remotePipelinesRef = useRef<Map<string, AudioPipeline>>(new Map());
+  const isActiveRef = useRef(false);
 
   const extractKeyPoints = useCallback((text: string) => {
     const found: KeyPoint[] = [];
@@ -69,93 +69,127 @@ export function useSpeechTranscription(speakerName: string) {
     return found;
   }, []);
 
-  const start = useCallback(() => {
-    if (!isSupported || recognitionRef.current) return;
-
-    const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
-    if (!SR) return;
-    const recognition = new SR();
-    recognition.continuous = true;
-    recognition.interimResults = true;
-    recognition.lang = 'en-US';
-    recognition.maxAlternatives = 1;
-
-    recognition.onresult = (event: ISpeechRecognitionEvent) => {
-      let interim = '';
-      for (let i = event.resultIndex; i < event.results.length; i++) {
-        const result = event.results[i];
-        if (result.isFinal) {
-          const text = result[0].transcript.trim();
-          if (!text) continue;
-          const finalLine: TranscriptLine = {
-            id: `line-${Date.now()}-${Math.random()}`,
-            text,
-            isFinal: true,
-            timestamp: new Date().toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' }),
-            speaker: speakerName,
-          };
-          setLines(prev => {
-            // Replace the interim line with the final one
-            const filtered = prev.filter(l => l.id !== interimIdRef.current);
-            return [...filtered, finalLine].slice(-50);
-          });
-          interimIdRef.current = `interim-${Date.now()}`;
-
-          // Extract key points from final text
-          const newPoints = extractKeyPoints(text);
-          if (newPoints.length) {
-            setKeyPoints(prev => [...prev, ...newPoints].slice(-20));
-          }
-        } else {
-          interim += result[0].transcript;
-        }
-      }
-
-      if (interim) {
-        setLines(prev => {
-          const filtered = prev.filter(l => l.id !== interimIdRef.current);
-          const interimLine: TranscriptLine = {
-            id: interimIdRef.current,
-            text: interim,
-            isFinal: false,
-            timestamp: new Date().toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' }),
-            speaker: speakerName,
-          };
-          return [...filtered, interimLine].slice(-50);
-        });
-      }
+  const addFinalLine = useCallback((text: string, speaker: string) => {
+    const line: TranscriptLine = {
+      id: `line-${Date.now()}-${Math.random()}`,
+      text,
+      isFinal: true,
+      timestamp: new Date().toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' }),
+      speaker,
     };
+    setLines(prev => [...prev, line].slice(-50));
+    const kps = extractKeyPoints(text);
+    if (kps.length) setKeyPoints(prev => [...prev, ...kps].slice(-20));
+  }, [extractKeyPoints]);
 
-    recognition.onerror = (event: ISpeechRecognitionErrorEvent) => {
-      if (event.error === 'no-speech') return; // normal timeout
-      console.warn('[Transcription] error:', event.error);
-      if (event.error === 'not-allowed') setIsActive(false);
+  const openAsrWs = useCallback((speaker: string, onMessage: (text: string) => void): Promise<WebSocket> => {
+    return new Promise((resolve, reject) => {
+      const ws = new WebSocket(ASR_WS_URL);
+      ws.binaryType = 'arraybuffer';
+      ws.onmessage = (ev) => {
+        try {
+          const msg = JSON.parse(ev.data as string);
+          if (msg.type === 'transcript' && msg.text) onMessage(msg.text);
+        } catch {}
+      };
+      ws.onerror = () => reject(new Error('WS error'));
+      const timeout = setTimeout(() => reject(new Error('WS connect timeout')), 5000);
+      ws.onopen = () => { clearTimeout(timeout); resolve(ws); };
+      ws.onclose = () => {
+        // Pipeline already torn down if we initiated; otherwise stop everything
+        if (isActiveRef.current) stop();
+      };
+    });
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const buildAudioPipeline = useCallback((
+    ws: WebSocket,
+    stream: MediaStream,
+  ): { audioCtx: AudioContext; processor: ScriptProcessorNode } => {
+    const audioCtx = new AudioContext({ sampleRate: SAMPLE_RATE });
+    const source = audioCtx.createMediaStreamSource(stream);
+    const processor = audioCtx.createScriptProcessor(4096, 1, 1);
+    processor.onaudioprocess = (ev) => {
+      if (ws.readyState !== WebSocket.OPEN) return;
+      const data = ev.inputBuffer.getChannelData(0);
+      ws.send(data.buffer.slice(0));
     };
+    source.connect(processor);
+    processor.connect(audioCtx.destination);
+    return { audioCtx, processor };
+  }, []);
 
-    recognition.onend = () => {
-      // Auto-restart if still active
-      if (recognitionRef.current) {
-        try { recognitionRef.current.start(); } catch {}
-      }
-    };
-
-    recognitionRef.current = recognition;
-    try {
-      recognition.start();
-      setIsActive(true);
-    } catch (e) {
-      console.warn('[Transcription] start failed', e);
+  const teardownPipeline = useCallback((p: { ws: WebSocket | null; audioCtx: AudioContext | null; processor: ScriptProcessorNode | null; stream?: MediaStream | null }) => {
+    if (p.ws && p.ws.readyState === WebSocket.OPEN) {
+      p.ws.send(JSON.stringify({ type: 'flush' }));
+      p.ws.close();
     }
-  }, [isSupported, speakerName, extractKeyPoints]);
+    p.processor?.disconnect();
+    p.audioCtx?.close();
+    if (p.stream) p.stream.getTracks().forEach(t => t.stop());
+  }, []);
 
   const stop = useCallback(() => {
-    if (recognitionRef.current) {
-      recognitionRef.current.onend = null; // prevent auto-restart
-      recognitionRef.current.stop();
-      recognitionRef.current = null;
-    }
+    isActiveRef.current = false;
+    const lp = localPipelineRef.current;
+    teardownPipeline({ ws: lp.ws, audioCtx: lp.audioCtx, processor: lp.processor, stream: lp.stream });
+    localPipelineRef.current = { ws: null, audioCtx: null, processor: null, stream: null };
+
+    remotePipelinesRef.current.forEach(rp => {
+      teardownPipeline({ ws: rp.ws, audioCtx: rp.audioCtx, processor: rp.processor });
+    });
+    remotePipelinesRef.current.clear();
+
     setIsActive(false);
-  }, []);
+  }, [teardownPipeline]);
+
+  const start = useCallback(async () => {
+    if (isActiveRef.current) return;
+    try {
+      const micStream = await navigator.mediaDevices.getUserMedia({
+        audio: { sampleRate: SAMPLE_RATE, channelCount: 1, echoCancellation: true, noiseSuppression: true },
+        video: false,
+      });
+
+      const localWs = await openAsrWs(speakerName, (text) => addFinalLine(text, speakerName));
+      const { audioCtx, processor } = buildAudioPipeline(localWs, micStream);
+
+      localPipelineRef.current = { ws: localWs, audioCtx, processor, stream: micStream };
+      isActiveRef.current = true;
+      setIsActive(true);
+    } catch (e) {
+      console.error('[ASR] Failed to start:', e);
+      stop();
+    }
+  }, [speakerName, openAsrWs, buildAudioPipeline, addFinalLine, stop]);
+
+  // Sync remote peers: open/close pipelines as peers join/leave
+  useEffect(() => {
+    if (!isActiveRef.current) return;
+
+    const existing = remotePipelinesRef.current;
+    const currentIds = new Set(remotePeers.map(p => p.id));
+
+    // Tear down pipelines for peers that left
+    existing.forEach((rp, id) => {
+      if (!currentIds.has(id)) {
+        teardownPipeline({ ws: rp.ws, audioCtx: rp.audioCtx, processor: rp.processor });
+        existing.delete(id);
+      }
+    });
+
+    // Open pipelines for new peers that have a stream
+    remotePeers.forEach(async (peer) => {
+      if (!peer.stream || existing.has(peer.id)) return;
+      try {
+        const ws = await openAsrWs(peer.name, (text) => addFinalLine(text, peer.name));
+        const { audioCtx, processor } = buildAudioPipeline(ws, peer.stream);
+        existing.set(peer.id, { ws, audioCtx, processor, buffer: [] });
+      } catch (e) {
+        console.warn('[ASR] Remote pipeline failed for', peer.name, e);
+      }
+    });
+  }, [remotePeers, isActive, openAsrWs, buildAudioPipeline, addFinalLine, teardownPipeline]);
 
   const clearAll = useCallback(() => {
     setLines([]);

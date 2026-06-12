@@ -28,7 +28,7 @@ function formatCallTime(ts: number): string {
 export default function CallsView({ onJoinMeeting }: { onJoinMeeting: () => void }) {
   const { currentUser, allUsers } = useAuth();
   const { createMeeting } = useMeeting();
-  const { startDM } = useChat();
+  const { startDM, notifyCallInvite } = useChat();
   const [calls, setCalls] = useState<CallRecord[]>([]);
   const [search, setSearch] = useState('');
   const [viewingUser, setViewingUser] = useState<IBUser | null>(null);
@@ -48,7 +48,8 @@ export default function CallsView({ onJoinMeeting }: { onJoinMeeting: () => void
     if (!currentUser) return;
     setCalling(user.id);
     try {
-      await createMeeting();
+      const roomId = await createMeeting();
+      notifyCallInvite(user.id, roomId, currentUser.displayName);
       // Log call record
       const record: CallRecord = {
         id: `call-${Date.now()}`,

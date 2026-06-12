@@ -117,12 +117,30 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   // Update allUsers list when status events arrive via ChatContext (forwarded externally)
   const updateUserStatus = useCallback((userId: string, status: string) => {
-    setAllUsers(prev => prev.map(u => u.id === userId ? { ...u, status: status as IBUser['status'] } : u));
+    setAllUsers(prev => {
+      const known = prev.find(u => u.id === userId);
+      if (!known) {
+        // New user we don't have yet — re-fetch the full list
+        api.getUsers().then(users => setAllUsers(users.map(toIBUser))).catch(() => {});
+        return prev;
+      }
+      return prev.map(u => u.id === userId ? { ...u, status: status as IBUser['status'] } : u);
+    });
     setCurrentUser(prev => prev?.id === userId ? { ...prev, status: status as IBUser['status'] } : prev);
   }, []);
 
   // Expose updateUserStatus on the context via a ref so ChatContext can call it
   (AuthProvider as unknown as { _updateStatus?: typeof updateUserStatus })._updateStatus = updateUserStatus;
+
+  // Listen for status events forwarded by ChatContext via window events
+  useEffect(() => {
+    const handler = (e: Event) => {
+      const { id, status } = (e as CustomEvent<{ id: string; status: string }>).detail;
+      updateUserStatus(id, status);
+    };
+    window.addEventListener('ibconnect_auth_status', handler);
+    return () => window.removeEventListener('ibconnect_auth_status', handler);
+  }, [updateUserStatus]);
 
   return (
     <AuthContext.Provider value={{ currentUser, allUsers, isLoading, login, signup, logout, updateUser, updateProfile, getUserById }}>
