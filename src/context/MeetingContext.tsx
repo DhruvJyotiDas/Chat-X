@@ -76,6 +76,29 @@ export function MeetingProvider({ children }: { children: React.ReactNode }) {
   const [showGuestModal, setShowGuestModal] = useState(false);
   const [pendingJoinCode, setPendingJoinCode] = useState<string | null>(null);
 
+  // Single source of truth for keeping the address bar in sync with the active room,
+  // no matter how the meeting was entered (Start Meeting, join code, schedule link,
+  // or a direct call from a profile/Contacts). Previously each entry point had to
+  // remember to call `history.replaceState` itself — CallsView's direct-call flow
+  // never did, so the caller's URL stayed on `/` while the callee's (joined via
+  // DebriefView, which did remember) updated correctly. Centralizing it here means
+  // every future call site gets this for free. Only reacts to actual isInMeeting
+  // transitions (via the ref) rather than "reset to / whenever not in a meeting",
+  // so it doesn't stomp on a `/:roomCode` URL someone landed on before joining.
+  const wasInMeetingRef = useRef(false);
+  useEffect(() => {
+    if (isInMeeting && roomId) {
+      if (window.location.pathname !== `/${roomId}`) {
+        window.history.replaceState(null, '', `/${roomId}`);
+      }
+    } else if (wasInMeetingRef.current && !isInMeeting) {
+      if (window.location.pathname !== '/') {
+        window.history.replaceState(null, '', '/');
+      }
+    }
+    wasInMeetingRef.current = isInMeeting;
+  }, [isInMeeting, roomId]);
+
   const userIdRef = useRef(user.id);
   useEffect(() => { userIdRef.current = user.id; }, [user.id]);
   const currentRecordIdRef = useRef<string | null>(null);

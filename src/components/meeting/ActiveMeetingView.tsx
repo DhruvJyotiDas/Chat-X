@@ -528,7 +528,7 @@ export default function ActiveMeetingView({ onLeaveMeeting }: Props) {
 
   const handleLeave = useCallback(() => {
     stopTranscription(); leaveMeeting();
-    window.history.replaceState(null, '', '/'); onLeaveMeeting();
+    onLeaveMeeting();
   }, [stopTranscription, leaveMeeting, onLeaveMeeting]);
 
   // No dedicated participant-invite picker exists in the app yet — the closest

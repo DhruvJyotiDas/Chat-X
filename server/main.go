@@ -130,6 +130,11 @@ func bearerUID(r *http.Request) (string, error) {
 
 // ── Real-time chat WebSocket clients ─────────────────────────────────────────
 
+const (
+	chatPongWait   = 30 * time.Second
+	chatPingPeriod = (chatPongWait * 8) / 10
+)
+
 type ChatConn struct {
 	uid  string
 	conn *websocket.Conn
@@ -145,32 +150,60 @@ func (c *ChatConn) push(msgType string, payload any) {
 }
 
 var (
-	chatMu      sync.RWMutex
-	chatClients = map[string]*ChatConn{}
+	chatMu sync.RWMutex
+	// Same user can have several live connections at once (multiple tabs/devices) —
+	// this used to be a single *ChatConn per uid, so opening a second tab and later
+	// closing the first one would delete the *second* tab's (still-live) connection
+	// out of the map, wrongly broadcasting "offline" while the user was still
+	// connected, and silently killing push delivery (new messages, typing_start/stop)
+	// to their surviving tab until they refreshed. Track a set of connections per uid
+	// instead: "online" fires on the first connect, "offline" only on the last
+	// disconnect, and every push fans out to all of a user's live connections.
+	chatClients = map[string]map[*ChatConn]bool{}
 )
 
 func chatConnect(uid string, c *ChatConn) {
 	chatMu.Lock()
-	chatClients[uid] = c
+	conns, ok := chatClients[uid]
+	if !ok {
+		conns = map[*ChatConn]bool{}
+		chatClients[uid] = conns
+	}
+	isFirst := len(conns) == 0
+	conns[c] = true
 	chatMu.Unlock()
-	db.Exec(`UPDATE users SET status='online' WHERE id=?`, uid) //nolint
-	broadcastStatus(uid, "online")
+	if isFirst {
+		db.Exec(`UPDATE users SET status='online' WHERE id=?`, uid) //nolint
+		broadcastStatus(uid, "online")
+	}
 }
 
-func chatDisconnect(uid string) {
+func chatDisconnect(uid string, c *ChatConn) {
 	chatMu.Lock()
-	delete(chatClients, uid)
+	conns, ok := chatClients[uid]
+	isLast := false
+	if ok {
+		delete(conns, c)
+		if len(conns) == 0 {
+			delete(chatClients, uid)
+			isLast = true
+		}
+	}
 	chatMu.Unlock()
-	db.Exec(`UPDATE users SET status='offline' WHERE id=?`, uid) //nolint
-	broadcastStatus(uid, "offline")
+	if isLast {
+		db.Exec(`UPDATE users SET status='offline' WHERE id=?`, uid) //nolint
+		broadcastStatus(uid, "offline")
+	}
 }
 
 func broadcastStatus(uid, status string) {
 	chatMu.RLock()
 	defer chatMu.RUnlock()
 	payload := map[string]string{"id": uid, "status": status}
-	for _, c := range chatClients {
-		go c.push("user_status", payload)
+	for _, conns := range chatClients {
+		for c := range conns {
+			go c.push("user_status", payload)
+		}
 	}
 }
 
@@ -178,7 +211,7 @@ func pushTo(uids []string, msgType string, payload any) {
 	chatMu.RLock()
 	defer chatMu.RUnlock()
 	for _, uid := range uids {
-		if c, ok := chatClients[uid]; ok {
+		for c := range chatClients[uid] {
 			go c.push(msgType, payload)
 		}
 	}
@@ -530,8 +563,10 @@ func handleUpdateMe(w http.ResponseWriter, r *http.Request) {
 	db.QueryRow(`SELECT id,username,display_name,email,COALESCE(avatar,''),COALESCE(bio,''),status,created_at FROM users WHERE id=?`, uid).
 		Scan(&u.ID, &u.Username, &u.DisplayName, &u.Email, &u.Avatar, &u.Bio, &u.Status, &u.CreatedAt) //nolint
 	chatMu.RLock()
-	for _, c := range chatClients {
-		go c.push("user_updated", u)
+	for _, conns := range chatClients {
+		for c := range conns {
+			go c.push("user_updated", u)
+		}
 	}
 	chatMu.RUnlock()
 	ok(w, u)
@@ -864,8 +899,41 @@ func handleChatWS(w http.ResponseWriter, r *http.Request) {
 	}
 	c := &ChatConn{uid: claims.UserID, conn: conn}
 	chatConnect(claims.UserID, c)
+
+	// Without a keepalive, a connection that dies without a clean close frame
+	// (laptop sleep, wifi drop, browser force-quit, crash) is never noticed —
+	// conn.ReadMessage() below just blocks forever, so chatDisconnect never runs
+	// and the user is stuck showing "online" indefinitely. Pings force the issue:
+	// if no pong arrives within chatPongWait, the read deadline trips and
+	// ReadMessage returns an error, unblocking the loop and running the deferred
+	// cleanup below like any other disconnect.
+	conn.SetReadDeadline(time.Now().Add(chatPongWait)) //nolint
+	conn.SetPongHandler(func(string) error {
+		conn.SetReadDeadline(time.Now().Add(chatPongWait)) //nolint
+		return nil
+	})
+	pingDone := make(chan struct{})
+	go func() {
+		ticker := time.NewTicker(chatPingPeriod)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ticker.C:
+				c.mu.Lock()
+				err := conn.WriteControl(websocket.PingMessage, nil, time.Now().Add(10*time.Second))
+				c.mu.Unlock()
+				if err != nil {
+					return
+				}
+			case <-pingDone:
+				return
+			}
+		}
+	}()
+
 	defer func() {
-		chatDisconnect(claims.UserID)
+		close(pingDone)
+		chatDisconnect(claims.UserID, c)
 		conn.Close()
 	}()
 

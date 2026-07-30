@@ -26,8 +26,8 @@ export default function DebriefView({ onJoinMeeting, autoJoinCode, onAutoJoinCon
   const historyKey = `ibconnect_meeting_history_${currentUser?.id ?? 'guest'}`;
   const history: MeetingRecord[] = (() => { try { return JSON.parse(localStorage.getItem(historyKey) || '[]'); } catch { return []; } })();
 
-  const handleCreate = async () => { setIsCreating(true); clearMeetingError(); try { const roomCode = await createMeeting(); window.history.replaceState(null, '', `/${roomCode}`); onJoinMeeting(); } catch {} finally { setIsCreating(false); } };
-  const handleJoin = async (code?: string) => { const target = (code ?? meetingCode).trim().toUpperCase(); if (!target) return; setIsJoining(true); clearMeetingError(); try { const roomCode = await joinMeeting(target); window.history.replaceState(null, '', `/${roomCode}`); onJoinMeeting(); } catch {} finally { setIsJoining(false); } };
+  const handleCreate = async () => { setIsCreating(true); clearMeetingError(); try { await createMeeting(); onJoinMeeting(); } catch {} finally { setIsCreating(false); } };
+  const handleJoin = async (code?: string) => { const target = (code ?? meetingCode).trim().toUpperCase(); if (!target) return; setIsJoining(true); clearMeetingError(); try { await joinMeeting(target); onJoinMeeting(); } catch {} finally { setIsJoining(false); } };
 
   return (
     <div className="flex-1 overflow-y-auto p-3 sm:p-6 select-none scrollbar-hide">
