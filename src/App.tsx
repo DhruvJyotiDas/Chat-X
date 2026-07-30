@@ -34,9 +34,10 @@ import CommandPalette from './components/CommandPalette';
 import { AppView, ComplianceLog } from './types';
 import { initialComplianceLogs } from './data';
 import { useTheme } from './hooks/useTheme';
+import { api } from './lib/api';
 
 function AppContent({ pendingRoomCode }: { pendingRoomCode?: string }) {
-  const { currentUser, isLoading } = useAuth();
+  const { currentUser, isLoading, loginWithToken } = useAuth();
   const { isInMeeting, joinMeeting } = useMeeting();
   const { incomingCall, dismissIncomingCall, notifyCallAccepted, notifyCallDeclined } = useChat();
 
@@ -44,6 +45,44 @@ function AppContent({ pendingRoomCode }: { pendingRoomCode?: string }) {
   const [logs, setLogs] = useState<ComplianceLog[]>(initialComplianceLogs);
   const [searchFilter, setSearchFilter] = useState('');
   const [autoJoinCode, setAutoJoinCode] = useState<string | undefined>(pendingRoomCode);
+
+  // Completes the "Continue with IB" redirect: IB Account sends the browser
+  // back here with ?code&state (see LoginPage.tsx for the redirect out, and
+  // server/main.go's handleOIDCCallback for the token exchange this posts to).
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const code = params.get('code');
+    const oauthError = params.get('error');
+    if (!code && !oauthError) return;
+
+    window.history.replaceState({}, document.title, window.location.pathname);
+    if (oauthError) {
+      console.error('IB Account sign-in error:', oauthError);
+      return;
+    }
+
+    const state = params.get('state');
+    const expectedState = sessionStorage.getItem('ib_oidc_state');
+    const verifier = sessionStorage.getItem('ib_oidc_verifier');
+    const nonce = sessionStorage.getItem('ib_oidc_nonce');
+    const pendingJoinCode = sessionStorage.getItem('ib_oidc_pending_join_code');
+    sessionStorage.removeItem('ib_oidc_state');
+    sessionStorage.removeItem('ib_oidc_verifier');
+    sessionStorage.removeItem('ib_oidc_nonce');
+    sessionStorage.removeItem('ib_oidc_pending_join_code');
+
+    if (!state || state !== expectedState || !verifier || !nonce) {
+      console.error('IB Account sign-in: state mismatch, aborting');
+      return;
+    }
+
+    api.oidcCallback(code!, verifier, nonce)
+      .then(({ token, user }) => {
+        loginWithToken(token, user);
+        if (pendingJoinCode) setAutoJoinCode(pendingJoinCode);
+      })
+      .catch(e => console.error('IB Account sign-in failed:', e));
+  }, [loginWithToken]);
 
   useEffect(() => {
     if (isInMeeting) setCurrentView('active_meeting');
@@ -198,34 +237,6 @@ function RoomCodeRoute() {
 
 export default function App() {
   useTheme();
-
-  useEffect(() => {
-    const params = new URLSearchParams(window.location.search);
-    const urlToken = params.get('token');
-
-    if (urlToken) {
-      console.log("SSO: Processing new token from URL...");
-      localStorage.setItem('ibconnect_jwt', urlToken);
-      fetch(`/api/auth/me?token=${urlToken}`)
-        .then(res => res.json())
-        .then(user => {
-          if (user && user.id) {
-            localStorage.setItem('ibconnect_me', JSON.stringify({
-              id: user.id,
-              displayName: user.displayName,
-              username: user.username,
-              email: user.email,
-              avatar: user.avatar
-            }));
-          }
-        })
-        .catch(e => console.error("SSO fetch error:", e))
-        .finally(() => {
-          window.history.replaceState({}, document.title, window.location.pathname);
-          window.location.reload();
-        });
-    }
-  }, []);
 
   return (
     <AuthProvider>

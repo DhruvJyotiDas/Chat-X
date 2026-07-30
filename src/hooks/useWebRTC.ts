@@ -51,6 +51,18 @@ export function useWebRTC(socket: SignalingSocket | null) {
   const peersRef = useRef<PeerInfo[]>([]);
   useEffect(() => { peersRef.current = peers; }, [peers]);
 
+  // Watchdog timers keyed the same way as the ICE queues (`cam:id` / `in:id` / `out:id`).
+  // A peer that vanishes uncleanly (laptop closed, network dies, browser force-quit) never
+  // sends the app-level "I'm leaving"/"I stopped sharing" message, so without this a remote
+  // tile just freezes on its last frame forever. ICE itself still notices — connectivity
+  // checks fail independently of our signaling socket — so once a connection has been
+  // 'failed' for a few seconds with no recovery, we tear it down ourselves.
+  const iceCleanupTimersRef = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map());
+  const clearIceCleanupTimer = useCallback((key: string) => {
+    const t = iceCleanupTimersRef.current.get(key);
+    if (t) { clearTimeout(t); iceCleanupTimersRef.current.delete(key); }
+  }, []);
+
   // outgoing (we're sharing our screen to a peer) / incoming (a peer is sharing to us)
   const outScreenPcsRef = useRef<Map<string, RTCPeerConnection>>(new Map());
   const inScreenPcsRef = useRef<Map<string, RTCPeerConnection>>(new Map());
@@ -158,11 +170,27 @@ export function useWebRTC(socket: SignalingSocket | null) {
     };
 
     pc.oniceconnectionstatechange = () => {
-      if (pc.iceConnectionState === 'failed') pc.restartIce();
+      const state = pc.iceConnectionState;
+      if (state === 'connected' || state === 'completed') {
+        clearIceCleanupTimer(`cam:${peerId}`);
+        return;
+      }
+      if (state !== 'failed') return;
+      pc.restartIce();
+      if (iceCleanupTimersRef.current.has(`cam:${peerId}`)) return;
+      const timer = setTimeout(() => {
+        iceCleanupTimersRef.current.delete(`cam:${peerId}`);
+        if (pcsRef.current.get(peerId) !== pc) return; // already replaced/torn down elsewhere
+        if (pc.iceConnectionState === 'connected' || pc.iceConnectionState === 'completed') return;
+        pc.close();
+        pcsRef.current.delete(peerId);
+        setPeers((prev) => prev.filter((p) => p.id !== peerId));
+      }, 8000);
+      iceCleanupTimersRef.current.set(`cam:${peerId}`, timer);
     };
 
     return pc;
-  }, [attachTracksToConnection]);
+  }, [attachTracksToConnection, clearIceCleanupTimer]);
 
   const createOfferFor = useCallback(async (peerId: string) => {
     if (!cameraStreamRef.current) await initMedia();
@@ -213,13 +241,31 @@ export function useWebRTC(socket: SignalingSocket | null) {
 
   const makeScreenPc = useCallback((peerId: string, direction: 'in' | 'out'): RTCPeerConnection => {
     const pc = new RTCPeerConnection(ICE_SERVERS);
+    const timerKey = `${direction}:${peerId}`;
     pc.onicecandidate = (event) => {
       if (event.candidate && socketRef.current) {
         socketRef.current.send('ice_candidate', { to: peerId, candidate: event.candidate, kind: 'screen' });
       }
     };
     pc.oniceconnectionstatechange = () => {
-      if (pc.iceConnectionState === 'failed') pc.restartIce();
+      const state = pc.iceConnectionState;
+      if (state === 'connected' || state === 'completed') {
+        clearIceCleanupTimer(timerKey);
+        return;
+      }
+      if (state !== 'failed') return;
+      pc.restartIce();
+      if (iceCleanupTimersRef.current.has(timerKey)) return;
+      const timer = setTimeout(() => {
+        iceCleanupTimersRef.current.delete(timerKey);
+        const map = direction === 'in' ? inScreenPcsRef.current : outScreenPcsRef.current;
+        if (map.get(peerId) !== pc) return; // already replaced/torn down elsewhere
+        if (pc.iceConnectionState === 'connected' || pc.iceConnectionState === 'completed') return;
+        pc.close();
+        map.delete(peerId);
+        if (direction === 'in') setScreenPeers((prev) => prev.filter((p) => p.id !== peerId));
+      }, 8000);
+      iceCleanupTimersRef.current.set(timerKey, timer);
     };
     if (direction === 'in') {
       pc.ontrack = (event) => {
@@ -234,7 +280,7 @@ export function useWebRTC(socket: SignalingSocket | null) {
       };
     }
     return pc;
-  }, []);
+  }, [clearIceCleanupTimer]);
 
   const drainScreenIce = useCallback(async (key: string, pc: RTCPeerConnection) => {
     const queue = screenIceQueueRef.current.get(key) ?? [];
@@ -304,8 +350,9 @@ export function useWebRTC(socket: SignalingSocket | null) {
     const pc = inScreenPcsRef.current.get(peerId);
     if (pc) { pc.close(); inScreenPcsRef.current.delete(peerId); }
     screenIceQueueRef.current.delete(`in:${peerId}`);
+    clearIceCleanupTimer(`in:${peerId}`);
     setScreenPeers((prev) => prev.filter((p) => p.id !== peerId));
-  }, []);
+  }, [clearIceCleanupTimer]);
 
   useEffect(() => {
     if (!socket) return;
@@ -330,11 +377,13 @@ export function useWebRTC(socket: SignalingSocket | null) {
         if (pc) { pc.close(); pcsRef.current.delete(peer_id); }
         iceQueueRef.current.delete(peer_id);
         peerNamesRef.current.delete(peer_id);
+        clearIceCleanupTimer(`cam:${peer_id}`);
         setPeers((prev) => prev.filter((p) => p.id !== peer_id));
 
         const outPc = outScreenPcsRef.current.get(peer_id);
         if (outPc) { outPc.close(); outScreenPcsRef.current.delete(peer_id); }
         screenIceQueueRef.current.delete(`out:${peer_id}`);
+        clearIceCleanupTimer(`out:${peer_id}`);
         closeInboundScreen(peer_id);
       }),
       socket.on('offer', (payload) => {
@@ -371,7 +420,7 @@ export function useWebRTC(socket: SignalingSocket | null) {
       }),
     ];
     return () => unsubs.forEach((u) => u());
-  }, [socket, handleOffer, handleAnswer, handleIceCandidate, handleScreenOffer, handleScreenAnswer, handleScreenIce, createScreenOfferFor, closeInboundScreen]);
+  }, [socket, handleOffer, handleAnswer, handleIceCandidate, handleScreenOffer, handleScreenAnswer, handleScreenIce, createScreenOfferFor, closeInboundScreen, clearIceCleanupTimer]);
 
   const toggleMic = useCallback(() => {
     if (!cameraStreamRef.current) return;
@@ -379,23 +428,68 @@ export function useWebRTC(socket: SignalingSocket | null) {
     setIsMuted((prev) => !prev);
   }, []);
 
-  const toggleCamera = useCallback(() => {
-    if (!cameraStreamRef.current) return;
-    const tracks = cameraStreamRef.current.getVideoTracks();
-    if (tracks.length === 0) return;
-    tracks.forEach((t) => { t.enabled = !t.enabled; });
-    setIsVideoOff(!tracks[0].enabled);
+  // Renegotiates every live camera connection so a peer connection actually reflects
+  // whether we currently have a video track to send — used any time toggleCamera
+  // adds or removes the local video track (renegotiation, not replaceTrack, because
+  // switchCamera/switchMic already own the "keep the same track slot alive" case).
+  const renegotiateCamera = useCallback(async () => {
+    await Promise.all([...pcsRef.current.entries()].map(async ([peerId, pc]) => {
+      try {
+        const offer = await pc.createOffer();
+        await pc.setLocalDescription(offer);
+        socketRef.current?.send('offer', { to: peerId, sdp: pc.localDescription });
+      } catch (err) {}
+    }));
   }, []);
+
+  const toggleCamera = useCallback(async () => {
+    if (!cameraStreamRef.current) return;
+
+    if (!isVideoOff) {
+      // Turning OFF: fully stop the hardware track (not just `enabled = false`) so the
+      // OS camera indicator actually turns off, and remove the sender + renegotiate so
+      // remote peers' video element cleanly empties instead of freezing mid-stream.
+      const tracks = cameraStreamRef.current.getVideoTracks();
+      if (tracks.length === 0) return;
+      tracks.forEach((track) => {
+        pcsRef.current.forEach((pc) => {
+          const sender = pc.getSenders().find((s) => s.track === track);
+          if (sender) { try { pc.removeTrack(sender); } catch (err) {} }
+        });
+        track.stop();
+        cameraStreamRef.current!.removeTrack(track);
+      });
+      setIsVideoOff(true);
+      setLocalStream(cameraStreamRef.current);
+      await renegotiateCamera();
+      return;
+    }
+
+    // Turning ON: the previous track was fully released above, so re-acquire fresh
+    // hardware access rather than just re-enabling a dead track.
+    try {
+      const newStream = await navigator.mediaDevices.getUserMedia({ video: true });
+      const newTrack = newStream.getVideoTracks()[0];
+      if (!newTrack) return;
+      cameraStreamRef.current.addTrack(newTrack);
+      pcsRef.current.forEach((pc) => { try { pc.addTrack(newTrack, cameraStreamRef.current!); } catch (err) {} });
+      setIsVideoOff(false);
+      setLocalStream(cameraStreamRef.current);
+      await renegotiateCamera();
+    } catch (err) {
+      console.error('[toggleCamera] failed to re-acquire camera', err);
+    }
+  }, [isVideoOff, renegotiateCamera]);
 
   const stopScreenShare = useCallback(() => {
     screenStreamRef.current?.getTracks().forEach((t) => t.stop());
     screenStreamRef.current = null;
     setScreenStream(null);
     setIsScreenSharing(false);
-    outScreenPcsRef.current.forEach((pc) => pc.close());
+    outScreenPcsRef.current.forEach((pc, peerId) => { pc.close(); clearIceCleanupTimer(`out:${peerId}`); });
     outScreenPcsRef.current.clear();
     socketRef.current?.send('screen_share_state', { sharing: false });
-  }, []);
+  }, [clearIceCleanupTimer]);
 
   const toggleScreenShare = useCallback(async () => {
     if (isScreenSharing) {
@@ -461,6 +555,8 @@ export function useWebRTC(socket: SignalingSocket | null) {
     inScreenPcsRef.current.forEach((pc) => pc.close());
     inScreenPcsRef.current.clear();
     screenIceQueueRef.current.clear();
+    iceCleanupTimersRef.current.forEach((t) => clearTimeout(t));
+    iceCleanupTimersRef.current.clear();
     cameraStreamRef.current?.getTracks().forEach((t) => t.stop());
     screenStreamRef.current?.getTracks().forEach((t) => t.stop());
     cameraStreamRef.current = null;

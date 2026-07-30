@@ -33,20 +33,17 @@ async function request<T>(method: string, path: string, body?: unknown): Promise
 }
 
 export const api = {
-  // ── Auth ──────────────────────────────────────────────────────────────────
-  signup: (username: string, displayName: string, email: string, password: string, avatar?: string) =>
-    request<{ token: string; user: ApiUser }>('POST', '/auth/signup', { username, displayName, email, password, avatar }),
-
-  login: (email: string, password: string) =>
-    request<{ token: string; user: ApiUser }>('POST', '/auth/login', { email, password }),
+  // ── Auth (Continue with IB) ─────────────────────────────────────────────
+  // Exchanges an IB Account authorization code (+ PKCE verifier) for an IB
+  // Connect session — the only way a session is ever created; password
+  // login/signup live entirely on the IB Account hosted pages now.
+  oidcCallback: (code: string, codeVerifier: string, nonce: string) =>
+    request<{ token: string; user: ApiUser }>('POST', '/auth/oidc/callback', { code, code_verifier: codeVerifier, nonce }),
 
   me: () => request<ApiUser>('GET', '/auth/me'),
 
   updateProfile: (fields: { displayName?: string; bio?: string; avatar?: string }) =>
     request<ApiUser>('PUT', '/auth/me', fields),
-
-  changePassword: (oldPassword: string, newPassword: string) =>
-    request<{ message: string }>('PUT', '/auth/password', { oldPassword, newPassword }),
 
   // ── Users ─────────────────────────────────────────────────────────────────
   getUsers: () => request<ApiUser[]>('GET', '/users'),

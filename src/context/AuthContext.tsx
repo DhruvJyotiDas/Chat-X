@@ -6,8 +6,7 @@ interface AuthContextType {
   currentUser: IBUser | null;
   allUsers: IBUser[];
   isLoading: boolean;
-  login: (email: string, password: string) => Promise<IBUser>;
-  signup: (username: string, displayName: string, email: string, password: string, avatar?: string) => Promise<IBUser>;
+  loginWithToken: (token: string, user: ApiUser) => IBUser;
   logout: () => void;
   updateUser: (updates: Partial<IBUser>) => void;
   updateProfile: (fields: { displayName?: string; bio?: string; avatar?: string }) => Promise<IBUser>;
@@ -65,20 +64,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       .finally(() => setIsLoading(false));
   }, []);
 
-  const signup = useCallback(async (
-    username: string, displayName: string, email: string, password: string, avatar?: string,
-  ): Promise<IBUser> => {
-    const { token, user } = await api.signup(username, displayName, email, password, avatar);
-    saveSession(token, user);
-    const ibUser = toIBUser(user);
-    setCurrentUser(ibUser);
-    // Refresh user list
-    api.getUsers().then(users => setAllUsers(users.map(toIBUser))).catch(() => {});
-    return ibUser;
-  }, []);
-
-  const login = useCallback(async (email: string, password: string): Promise<IBUser> => {
-    const { token, user } = await api.login(email, password);
+  // Called once IB Connect's own backend has exchanged an IB Account
+  // authorization code and returned its usual {token, user} shape — the
+  // "Continue with IB" flow's only entry point into a local session.
+  const loginWithToken = useCallback((token: string, user: ApiUser): IBUser => {
     saveSession(token, user);
     const ibUser = toIBUser(user);
     setCurrentUser(ibUser);
@@ -143,7 +132,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }, [updateUserStatus]);
 
   return (
-    <AuthContext.Provider value={{ currentUser, allUsers, isLoading, login, signup, logout, updateUser, updateProfile, getUserById }}>
+    <AuthContext.Provider value={{ currentUser, allUsers, isLoading, loginWithToken, logout, updateUser, updateProfile, getUserById }}>
       {children}
     </AuthContext.Provider>
   );

@@ -30,7 +30,7 @@ interface MeetingContextType {
   screenStream: MediaStream | null;
   screenPeers: PeerInfo[];
   toggleMic: () => void;
-  toggleCamera: () => void;
+  toggleCamera: () => Promise<void>;
   toggleScreenShare: () => Promise<void>;
   switchCamera: (deviceId: string) => Promise<void>;
   switchMic: (deviceId: string) => Promise<void>;
@@ -215,6 +215,26 @@ export function MeetingProvider({ children }: { children: React.ReactNode }) {
     socketRef.current = null; setSocketInstance(null); webrtc.cleanup();
     setIsInMeeting(false); setRoomId(null); setIsHost(false); setShowInviteDialog(false); setChatMessages([]);
   }, [webrtc, updateMeetingRecord]);
+
+  // Closing/refreshing the tab while in a call doesn't unmount React in time to run
+  // any cleanup through normal state updates. Without this, the local camera/mic
+  // hardware can stay held (and peers never learn we left, so their tile of us just
+  // freezes) until the browser eventually tears the page down on its own. `pagehide`
+  // fires reliably on tab close/navigation across browsers (unlike `beforeunload`,
+  // which some mobile browsers skip); both are wired for belt-and-suspenders.
+  useEffect(() => {
+    if (!isInMeeting) return;
+    const handleUnload = () => {
+      socketRef.current?.send('leave_room', {});
+      webrtc.cleanup();
+    };
+    window.addEventListener('pagehide', handleUnload);
+    window.addEventListener('beforeunload', handleUnload);
+    return () => {
+      window.removeEventListener('pagehide', handleUnload);
+      window.removeEventListener('beforeunload', handleUnload);
+    };
+  }, [isInMeeting, webrtc.cleanup]);
 
   const dismissInviteDialog = useCallback(() => setShowInviteDialog(false), []);
 

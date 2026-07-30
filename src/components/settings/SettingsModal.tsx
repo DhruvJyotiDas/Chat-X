@@ -1,7 +1,7 @@
 import React, { useState, useRef, useEffect } from 'react';
 import {
   X, Camera, User, Lock, Bell, LogOut, Check,
-  Eye, EyeOff, Loader2, Mail, AtSign, Calendar,
+  Loader2, Mail, AtSign, Calendar, ExternalLink,
   ChevronRight, Shield, Palette, Info, Sun, Moon, Monitor,
   MessageSquare, Video, Volume2, Smile,
 } from 'lucide-react';
@@ -302,113 +302,29 @@ function PreferencesTab() {
 // ── Security tab ──────────────────────────────────────────────────────────────
 
 function SecurityTab() {
-  const [oldPw, setOldPw] = useState('');
-  const [newPw, setNewPw] = useState('');
-  const [confirmPw, setConfirmPw] = useState('');
-  const [showOld, setShowOld] = useState(false);
-  const [showNew, setShowNew] = useState(false);
-  const [saving, setSaving] = useState(false);
-  const [saved, setSaved] = useState(false);
-  const [error, setError] = useState('');
-
-  const strength = !newPw ? 0 : newPw.length < 6 ? 1 : newPw.length < 10 ? 2 : /[A-Z]/.test(newPw) && /[0-9]/.test(newPw) ? 4 : 3;
-  const strengthLabel = ['', 'Too short', 'Weak', 'Good', 'Strong'];
-  const strengthColor = ['', 'bg-[#ffb4ab]', 'bg-[#ffd60a]', 'bg-[#70ffba]', 'bg-[#4dffb1]'];
-
-  const save = async () => {
-    setError('');
-    if (!oldPw) { setError('Enter your current password'); return; }
-    if (newPw.length < 6) { setError('New password must be at least 6 characters'); return; }
-    if (newPw !== confirmPw) { setError('Passwords do not match'); return; }
-    setSaving(true);
-    try {
-      await api.changePassword(oldPw, newPw);
-      setSaved(true);
-      setOldPw(''); setNewPw(''); setConfirmPw('');
-      setTimeout(() => setSaved(false), 3000);
-    } catch (e) {
-      setError(e instanceof Error ? e.message : 'Failed to change password');
-    } finally {
-      setSaving(false);
-    }
-  };
-
   return (
     <div className="flex flex-col gap-5">
       <div className="bg-[#568dff]/5 border border-[#568dff]/20 rounded-xl p-4 flex items-start gap-3">
         <Shield className="w-4 h-4 text-[#b0c6ff] shrink-0 mt-0.5" />
         <div>
-          <p className="text-xs font-semibold text-[#e5e2e1]">Change Password</p>
-          <p className="text-[10px] text-[#8c90a1] mt-0.5">Use a strong, unique password to keep your account secure.</p>
+          <p className="text-xs font-semibold text-[#e5e2e1]">Managed by IB Account</p>
+          <p className="text-[10px] text-[#8c90a1] mt-0.5">
+            IB Connect signs you in with Continue with IB and never sees your password. Change your
+            password, review sessions, or update security settings from your IB Account.
+          </p>
         </div>
       </div>
 
-      <Field label="Current Password">
-        <div className="relative">
-          <input
-            type={showOld ? 'text' : 'password'}
-            value={oldPw}
-            onChange={e => setOldPw(e.target.value)}
-            placeholder="Your current password"
-            className="w-full px-3 py-2.5 pr-10 bg-[#0e0e0e] border border-[#424655] rounded-xl text-xs text-[#e5e2e1] placeholder-[#8c90a1]/60 focus:border-[#568dff] outline-none transition-all"
-          />
-          <button onClick={() => setShowOld(v => !v)} className="absolute right-3 top-1/2 -translate-y-1/2 text-[#8c90a1] hover:text-[#b0c6ff] cursor-pointer">
-            {showOld ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
-          </button>
-        </div>
-      </Field>
-
-      <Field label="New Password">
-        <div className="relative">
-          <input
-            type={showNew ? 'text' : 'password'}
-            value={newPw}
-            onChange={e => setNewPw(e.target.value)}
-            placeholder="New password (min 6 characters)"
-            className="w-full px-3 py-2.5 pr-10 bg-[#0e0e0e] border border-[#424655] rounded-xl text-xs text-[#e5e2e1] placeholder-[#8c90a1]/60 focus:border-[#568dff] outline-none transition-all"
-          />
-          <button onClick={() => setShowNew(v => !v)} className="absolute right-3 top-1/2 -translate-y-1/2 text-[#8c90a1] hover:text-[#b0c6ff] cursor-pointer">
-            {showNew ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
-          </button>
-        </div>
-        {newPw && (
-          <div className="flex items-center gap-2 mt-1">
-            <div className="flex gap-1 flex-1">
-              {[1, 2, 3, 4].map(i => (
-                <div key={i} className={`h-1 flex-1 rounded-full transition-all ${i <= strength ? strengthColor[strength] : 'bg-[#424655]'}`} />
-              ))}
-            </div>
-            <span className={`text-[10px] font-semibold ${strength >= 3 ? 'text-[#70ffba]' : strength === 2 ? 'text-[#ffd60a]' : 'text-[#ffb4ab]'}`}>
-              {strengthLabel[strength]}
-            </span>
-          </div>
-        )}
-      </Field>
-
-      <Field label="Confirm New Password">
-        <input
-          type="password"
-          value={confirmPw}
-          onChange={e => setConfirmPw(e.target.value)}
-          placeholder="Repeat new password"
-          className="px-3 py-2.5 bg-[#0e0e0e] border border-[#424655] rounded-xl text-xs text-[#e5e2e1] placeholder-[#8c90a1]/60 focus:border-[#568dff] outline-none transition-all"
-        />
-        {confirmPw && newPw !== confirmPw && (
-          <p className="text-[10px] text-[#ffb4ab]">Passwords don't match</p>
-        )}
-      </Field>
-
-      {error && <p className="text-xs text-[#ffb4ab] bg-[#93000a]/20 border border-[#ffb4ab]/30 rounded-xl px-3 py-2">{error}</p>}
-      {saved && <p className="text-xs text-[#70ffba] bg-[#4dffb1]/10 border border-[#4dffb1]/30 rounded-xl px-3 py-2">✓ Password changed successfully</p>}
-
-      <button
-        onClick={save}
-        disabled={!oldPw || !newPw || !confirmPw || newPw !== confirmPw || saving}
-        className="w-full py-2.5 bg-[#568dff] text-[#002661] font-bold text-xs rounded-xl hover:bg-[#568dff]/90 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer transition-all flex items-center justify-center gap-2"
+      <a
+        href="https://meet.icebrkr.space/auth/account"
+        target="_blank"
+        rel="noopener noreferrer"
+        className="w-full py-2.5 bg-[#568dff] text-[#002661] font-bold text-xs rounded-xl hover:bg-[#568dff]/90 cursor-pointer transition-all flex items-center justify-center gap-2"
       >
-        {saving ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Lock className="w-3.5 h-3.5" />}
-        {saving ? 'Updating…' : 'Update Password'}
-      </button>
+        <Lock className="w-3.5 h-3.5" />
+        Manage password &amp; security
+        <ExternalLink className="w-3.5 h-3.5" />
+      </a>
     </div>
   );
 }

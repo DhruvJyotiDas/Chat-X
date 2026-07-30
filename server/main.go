@@ -2,7 +2,9 @@ package main
 
 import (
 	"crypto/rand"
+	"crypto/rsa"
 	"database/sql"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
@@ -11,6 +13,7 @@ import (
 	"net/http"
 	"net/http/httputil"
 	"net/url"
+	"os"
 	"strings"
 	"sync"
 	"time"
@@ -18,7 +21,6 @@ import (
 	"github.com/go-sql-driver/mysql"
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/gorilla/websocket"
-	"golang.org/x/crypto/bcrypt"
 )
 
 const (
@@ -267,123 +269,187 @@ func cors(next http.Handler) http.Handler {
 
 // ── Auth endpoints ────────────────────────────────────────────────────────────
 
-func handleSignup(w http.ResponseWriter, r *http.Request) {
-	var b struct {
-		Username    string `json:"username"`
-		DisplayName string `json:"displayName"`
-		Email       string `json:"email"`
-		Password    string `json:"password"`
-		Avatar      string `json:"avatar"`
+// ── Continue with IB (OIDC client of the IB Account identity provider) ──────
+//
+// IB Connect never collects or stores a password itself anymore: the hosted
+// IB Account login/register/OTP/forgot-password UI does that, and hands back
+// a verified OIDC id_token. This handler exchanges the authorization code
+// the browser received, verifies the id_token against IB Account's JWKS, and
+// upserts the local user row (matched by email so pre-existing accounts keep
+// their internal id — and therefore their calendar/calls/preferences
+// localStorage — unchanged) before minting IB Connect's own session JWT.
+
+var (
+	ibAccountIssuer       = strings.TrimSuffix(getenvOr("IB_ACCOUNT_ISSUER", "https://meet.icebrkr.space/auth"), "/")
+	ibAccountClientID     = os.Getenv("IB_ACCOUNT_CLIENT_ID")
+	ibAccountClientSecret = os.Getenv("IB_ACCOUNT_CLIENT_SECRET")
+	ibAccountRedirectURI  = getenvOr("IB_ACCOUNT_REDIRECT_URI", "https://meet.icebrkr.space/")
+
+	jwksMu      sync.RWMutex
+	jwksKeys    map[string]*rsa.PublicKey
+	jwksFetched time.Time
+)
+
+func getenvOr(key, fallback string) string {
+	if v := os.Getenv(key); v != "" {
+		return v
 	}
-	if json.NewDecoder(r.Body).Decode(&b) != nil || b.Username == "" || b.DisplayName == "" || b.Email == "" || len(b.Password) < 6 {
-		fail(w, "username, displayName, email and password (≥6 chars) required", 400)
-		return
-	}
-	hash, err := bcrypt.GenerateFromPassword([]byte(b.Password), 12)
-	if err != nil {
-		fail(w, "server error", 500)
-		return
-	}
-	id := "user-" + newID()
-	_, err = db.Exec(
-		`INSERT INTO users(id,username,display_name,email,password_hash,avatar,status) VALUES(?,?,?,?,?,?,'online')`,
-		id, strings.ToLower(b.Username), b.DisplayName, strings.ToLower(b.Email), string(hash), b.Avatar,
-	)
-	if err != nil {
-		if strings.Contains(err.Error(), "unique") || strings.Contains(err.Error(), "duplicate") {
-			fail(w, "Username or email already taken", 409)
-		} else {
-			fail(w, "server error", 500)
-		}
-		return
-	}
-	token, _ := signToken(id)
-	user := User{ID: id, Username: strings.ToLower(b.Username), DisplayName: b.DisplayName,
-		Email: strings.ToLower(b.Email), Avatar: b.Avatar, Status: "online", CreatedAt: time.Now()}
-	broadcastStatus(id, "online")
-	ok(w, map[string]any{"token": token, "user": user})
+	return fallback
 }
 
-func handleSSO(w http.ResponseWriter, r *http.Request) {
-	tokenParam := r.URL.Query().Get("token")
-	emailParam := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("e")))
+type oidcIDClaims struct {
+	Name          string `json:"name"`
+	Email         string `json:"email"`
+	EmailVerified bool   `json:"email_verified"`
+	Nonce         string `json:"nonce"`
+	jwt.RegisteredClaims
+}
 
-	if tokenParam == "" || emailParam == "" {
-		http.Redirect(w, r, "https://icebrkr.space/index.html?error=invalid_sso", http.StatusFound)
-		return
+// fetchJWKS returns IB Account's current signing keys, refreshing at most
+// every 10 minutes (rotation-tolerant: a kid miss forces an immediate
+// refetch in verifyIDToken's caller path isn't implemented here since a
+// 10-minute cache window is well within any reasonable rotation grace period).
+func fetchJWKS() (map[string]*rsa.PublicKey, error) {
+	jwksMu.RLock()
+	if jwksKeys != nil && time.Since(jwksFetched) < 10*time.Minute {
+		defer jwksMu.RUnlock()
+		return jwksKeys, nil
 	}
+	jwksMu.RUnlock()
 
-	verifyURL := fmt.Sprintf("https://icebrkr.space/auth.php?action=verify_meet_token&token=%s&e=%s", tokenParam, emailParam)
-	resp, err := http.Get(verifyURL)
-	if err != nil || resp.StatusCode != 200 {
-		http.Redirect(w, r, "https://icebrkr.space/index.html?error=sso_unauthorized", http.StatusFound)
-		return
+	resp, err := http.Get(ibAccountIssuer + "/oauth/jwks.json")
+	if err != nil {
+		return nil, err
 	}
 	defer resp.Body.Close()
-
-	var verifyData struct {
-		Valid bool   `json:"valid"`
-		Email string `json:"email"`
+	var doc struct {
+		Keys []struct {
+			Kid string `json:"kid"`
+			N   string `json:"n"`
+			E   string `json:"e"`
+		} `json:"keys"`
 	}
-	if err := json.NewDecoder(resp.Body).Decode(&verifyData); err != nil || !verifyData.Valid {
-		http.Redirect(w, r, "https://icebrkr.space/index.html?error=sso_invalid_data", http.StatusFound)
-		return
+	if err := json.NewDecoder(resp.Body).Decode(&doc); err != nil {
+		return nil, err
 	}
-
-	var u User
-	var hash string
-	err = db.QueryRow(
-		`SELECT id,username,display_name,email,COALESCE(avatar,''),COALESCE(bio,''),status,created_at,password_hash FROM users WHERE email=?`,
-		emailParam,
-	).Scan(&u.ID, &u.Username, &u.DisplayName, &u.Email, &u.Avatar, &u.Bio, &u.Status, &u.CreatedAt, &hash)
-
-	if err != nil {
-		baseUsername := strings.Split(emailParam, "@")[0]
-		fallbackHash, _ := bcrypt.GenerateFromPassword([]byte("placeholder_sso"), 12)
-		id := "user-" + newID()
-
-		_, err = db.Exec(
-			`INSERT INTO users(id,username,display_name,email,password_hash,avatar,status) VALUES(?,?,?,?,?,'','online')`,
-			id, strings.ToLower(baseUsername), baseUsername, emailParam, string(fallbackHash),
-		)
+	keys := make(map[string]*rsa.PublicKey, len(doc.Keys))
+	for _, k := range doc.Keys {
+		nBytes, err := base64.RawURLEncoding.DecodeString(k.N)
 		if err != nil {
-			http.Redirect(w, r, "https://icebrkr.space/index.html?error=sso_creation_failed", http.StatusFound)
-			return
+			continue
 		}
-		u.ID = id
-	} else {
-		db.Exec(`UPDATE users SET status='online' WHERE id=?`, u.ID) //nolint
-		broadcastStatus(u.ID, "online")
+		eBytes, err := base64.RawURLEncoding.DecodeString(k.E)
+		if err != nil {
+			continue
+		}
+		e := 0
+		for _, eb := range eBytes {
+			e = e<<8 | int(eb)
+		}
+		keys[k.Kid] = &rsa.PublicKey{N: new(big.Int).SetBytes(nBytes), E: e}
 	}
-
-	token, _ := signToken(u.ID)
-	http.SetCookie(w, &http.Cookie{Name: "token", Value: token, Path: "/"})
-	http.Redirect(w, r, "/?token="+token, http.StatusFound)
+	jwksMu.Lock()
+	jwksKeys = keys
+	jwksFetched = time.Now()
+	jwksMu.Unlock()
+	return keys, nil
 }
 
-func handleLogin(w http.ResponseWriter, r *http.Request) {
-	var b struct {
-		Email    string `json:"email"`
-		Password string `json:"password"`
-	}
-	json.NewDecoder(r.Body).Decode(&b) //nolint
-	var u User
-	var hash string
-	err := db.QueryRow(
-		`SELECT id,username,display_name,email,COALESCE(avatar,''),COALESCE(bio,''),status,created_at,password_hash FROM users WHERE email=?`,
-		strings.ToLower(b.Email),
-	).Scan(&u.ID, &u.Username, &u.DisplayName, &u.Email, &u.Avatar, &u.Bio, &u.Status, &u.CreatedAt, &hash)
+func verifyIDToken(idToken string) (*oidcIDClaims, error) {
+	var claims oidcIDClaims
+	_, err := jwt.ParseWithClaims(idToken, &claims, func(t *jwt.Token) (any, error) {
+		if _, ok := t.Method.(*jwt.SigningMethodRSA); !ok {
+			return nil, fmt.Errorf("unexpected signing method %v", t.Header["alg"])
+		}
+		kid, _ := t.Header["kid"].(string)
+		keys, err := fetchJWKS()
+		if err != nil {
+			return nil, err
+		}
+		key, ok := keys[kid]
+		if !ok {
+			return nil, fmt.Errorf("unknown signing key %q", kid)
+		}
+		return key, nil
+	}, jwt.WithIssuer(ibAccountIssuer), jwt.WithAudience(ibAccountClientID))
 	if err != nil {
-		fail(w, "No account found with this email", 401)
+		return nil, err
+	}
+	return &claims, nil
+}
+
+func handleOIDCCallback(w http.ResponseWriter, r *http.Request) {
+	var b struct {
+		Code         string `json:"code"`
+		CodeVerifier string `json:"code_verifier"`
+		Nonce        string `json:"nonce"`
+	}
+	if json.NewDecoder(r.Body).Decode(&b) != nil || b.Code == "" || b.CodeVerifier == "" || b.Nonce == "" {
+		fail(w, "invalid request", 400)
 		return
 	}
-	if bcrypt.CompareHashAndPassword([]byte(hash), []byte(b.Password)) != nil {
-		fail(w, "Incorrect password", 401)
+
+	form := url.Values{
+		"grant_type":    {"authorization_code"},
+		"code":          {b.Code},
+		"redirect_uri":  {ibAccountRedirectURI},
+		"code_verifier": {b.CodeVerifier},
+		"client_id":     {ibAccountClientID},
+		"client_secret": {ibAccountClientSecret},
+	}
+	tokenResp, err := http.PostForm(ibAccountIssuer+"/oauth/token", form)
+	if err != nil {
+		fail(w, "could not reach IB Account", 502)
 		return
 	}
-	db.Exec(`UPDATE users SET status='online' WHERE id=?`, u.ID) //nolint
-	u.Status = "online"
+	defer tokenResp.Body.Close()
+	var tokenData struct {
+		IDToken string `json:"id_token"`
+	}
+	if json.NewDecoder(tokenResp.Body).Decode(&tokenData) != nil || tokenResp.StatusCode != 200 || tokenData.IDToken == "" {
+		fail(w, "sign-in with IB Account failed", 401)
+		return
+	}
+
+	claims, err := verifyIDToken(tokenData.IDToken)
+	if err != nil || claims.Email == "" || claims.Subject == "" {
+		fail(w, "could not verify IB Account identity", 401)
+		return
+	}
+	if claims.Nonce != b.Nonce {
+		fail(w, "could not verify IB Account identity", 401)
+		return
+	}
+	email := strings.ToLower(strings.TrimSpace(claims.Email))
+	sub := claims.Subject
+	name := claims.Name
+	if name == "" {
+		name = strings.Split(email, "@")[0]
+	}
+
+	var u User
+	err = db.QueryRow(
+		`SELECT id,username,display_name,email,COALESCE(avatar,''),COALESCE(bio,''),status,created_at FROM users WHERE email=?`,
+		email,
+	).Scan(&u.ID, &u.Username, &u.DisplayName, &u.Email, &u.Avatar, &u.Bio, &u.Status, &u.CreatedAt)
+
+	if err != nil {
+		id := "user-" + newID()
+		baseUsername := strings.ToLower(strings.Split(email, "@")[0])
+		if _, insertErr := db.Exec(
+			`INSERT INTO users(id,username,display_name,email,password_hash,status,ib_sub,auth_provider) VALUES(?,?,?,?,'','online',?,'ib_account')`,
+			id, baseUsername, name, email, sub,
+		); insertErr != nil {
+			fail(w, "could not provision account", 500)
+			return
+		}
+		u = User{ID: id, Username: baseUsername, DisplayName: name, Email: email, Status: "online", CreatedAt: time.Now()}
+	} else {
+		db.Exec(`UPDATE users SET status='online', ib_sub=COALESCE(ib_sub,?), auth_provider='ib_account' WHERE id=?`, sub, u.ID) //nolint
+		u.Status = "online"
+	}
 	broadcastStatus(u.ID, "online")
+
 	token, _ := signToken(u.ID)
 	ok(w, map[string]any{"token": token, "user": u})
 }
@@ -469,35 +535,6 @@ func handleUpdateMe(w http.ResponseWriter, r *http.Request) {
 	}
 	chatMu.RUnlock()
 	ok(w, u)
-}
-
-func handleChangePassword(w http.ResponseWriter, r *http.Request) {
-	uid, err := bearerUID(r)
-	if err != nil {
-		fail(w, "unauthorized", 401)
-		return
-	}
-	var b struct {
-		OldPassword string `json:"oldPassword"`
-		NewPassword string `json:"newPassword"`
-	}
-	json.NewDecoder(r.Body).Decode(&b) //nolint
-	if len(b.NewPassword) < 6 {
-		fail(w, "New password must be at least 6 characters", 400)
-		return
-	}
-	var hash string
-	if db.QueryRow(`SELECT password_hash FROM users WHERE id=?`, uid).Scan(&hash) != nil {
-		fail(w, "user not found", 404)
-		return
-	}
-	if bcrypt.CompareHashAndPassword([]byte(hash), []byte(b.OldPassword)) != nil {
-		fail(w, "Current password is incorrect", 401)
-		return
-	}
-	newHash, _ := bcrypt.GenerateFromPassword([]byte(b.NewPassword), 12)
-	db.Exec(`UPDATE users SET password_hash=? WHERE id=?`, string(newHash), uid) //nolint
-	ok(w, map[string]string{"message": "Password updated successfully"})
 }
 
 // ── Users endpoint ────────────────────────────────────────────────────────────
@@ -922,6 +959,13 @@ func migrate() {
 			FOREIGN KEY (creator_id) REFERENCES users(id) ON DELETE CASCADE)`,
 		`CREATE INDEX IF NOT EXISTS idx_msg_thread ON messages(thread_id, created_at)`,
 		`CREATE INDEX IF NOT EXISTS idx_tm_user ON thread_members(user_id)`,
+		// Identity now comes from IB Account (see handleOIDCCallback) rather
+		// than a locally-collected password; CREATE TABLE IF NOT EXISTS above
+		// won't retrofit these onto an already-existing users table, so they
+		// need explicit ALTERs.
+		`ALTER TABLE users ADD COLUMN IF NOT EXISTS ib_sub VARCHAR(255) UNIQUE`,
+		`ALTER TABLE users ADD COLUMN IF NOT EXISTS auth_provider VARCHAR(20) DEFAULT 'local'`,
+		`ALTER TABLE users MODIFY password_hash TEXT NULL`,
 	} {
 		if _, err := db.Exec(s); err != nil {
 			log.Fatalf("migration: %v", err)
@@ -1165,14 +1209,10 @@ func main() {
 	mux.HandleFunc("/ws", handleSignaling)
 	mux.HandleFunc("/health", handleHealth)
 	mux.HandleFunc("/chat-ws", handleChatWS)
-	mux.HandleFunc("/api/auth/signup", handleSignup)
-	mux.HandleFunc("/api/sso", handleSSO)
-
-	mux.HandleFunc("/api/auth/login", handleLogin)
+	mux.HandleFunc("/api/auth/oidc/callback", handleOIDCCallback)
 	mux.HandleFunc("/api/auth/me", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == "PUT" { handleUpdateMe(w, r) } else { handleMe(w, r) }
 	})
-	mux.HandleFunc("/api/auth/password", handleChangePassword)
 	mux.HandleFunc("/api/users", handleUsers)
 	mux.HandleFunc("/api/threads", handleThreads)
 	mux.HandleFunc("/api/threads/", handleMessages)

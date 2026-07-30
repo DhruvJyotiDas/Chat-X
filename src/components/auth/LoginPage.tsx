@@ -1,59 +1,40 @@
-import React, { useState, useRef } from 'react';
-import { Hexagon, Eye, EyeOff, User, Mail, Lock, Camera, Building } from 'lucide-react';
-import { useAuth } from '../../context/AuthContext';
+import { Hexagon } from 'lucide-react';
+import { generatePKCE, randomState } from '../../lib/pkce';
+
+// One secure IB identity across every IB application — IB Connect never
+// collects or sees a password itself; see App.tsx's `code`/`state` callback
+// effect for the other half of this flow, and server/main.go's
+// handleOIDCCallback for the server-side token exchange.
+const IB_ACCOUNT_ISSUER = 'https://meet.icebrkr.space/auth';
+const IB_ACCOUNT_CLIENT_ID = 'ibc_C_gqO2jdhASAN73QgLG0LXbDM4osR046';
+const REDIRECT_URI = 'https://meet.icebrkr.space/';
 
 export default function LoginPage({ pendingJoinCode }: { pendingJoinCode?: string }) {
-  const { login, signup } = useAuth();
-  const [mode, setMode] = useState<'login' | 'signup'>('login');
-  const [email, setEmail] = useState('');
-  const [password, setPassword] = useState('');
-  const [username, setUsername] = useState('');
-  const [displayName, setDisplayName] = useState('');
-  const [avatarPreview, setAvatarPreview] = useState<string | undefined>();
-  const [avatarData, setAvatarData] = useState<string | undefined>();
-  const [showPw, setShowPw] = useState(false);
-  const [error, setError] = useState('');
-  const [loading, setLoading] = useState(false);
-  const fileRef = useRef<HTMLInputElement>(null);
+  const continueWithIB = async () => {
+    const { verifier, challenge } = await generatePKCE();
+    const state = randomState();
+    const nonce = randomState();
+    sessionStorage.setItem('ib_oidc_state', state);
+    sessionStorage.setItem('ib_oidc_verifier', verifier);
+    sessionStorage.setItem('ib_oidc_nonce', nonce);
+    if (pendingJoinCode) sessionStorage.setItem('ib_oidc_pending_join_code', pendingJoinCode);
 
-  const handleAvatarChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    if (file.size > 2 * 1024 * 1024) { setError('Profile pic must be under 2MB'); return; }
-    const reader = new FileReader();
-    reader.onload = (ev) => {
-      const data = ev.target?.result as string;
-      setAvatarPreview(data);
-      setAvatarData(data);
-    };
-    reader.readAsDataURL(file);
-  };
-
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setError('');
-    if (!email || !password) { setError('Email and password are required'); return; }
-    if (mode === 'signup' && (!username || !displayName)) { setError('All fields are required'); return; }
-    if (password.length < 6) { setError('Password must be at least 6 characters'); return; }
-
-    setLoading(true);
-    try {
-      if (mode === 'login') {
-        await login(email, password);
-      } else {
-        await signup(username, displayName, email, password, avatarData);
-      }
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Something went wrong');
-    } finally {
-      setLoading(false);
-    }
+    const params = new URLSearchParams({
+      response_type: 'code',
+      client_id: IB_ACCOUNT_CLIENT_ID,
+      redirect_uri: REDIRECT_URI,
+      scope: 'openid profile email',
+      state,
+      nonce,
+      code_challenge: challenge,
+      code_challenge_method: 'S256',
+    });
+    window.location.href = `${IB_ACCOUNT_ISSUER}/oauth/authorize?${params.toString()}`;
   };
 
   return (
     <div className="min-h-screen bg-[#0e0e0e] flex items-center justify-center p-4">
       <div className="w-full max-w-md">
-        {/* Logo */}
         <div className="flex flex-col items-center mb-8">
           <div className="w-14 h-14 rounded-2xl bg-[#0066FF] flex items-center justify-center shadow-[0_0_30px_rgba(0,102,255,0.4)] mb-4">
             <Hexagon className="w-8 h-8 text-white stroke-[2]" />
@@ -67,144 +48,18 @@ export default function LoginPage({ pendingJoinCode }: { pendingJoinCode?: strin
           )}
         </div>
 
-        {/* Card */}
-        <div className="bg-[#131313] border border-[#424655] rounded-2xl p-8 shadow-2xl">
-          {/* Tab toggle */}
-          <div className="flex bg-[#0e0e0e] rounded-xl p-1 mb-6">
-            <button
-              onClick={() => { setMode('login'); setError(''); }}
-              className={`flex-1 py-2 rounded-lg text-sm font-semibold transition-all ${mode === 'login' ? 'bg-[#568dff] text-[#002661]' : 'text-[#8c90a1] hover:text-[#e5e2e1]'}`}
-            >
-              Sign In
-            </button>
-            <button
-              onClick={() => { setMode('signup'); setError(''); }}
-              className={`flex-1 py-2 rounded-lg text-sm font-semibold transition-all ${mode === 'signup' ? 'bg-[#568dff] text-[#002661]' : 'text-[#8c90a1] hover:text-[#e5e2e1]'}`}
-            >
-              Create Account
-            </button>
-          </div>
-
-          <form onSubmit={handleSubmit} className="flex flex-col gap-4">
-            {/* Avatar upload (signup only) */}
-            {mode === 'signup' && (
-              <div className="flex justify-center mb-2">
-                <div className="relative">
-                  <div
-                    onClick={() => fileRef.current?.click()}
-                    className="w-20 h-20 rounded-full bg-[#201f1f] border-2 border-dashed border-[#424655] hover:border-[#568dff] cursor-pointer flex items-center justify-center overflow-hidden transition-colors"
-                  >
-                    {avatarPreview ? (
-                      <img src={avatarPreview} alt="Avatar" className="w-full h-full object-cover" />
-                    ) : (
-                      <div className="flex flex-col items-center text-[#8c90a1]">
-                        <Camera className="w-5 h-5 mb-1" />
-                        <span className="text-[9px]">Upload</span>
-                      </div>
-                    )}
-                  </div>
-                  <input ref={fileRef} type="file" accept="image/*" className="hidden" onChange={handleAvatarChange} />
-                </div>
-              </div>
-            )}
-
-            {mode === 'signup' && (
-              <>
-                <div className="relative">
-                  <User className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-[#8c90a1]" />
-                  <input
-                    type="text"
-                    placeholder="Username (e.g. john_doe)"
-                    value={username}
-                    onChange={e => setUsername(e.target.value.replace(/\s/g, '').toLowerCase())}
-                    className="w-full bg-[#0e0e0e] border border-[#424655] rounded-xl pl-10 pr-4 py-3 text-sm text-[#e5e2e1] placeholder-[#8c90a1]/60 focus:border-[#568dff] focus:ring-1 focus:ring-[#568dff] outline-none transition-all"
-                    autoComplete="username"
-                  />
-                </div>
-                <div className="relative">
-                  <User className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-[#8c90a1]" />
-                  <input
-                    type="text"
-                    placeholder="Display Name (e.g. John Doe)"
-                    value={displayName}
-                    onChange={e => setDisplayName(e.target.value)}
-                    className="w-full bg-[#0e0e0e] border border-[#424655] rounded-xl pl-10 pr-4 py-3 text-sm text-[#e5e2e1] placeholder-[#8c90a1]/60 focus:border-[#568dff] focus:ring-1 focus:ring-[#568dff] outline-none transition-all"
-                    autoComplete="name"
-                  />
-                </div>
-              </>
-            )}
-
-            <div className="relative">
-              <Mail className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-[#8c90a1]" />
-              <input
-                type="email"
-                placeholder="Email address"
-                value={email}
-                onChange={e => setEmail(e.target.value)}
-                className="w-full bg-[#0e0e0e] border border-[#424655] rounded-xl pl-10 pr-4 py-3 text-sm text-[#e5e2e1] placeholder-[#8c90a1]/60 focus:border-[#568dff] focus:ring-1 focus:ring-[#568dff] outline-none transition-all"
-                autoComplete="email"
-              />
-            </div>
-
-            <div className="relative">
-              <Lock className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-[#8c90a1]" />
-              <input
-                type={showPw ? 'text' : 'password'}
-                placeholder="Password (min 6 chars)"
-                value={password}
-                onChange={e => setPassword(e.target.value)}
-                className="w-full bg-[#0e0e0e] border border-[#424655] rounded-xl pl-10 pr-10 py-3 text-sm text-[#e5e2e1] placeholder-[#8c90a1]/60 focus:border-[#568dff] focus:ring-1 focus:ring-[#568dff] outline-none transition-all"
-                autoComplete={mode === 'login' ? 'current-password' : 'new-password'}
-              />
-              <button
-                type="button"
-                onClick={() => setShowPw(v => !v)}
-                className="absolute right-3 top-1/2 -translate-y-1/2 text-[#8c90a1] hover:text-[#e5e2e1]"
-              >
-                {showPw ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
-              </button>
-            </div>
-
-            {error && (
-              <div className="bg-[#93000a]/20 border border-[#ffb4ab]/30 rounded-xl px-4 py-3 text-xs text-[#ffb4ab]">
-                {error}
-              </div>
-            )}
-
-            <button
-              type="submit"
-              disabled={loading}
-              className="w-full bg-[#568dff] text-[#002661] font-bold py-3 rounded-xl hover:bg-[#568dff]/90 transition-colors disabled:opacity-50 disabled:cursor-not-allowed mt-2"
-            >
-              {loading ? 'Please wait...' : mode === 'login' ? 'Sign In' : 'Create Account'}
-            </button>
-          </form>
-
-          {/* BEAUTIFIED ENTERPRISE SSO BUTTON */}
-          <div className="mt-8 pt-6 border-t border-[#424655]/50 flex flex-col items-center">
-            <p className="text-center text-[10px] text-[#8c90a1] uppercase font-bold tracking-widest mb-4">
-              Enterprise Access
-            </p>
-            <button
-              type="button"
-              onClick={() => window.location.href = 'https://icebrkr.space'}
-              className="group relative w-full flex items-center justify-center gap-3 bg-gradient-to-r from-[#1a1c23] to-[#131313] text-[#b0c6ff] border border-[#568dff]/20 font-bold py-3.5 rounded-xl hover:border-[#568dff]/60 hover:shadow-[0_0_20px_rgba(86,141,255,0.15)] transition-all overflow-hidden"
-            >
-              <div className="absolute inset-0 bg-[#568dff]/5 group-hover:bg-[#568dff]/10 transition-colors" />
-              <Building className="w-5 h-5 z-10 text-[#568dff] group-hover:scale-110 transition-transform" />
-              <span className="z-10 tracking-wide">Sign in via IB Connect</span>
-            </button>
-          </div>
-
-          {mode === 'login' && (
-            <p className="text-center text-xs text-[#8c90a1] mt-5">
-              Don't have an account?{' '}
-              <button onClick={() => { setMode('signup'); setError(''); }} className="text-[#b0c6ff] hover:text-[#568dff] font-semibold transition-colors">
-                Create one
-              </button>
-            </p>
-          )}
+        <div className="bg-[#131313] border border-[#424655] rounded-2xl p-8 shadow-2xl flex flex-col items-center">
+          <p className="text-sm text-[#8c90a1] text-center mb-6">
+            One secure IB identity signs you into every IB application. IB Connect never sees your password.
+          </p>
+          <button
+            type="button"
+            onClick={continueWithIB}
+            className="group relative w-full flex items-center justify-center gap-3 bg-[#0066FF] text-white font-bold py-3.5 rounded-xl hover:bg-[#0052cc] transition-colors overflow-hidden"
+          >
+            <Hexagon className="w-5 h-5" fill="white" />
+            <span className="tracking-wide">Continue with IB</span>
+          </button>
         </div>
 
         <p className="text-center text-[10px] text-[#8c90a1]/50 mt-6">
