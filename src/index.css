@@ -77,6 +77,7 @@ body {
   font-family: var(--font-sans);
 }
 
+
 /* Bento Grid System-Wide Color Mapping Strategy */
 
 /* 1. Global background overrides */
@@ -199,5 +200,109 @@ body,
   height: 200%;
   background: radial-gradient(circle at center, rgba(0, 102, 255, 0.1) 0%, transparent 70%);
   pointer-events: none;
+}
+
+/*
+ * Light theme retrofit: the app was built with literal hex utility classes
+ * (bg-[#0e0e0e], text-[#e5e2e1], ...) instead of semantic color tokens, so a
+ * real light mode can't be done via Tailwind's dark: variant. Instead we
+ * override the generated utility classes directly, scoped to [data-theme="light"].
+ * This block must stay AFTER the "Bento Grid" block above — those rules are
+ * unscoped (apply in both themes) and equal-specificity ties go to whichever
+ * rule appears last, so ours has to come last to win.
+ * The live call screen (ActiveMeetingView's #202124/#3c4043/#8ab4f8 palette)
+ * intentionally stays dark in both themes, matching Zoom/Meet/Teams convention.
+ */
+:root[data-theme="light"] body { background-color: #f4f5f7; color: #14151a; }
+
+:root[data-theme="light"] .bg-\[\#0e0e0e\] { background-color: #f4f5f7 !important; }
+:root[data-theme="light"] .bg-\[\#131313\] { background-color: #ffffff !important; }
+:root[data-theme="light"] .bg-\[\#1c1b1b\] { background-color: #ffffff !important; }
+:root[data-theme="light"] .bg-\[\#201f1f\] { background-color: #eef0f3 !important; }
+:root[data-theme="light"] .bg-\[\#2a2a2a\] { background-color: #e6e8ec !important; }
+:root[data-theme="light"] .bg-\[\#353534\] { background-color: #ffffff !important; }
+
+/* Translucent overlay/header variants (sticky bars, floating buttons, modals) */
+:root[data-theme="light"] .bg-\[\#0e0e0e\]\/50 { background-color: rgba(255, 255, 255, 0.5) !important; }
+:root[data-theme="light"] .bg-\[\#0e0e0e\]\/60 { background-color: rgba(255, 255, 255, 0.6) !important; }
+:root[data-theme="light"] .bg-\[\#0e0e0e\]\/75 { background-color: rgba(255, 255, 255, 0.75) !important; }
+:root[data-theme="light"] .bg-\[\#0e0e0e\]\/85 { background-color: rgba(255, 255, 255, 0.85) !important; }
+:root[data-theme="light"] .bg-\[\#131313\]\/60 { background-color: rgba(255, 255, 255, 0.6) !important; }
+:root[data-theme="light"] .bg-\[\#131313\]\/90 { background-color: rgba(255, 255, 255, 0.9) !important; }
+:root[data-theme="light"] .bg-\[\#131313\]\/95 { background-color: rgba(255, 255, 255, 0.95) !important; }
+:root[data-theme="light"] .bg-\[\#1c1b1b\]\/40 { background-color: rgba(255, 255, 255, 0.4) !important; }
+:root[data-theme="light"] .bg-\[\#1c1b1b\]\/80 { background-color: rgba(255, 255, 255, 0.8) !important; }
+:root[data-theme="light"] .bg-\[\#1c1b1b\]\/90 { background-color: rgba(255, 255, 255, 0.9) !important; }
+:root[data-theme="light"] .bg-\[\#1c1b1b\]\/95 { background-color: rgba(255, 255, 255, 0.95) !important; }
+:root[data-theme="light"] .bg-\[\#201f1f\]\/40 { background-color: rgba(238, 240, 243, 0.6) !important; }
+:root[data-theme="light"] .bg-\[\#424655\] { background-color: rgba(15, 23, 42, 0.12) !important; }
+:root[data-theme="light"] .bg-\[\#424655\]\/20 { background-color: rgba(15, 23, 42, 0.06) !important; }
+:root[data-theme="light"] .bg-\[\#424655\]\/40 { background-color: rgba(15, 23, 42, 0.10) !important; }
+
+/* One-off dark-to-dark decorative gradients that need a light equivalent */
+:root[data-theme="light"] .bg-gradient-to-r.from-\[\#201f1f\].to-\[\#1c1b1b\] {
+  background-image: linear-gradient(to right, #eef0f3, #ffffff) !important;
+}
+:root[data-theme="light"] .bg-gradient-to-t.from-\[\#0e0e0e\].via-\[\#0e0e0e\]\/98.to-transparent {
+  background-image: linear-gradient(to top, #f4f5f7, rgba(244, 245, 247, 0.98), transparent) !important;
+}
+
+/* The Bento block paints a dark linear-gradient background-image on these
+ * same card classes — background-color alone won't clear it. */
+:root[data-theme="light"] .bg-\[\#1c1b1b\],
+:root[data-theme="light"] .bg-\[\#201f1f\],
+:root[data-theme="light"] .bg-surface-container,
+:root[data-theme="light"] .bg-\[\#1c1b1b\/30\],
+:root[data-theme="light"] .bg-\[\#1c1b1b\/50\],
+:root[data-theme="light"] .bg-\[\#1c1b1b\/95\],
+:root[data-theme="light"] .bg-\[\#1c1b1b\/55\] {
+  background-image: none !important;
+}
+
+:root[data-theme="light"] .border-\[\#424655\],
+:root[data-theme="light"] .border-outline-variant,
+:root[data-theme="light"] .border-t-\[\#424655\/30\],
+:root[data-theme="light"] .border-b-\[\#424655\],
+:root[data-theme="light"] .border-b-\[\#424655\/40\],
+:root[data-theme="light"] .border-b-\[\#424655\/50\],
+:root[data-theme="light"] .border-r-\[\#424655\],
+:root[data-theme="light"] .border-l-\[\#424655\] { border-color: rgba(15, 23, 42, 0.16) !important; }
+:root[data-theme="light"] .border-\[\#424655\]\/20 { border-color: rgba(15, 23, 42, 0.08) !important; }
+:root[data-theme="light"] .border-\[\#424655\]\/30 { border-color: rgba(15, 23, 42, 0.10) !important; }
+:root[data-theme="light"] .border-\[\#424655\]\/40 { border-color: rgba(15, 23, 42, 0.12) !important; }
+:root[data-theme="light"] .border-\[\#424655\]\/50 { border-color: rgba(15, 23, 42, 0.14) !important; }
+:root[data-theme="light"] .border-\[\#424655\]\/60 { border-color: rgba(15, 23, 42, 0.16) !important; }
+
+:root[data-theme="light"] .text-\[\#e5e2e1\] { color: #14151a !important; }
+:root[data-theme="light"] .text-\[\#c2c6d8\] { color: #3f4657 !important; }
+:root[data-theme="light"] .text-\[\#8c90a1\] { color: #64687a !important; }
+:root[data-theme="light"] .text-\[\#424655\] { color: #9aa1b0 !important; }
+:root[data-theme="light"] .text-\[\#b0c6ff\] { color: #0044cc !important; }
+:root[data-theme="light"] .text-\[\#c0c1ff\] { color: #6d4aff !important; }
+:root[data-theme="light"] .text-\[\#999999\] { color: #6b7280 !important; }
+
+/* Status accent colors (success/error/warning) are bright, made-for-dark-bg
+ * hues used directly as text color for badges, icons and inline messages
+ * (e.g. the "FLAGGED"/"SUCCESS" audit log tags). They're unreadable on a
+ * light background, so give them darker, still-on-brand equivalents. Their
+ * translucent bg-[...]/NN and border-[...]/NN counterparts already read fine
+ * as pale tints on white and don't need overrides. */
+:root[data-theme="light"] .text-\[\#4dffb1\] { color: #067647 !important; }
+:root[data-theme="light"] .text-\[\#70ffba\] { color: #067647 !important; }
+:root[data-theme="light"] .text-\[\#ffb4ab\] { color: #b3261e !important; }
+:root[data-theme="light"] .text-\[\#ffd60a\] { color: #9a6700 !important; }
+
+:root[data-theme="light"] ::placeholder { color: #9aa1b0 !important; opacity: 1; }
+
+:root[data-theme="light"] .glass-panel {
+  background: rgba(255, 255, 255, 0.85) !important;
+  border: 1px solid rgba(15, 23, 42, 0.1) !important;
+}
+
+:root[data-theme="light"] .tag,
+:root[data-theme="light"] .bento-tag {
+  background-color: rgba(15, 23, 42, 0.05) !important;
+  border-color: rgba(15, 23, 42, 0.08) !important;
+  color: #4b5563 !important;
 }
 

@@ -1,4 +1,4 @@
-export type AppView = 'chats' | 'debrief' | 'active_meeting' | 'security' | 'support' | 'calls' | 'calendar';
+export type AppView = 'dashboard' | 'chats' | 'debrief' | 'active_meeting' | 'security' | 'support' | 'calls' | 'calendar';
 
 export interface IBUser {
   id: string;

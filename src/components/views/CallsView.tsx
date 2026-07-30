@@ -5,15 +5,7 @@ import { useAuth } from '../../context/AuthContext';
 import { useMeeting } from '../../context/MeetingContext';
 import UserProfileModal from '../chat/UserProfileModal';
 import { useChat } from '../../context/ChatContext';
-
-const CALLS_KEY = (userId: string) => `ibconnect_calls_${userId}`;
-
-function loadCalls(userId: string): CallRecord[] {
-  try { return JSON.parse(localStorage.getItem(CALLS_KEY(userId)) || '[]'); } catch { return []; }
-}
-function saveCalls(userId: string, calls: CallRecord[]) {
-  localStorage.setItem(CALLS_KEY(userId), JSON.stringify(calls));
-}
+import { loadCalls, saveCalls } from '../../lib/callsLocal';
 
 function formatCallTime(ts: number): string {
   const d = new Date(ts);

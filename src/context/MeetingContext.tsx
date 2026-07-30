@@ -13,6 +13,8 @@ interface MeetingContextType {
   isInMeeting: boolean;
   roomId: string | null;
   isHost: boolean;
+  showInviteDialog: boolean;
+  dismissInviteDialog: () => void;
   createMeeting: (customCode?: string, title?: string) => Promise<string>;
   joinMeeting: (code: string, title?: string) => Promise<string>;
   leaveMeeting: () => void;
@@ -25,6 +27,8 @@ interface MeetingContextType {
   isMuted: boolean;
   isVideoOff: boolean;
   isScreenSharing: boolean;
+  screenStream: MediaStream | null;
+  screenPeers: PeerInfo[];
   toggleMic: () => void;
   toggleCamera: () => void;
   toggleScreenShare: () => Promise<void>;
@@ -65,6 +69,7 @@ export function MeetingProvider({ children }: { children: React.ReactNode }) {
   const [isInMeeting, setIsInMeeting] = useState(false);
   const [roomId, setRoomId] = useState<string | null>(null);
   const [isHost, setIsHost] = useState(false);
+  const [showInviteDialog, setShowInviteDialog] = useState(false);
   const [chatMessages, setChatMessages] = useState<LiveChatMessage[]>([]);
   const [scheduledMeetings, setScheduledMeetings] = useState<ScheduledMeeting[]>([]);
   const [meetingError, setMeetingError] = useState<string | null>(null);
@@ -164,6 +169,7 @@ export function MeetingProvider({ children }: { children: React.ReactNode }) {
       return await new Promise<string>((resolve, reject) => {
         const unsub = s.on('room_created', (p: any) => {
           unsub(); setRoomId(p.room_id); setIsHost(true); setIsInMeeting(true);
+          setShowInviteDialog(true);
           saveMeetingRecord(p.room_id, true, title); resolve(p.room_id);
         });
         const errUnsub = s.on('error', (p: any) => { errUnsub(); unsub(); reject(new Error(p.message)); });
@@ -207,8 +213,10 @@ export function MeetingProvider({ children }: { children: React.ReactNode }) {
     updateMeetingRecord(webrtc.peers.length + 1);
     socketRef.current?.send('leave_room', {}); socketRef.current?.disconnect();
     socketRef.current = null; setSocketInstance(null); webrtc.cleanup();
-    setIsInMeeting(false); setRoomId(null); setIsHost(false); setChatMessages([]);
+    setIsInMeeting(false); setRoomId(null); setIsHost(false); setShowInviteDialog(false); setChatMessages([]);
   }, [webrtc, updateMeetingRecord]);
+
+  const dismissInviteDialog = useCallback(() => setShowInviteDialog(false), []);
 
   const sendChatMessage = useCallback((text: string) => { 
     if (socketRef.current?.isOpen && text.trim()) {
@@ -231,9 +239,10 @@ export function MeetingProvider({ children }: { children: React.ReactNode }) {
 
   return (
     <MeetingContext.Provider value={{
-      user, setUserName, isInMeeting, roomId, isHost, createMeeting, joinMeeting, leaveMeeting,
+      user, setUserName, isInMeeting, roomId, isHost, showInviteDialog, dismissInviteDialog, createMeeting, joinMeeting, leaveMeeting,
       scheduledMeetings, refreshScheduledMeetings, scheduleMeeting, deleteScheduledMeeting,
       localStream: webrtc.localStream, peers: webrtc.peers, isMuted: webrtc.isMuted, isVideoOff: webrtc.isVideoOff, isScreenSharing: webrtc.isScreenSharing,
+      screenStream: webrtc.screenStream, screenPeers: webrtc.screenPeers,
       toggleMic: webrtc.toggleMic, toggleCamera: webrtc.toggleCamera, toggleScreenShare: webrtc.toggleScreenShare,
       switchCamera: webrtc.switchCamera, switchMic: webrtc.switchMic,
       chatMessages, sendChatMessage, showGuestModal, pendingJoinCode, setPendingAction, dismissGuestModal, meetingError, clearMeetingError

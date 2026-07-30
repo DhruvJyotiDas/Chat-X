@@ -895,10 +895,10 @@ func migrate() {
 	for _, s := range []string{
 		`CREATE TABLE IF NOT EXISTS users (
 			id VARCHAR(255) PRIMARY KEY, username VARCHAR(255) UNIQUE NOT NULL, display_name VARCHAR(255) NOT NULL,
-			email VARCHAR(255) UNIQUE NOT NULL, password_hash TEXT NOT NULL, avatar TEXT, bio TEXT,
+			email VARCHAR(255) UNIQUE NOT NULL, password_hash TEXT NOT NULL, avatar LONGTEXT, bio TEXT,
 			status VARCHAR(50) DEFAULT 'offline', created_at DATETIME(6) DEFAULT NOW(6))`,
 		`CREATE TABLE IF NOT EXISTS threads (
-			id VARCHAR(255) PRIMARY KEY, type VARCHAR(50) NOT NULL, name VARCHAR(255) NOT NULL, avatar TEXT,
+			id VARCHAR(255) PRIMARY KEY, type VARCHAR(50) NOT NULL, name VARCHAR(255) NOT NULL, avatar LONGTEXT,
 			created_by VARCHAR(255), created_at DATETIME(6) DEFAULT NOW(6))`,
 		`CREATE TABLE IF NOT EXISTS thread_members (
 			thread_id VARCHAR(255) NOT NULL, user_id VARCHAR(255) NOT NULL,
@@ -951,8 +951,10 @@ type SignalPayload struct {
 	To        string          `json:"to"`
 	SDP       json.RawMessage `json:"sdp,omitempty"`
 	Candidate json.RawMessage `json:"candidate,omitempty"`
+	Kind      string          `json:"kind,omitempty"`
 }
 type ChatPayload struct{ Text string `json:"text"` }
+type ScreenSharePayload struct{ Sharing bool `json:"sharing"` }
 type PeerInfo struct {
 	ID   string `json:"id"`
 	Name string `json:"name"`
@@ -1087,7 +1089,7 @@ func handleSignaling(w http.ResponseWriter, r *http.Request) {
 			target, found := client.room.clients[p.To]
 			client.room.mu.RUnlock()
 			if found {
-				target.sendMsg(msg.Type, map[string]any{"from": client.id, "sdp": p.SDP, "candidate": p.Candidate})
+				target.sendMsg(msg.Type, map[string]any{"from": client.id, "sdp": p.SDP, "candidate": p.Candidate, "kind": p.Kind})
 			}
 		case "leave_room":
 			if client.room != nil {
@@ -1101,6 +1103,14 @@ func handleSignaling(w http.ResponseWriter, r *http.Request) {
 				client.room.broadcast(client.id, "chat_message", map[string]string{
 					"from_id": client.id, "from_name": client.name,
 					"text": p.Text, "time": time.Now().Format("3:04 PM"),
+				})
+			}
+		case "screen_share_state":
+			var p ScreenSharePayload
+			json.Unmarshal(msg.Payload, &p) //nolint
+			if client.room != nil {
+				client.room.broadcast(client.id, "screen_share_state", map[string]any{
+					"peer_id": client.id, "sharing": p.Sharing,
 				})
 			}
 		}
@@ -1132,10 +1142,10 @@ func handleHealth(w http.ResponseWriter, r *http.Request) {
 func main() {
 	var err error
 	cfg := mysql.NewConfig()
-	cfg.User = "lolafire_admin"
-	cfg.Passwd = "admin@100"
+	cfg.User = "ibconnect_app"
+	cfg.Passwd = "i332jxptdF8N7ewu6xzvlRy9"
 	cfg.Net = "tcp"
-	cfg.Addr = "lolafire.mysql.db.hostpoint.ch:3306"
+	cfg.Addr = "127.0.0.1:3306"
 	cfg.DBName = "lolafire_IBConnect"
 	cfg.ParseTime = true
 	cfg.Params = map[string]string{"charset": "utf8mb4", "collation": "utf8mb4_unicode_ci"}

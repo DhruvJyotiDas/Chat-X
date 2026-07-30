@@ -2,13 +2,14 @@ import React, { useState, useEffect, useRef, useCallback } from 'react';
 import {
   Paperclip, Sparkles, Bold, Send, FileText, Download, Video,
   PlusCircle, Search, Users, X, Check, ArrowLeft,
-  Smile, MoreVertical, MessageSquare
+  Smile, MoreVertical, MessageSquare, ChevronsRight, ChevronsLeft
 } from 'lucide-react';
 import { IBUser, RealChatMessage, RealChatThread, ExtractedItem } from '../../types';
 import { useAuth } from '../../context/AuthContext';
 import { useChat } from '../../context/ChatContext';
 import { useMeeting } from '../../context/MeetingContext';
 import { api } from '../../lib/api';
+import { extractIntelligence, ITEM_ICONS, ITEM_COLORS } from '../../lib/intelligence';
 import UserProfileModal from '../chat/UserProfileModal';
 import GuestNameModal from '../meeting/GuestNameModal';
 
@@ -63,50 +64,6 @@ function EmojiPicker({ onSelect, onClose }: { onSelect: (e: string) => void; onC
     </div>
   );
 }
-
-// ── Intelligence extraction ────────────────────────────────────────────────
-
-function extractIntelligence(messages: RealChatMessage[]): ExtractedItem[] {
-  const items: ExtractedItem[] = [];
-  const recent = messages.slice(-30);
-  recent.forEach(msg => {
-    const t = msg.text;
-    const meetRegex = /\b(?:meet|meeting|call|sync|standup|review|chat|catch\s*up)\b[^.!?\n]*?(?:at\s+(\d{1,2}(?::\d{2})?\s*(?:am|pm)?)|(?:tomorrow|today|tonight))/gi;
-    let m;
-    while ((m = meetRegex.exec(t)) !== null) {
-      items.push({ id: `${msg.id}-meet-${items.length}`, type: 'meeting', text: m[0].trim().slice(0, 80), time: m[1], confidence: 0.9 });
-    }
-    const deadlineRegex = /\b(?:by|due|before|deadline)\s+(?:(?:next\s+)?(?:monday|tuesday|wednesday|thursday|friday|saturday|sunday)|tomorrow|end\s+of\s+(?:day|week)|(?:\d{1,2}[\/\-]\d{1,2}))/gi;
-    while ((m = deadlineRegex.exec(t)) !== null) {
-      items.push({ id: `${msg.id}-dl-${items.length}`, type: 'deadline', text: m[0].trim().slice(0, 80), confidence: 0.85 });
-    }
-    const timeRegex = /\b(?:at|@)\s+(\d{1,2}(?::\d{2})?\s*(?:am|pm))\b/gi;
-    while ((m = timeRegex.exec(t)) !== null) {
-      if (!items.find(i => i.time === m![1])) {
-        items.push({ id: `${msg.id}-time-${items.length}`, type: 'reminder', text: `Time noted: ${m[1]} — "${t.slice(0, 60)}"`, time: m[1], confidence: 0.8 });
-      }
-    }
-    const actionRegex = /\b(?:need to|have to|must|will|going to|i'll|i will|remember to|don't forget(?:\s+to)?)\s+([a-z][^.!?\n]{4,50})/gi;
-    while ((m = actionRegex.exec(t)) !== null) {
-      items.push({ id: `${msg.id}-action-${items.length}`, type: 'action', text: m[0].trim().slice(0, 80), confidence: 0.75 });
-    }
-    const decisionRegex = /\b(?:decided|agreed|confirmed|let's go with|we'll use|final decision)\b[^.!?\n]{3,60}/gi;
-    while ((m = decisionRegex.exec(t)) !== null) {
-      items.push({ id: `${msg.id}-dec-${items.length}`, type: 'decision', text: m[0].trim().slice(0, 80), confidence: 0.85 });
-    }
-  });
-  const seen = new Set<string>();
-  return items.filter(i => { const key = i.text.slice(0, 30); if (seen.has(key)) return false; seen.add(key); return true; }).slice(0, 8);
-}
-
-const ITEM_ICONS: Record<ExtractedItem['type'], string> = { meeting: '📅', deadline: '⏰', action: '✅', reminder: '🔔', decision: '💡' };
-const ITEM_COLORS: Record<ExtractedItem['type'], string> = {
-  meeting: 'text-[#b0c6ff] bg-[#568dff]/10 border-[#568dff]/30',
-  deadline: 'text-[#ffb4ab] bg-[#ffb4ab]/10 border-[#ffb4ab]/30',
-  action: 'text-[#4dffb1] bg-[#4dffb1]/10 border-[#4dffb1]/30',
-  reminder: 'text-[#ffd60a] bg-[#ffd60a]/10 border-[#ffd60a]/30',
-  decision: 'text-[#c0c1ff] bg-[#c0c1ff]/10 border-[#c0c1ff]/30',
-};
 
 function renderText(text: string): React.ReactNode {
   const parts = text.split(/(\*\*[^*]+\*\*)/g);
@@ -240,7 +197,7 @@ function NewGroupModal({ currentUserId, onClose, onCreate }: { currentUserId: st
   );
 }
 
-function IntelligenceSidebar({ intelligence, messages, activeThread, currentUser, getUserById, setViewingUser, handleQuickJoin, isJoining, meetingError }: {
+function IntelligenceSidebar({ intelligence, messages, activeThread, currentUser, getUserById, setViewingUser, handleQuickJoin, isJoining, meetingError, onClose }: {
   intelligence: ExtractedItem[];
   messages: RealChatMessage[];
   activeThread: RealChatThread | null;
@@ -250,12 +207,16 @@ function IntelligenceSidebar({ intelligence, messages, activeThread, currentUser
   handleQuickJoin: () => void;
   isJoining: boolean;
   meetingError: string | null;
+  onClose: () => void;
 }) {
   return (
     <aside className="hidden xl:flex w-72 flex-shrink-0 flex-col border-l border-[#424655] bg-[#131313] overflow-y-auto select-none">
       <div className="p-4 border-b border-[#424655] sticky top-0 bg-[#131313]/95 backdrop-blur-md z-10 flex items-center gap-2">
         <Sparkles className="w-4 h-4 text-[#c0c1ff]" />
-        <h3 className="font-bold text-sm text-[#e5e2e1]">Intelligence Agent</h3>
+        <h3 className="font-bold text-sm text-[#e5e2e1] flex-1">Intelligence Agent</h3>
+        <button onClick={onClose} title="Collapse panel" className="w-6 h-6 flex items-center justify-center rounded-lg text-[#8c90a1] hover:bg-[#201f1f] hover:text-[#e5e2e1] transition-colors cursor-pointer">
+          <ChevronsRight className="w-3.5 h-3.5" />
+        </button>
       </div>
       <div className="p-4 flex flex-col gap-5">
         <div>
@@ -339,6 +300,14 @@ export default function ChatsView({ onJoinMeeting, searchFilter }: ChatsViewProp
   const [intelligence, setIntelligence] = useState<ExtractedItem[]>([]);
   const [showEmoji, setShowEmoji] = useState(false);
   const [localSearch, setLocalSearch] = useState('');
+  const [showIntel, setShowIntel] = useState(() => {
+    try { return localStorage.getItem('ibconnect_intel_panel_open') !== 'false'; } catch { return true; }
+  });
+
+  const toggleIntel = (open: boolean) => {
+    setShowIntel(open);
+    try { localStorage.setItem('ibconnect_intel_panel_open', String(open)); } catch {}
+  };
 
   const fileInputRef = useRef<HTMLInputElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -730,8 +699,22 @@ export default function ChatsView({ onJoinMeeting, searchFilter }: ChatsViewProp
 
       <div className="hidden lg:flex flex-1 overflow-hidden">
         <aside className="w-72 flex-shrink-0 border-r border-[#424655] overflow-hidden flex flex-col">{renderThreadList()}</aside>
-        <main className="flex-1 overflow-hidden flex flex-col">{renderChat()}</main>
-        <IntelligenceSidebar intelligence={intelligence} messages={messages} activeThread={activeThread} currentUser={currentUser} getUserById={getUserById} setViewingUser={setViewingUser} handleQuickJoin={handleQuickJoin} isJoining={isJoining} meetingError={meetingError ?? null} />
+        <main className="flex-1 overflow-hidden flex flex-col relative">
+          {renderChat()}
+          {!showIntel && (
+            <button
+              onClick={() => toggleIntel(true)}
+              title="Open Intelligence Agent"
+              className="hidden xl:flex absolute top-3 right-3 items-center gap-1.5 bg-[#1c1b1b]/95 backdrop-blur-md border border-[#424655] hover:border-[#c0c1ff]/50 text-[#c0c1ff] rounded-full pl-2.5 pr-3 py-1.5 text-[10px] font-bold shadow-lg cursor-pointer transition-all z-20"
+            >
+              <Sparkles className="w-3.5 h-3.5" />
+              <ChevronsLeft className="w-3 h-3" />
+            </button>
+          )}
+        </main>
+        {showIntel && (
+          <IntelligenceSidebar intelligence={intelligence} messages={messages} activeThread={activeThread} currentUser={currentUser} getUserById={getUserById} setViewingUser={setViewingUser} handleQuickJoin={handleQuickJoin} isJoining={isJoining} meetingError={meetingError ?? null} onClose={() => toggleIntel(false)} />
+        )}
       </div>
     </div>
   );

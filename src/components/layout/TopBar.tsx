@@ -1,6 +1,9 @@
 import React, { useState } from 'react';
-import { Search, Bell, HelpCircle, Plus, Sparkles, Phone, Calendar } from 'lucide-react';
+import { Search, Bell, HelpCircle, Plus, Sparkles, Phone, Calendar, Command } from 'lucide-react';
 import { AppView } from '../../types';
+import { useAuth } from '../../context/AuthContext';
+import { useChat } from '../../context/ChatContext';
+import { loadNotifications } from '../../lib/preferences';
 
 interface TopBarProps {
   currentView: AppView;
@@ -11,6 +14,7 @@ interface TopBarProps {
 }
 
 const VIEW_INFO: Record<AppView, { title: string; subtitle: string; badge: string }> = {
+  dashboard: { title: 'Home', subtitle: 'Your daily overview', badge: 'DASHBOARD' },
   chats: { title: 'IB Connect', subtitle: 'Secure Messaging', badge: 'E2E ENCRYPTED' },
   calls: { title: 'Calls', subtitle: 'Video & Audio Calls', badge: 'WEBRTC' },
   debrief: { title: 'Meeting Debrief', subtitle: 'Sync Recap & Action Items', badge: 'SYNC ARCHIVE' },
@@ -22,7 +26,13 @@ const VIEW_INFO: Record<AppView, { title: string; subtitle: string; badge: strin
 
 export default function TopBar({ currentView, onViewChange, searchFilter, onSearchChange, onNewChatClicked }: TopBarProps) {
   const [notifOpen, setNotifOpen] = useState(false);
+  const { currentUser } = useAuth();
+  const { threads } = useChat();
   const info = VIEW_INFO[currentView] || VIEW_INFO.chats;
+
+  const unreadTotal = threads.reduce((sum, t) => sum + (t.unreadCount ?? 0), 0);
+  const notifsEnabled = currentUser ? loadNotifications(currentUser.id).messageAlerts : true;
+  const showNotifDot = notifsEnabled && unreadTotal > 0;
 
   const actionLabel = currentView === 'calls' ? 'New Call' : currentView === 'calendar' ? 'New Event' : 'New Chat';
 
@@ -38,7 +48,7 @@ export default function TopBar({ currentView, onViewChange, searchFilter, onSear
       <div className="flex items-center gap-3 min-w-0">
         <h1
           className="font-bold text-base tracking-tight text-[#e5e2e1] cursor-pointer whitespace-nowrap"
-          onClick={() => onViewChange('chats')}
+          onClick={() => onViewChange('dashboard')}
         >
           {info.title}
         </h1>
@@ -64,7 +74,15 @@ export default function TopBar({ currentView, onViewChange, searchFilter, onSear
           />
         </div>
 
-        {currentView !== 'active_meeting' && (
+        <button
+          onClick={() => window.dispatchEvent(new CustomEvent('ibconnect:cmdk'))}
+          title="Command palette (Ctrl/Cmd+K)"
+          className="hidden md:flex items-center gap-1 bg-[#1c1b1b] border border-[#424655]/60 hover:border-[#568dff]/60 text-[#8c90a1] hover:text-[#b0c6ff] rounded-lg px-2 py-1.5 text-[10px] font-bold transition-colors cursor-pointer"
+        >
+          <Command className="w-3 h-3" />K
+        </button>
+
+        {currentView !== 'active_meeting' && currentView !== 'dashboard' && (
           <button
             onClick={handleAction}
             className="flex items-center gap-1.5 bg-[#568dff] text-[#002661] font-bold text-xs py-2 px-3 rounded-lg hover:bg-[#568dff]/90 active:scale-95 transition-all shadow-sm"
@@ -81,7 +99,7 @@ export default function TopBar({ currentView, onViewChange, searchFilter, onSear
           className="w-8 h-8 flex items-center justify-center rounded-lg text-[#8c90a1] hover:bg-[#201f1f] hover:text-[#b0c6ff] transition-colors relative"
         >
           <Bell className="w-4 h-4" />
-          <span className="absolute top-1.5 right-1.5 w-1.5 h-1.5 rounded-full bg-[#ffb4ab]" />
+          {showNotifDot && <span className="absolute top-1.5 right-1.5 w-1.5 h-1.5 rounded-full bg-[#ffb4ab]" />}
         </button>
 
         <button

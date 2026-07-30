@@ -13,6 +13,7 @@ import Sidebar from './components/layout/Sidebar';
 import TopBar from './components/layout/TopBar';
 
 // Views
+import DashboardView from './components/views/DashboardView';
 import ChatsView from './components/views/ChatsView';
 import DebriefView from './components/views/DebriefView';
 import SecurityView from './components/views/SecurityView';
@@ -27,17 +28,19 @@ import ActiveMeetingView from './components/meeting/ActiveMeetingView';
 import { MeetingProvider, useMeeting } from './context/MeetingContext';
 import { useChat } from './context/ChatContext';
 import IncomingCallModal from './components/meeting/IncomingCallModal';
+import CommandPalette from './components/CommandPalette';
 
 // Types & data
 import { AppView, ComplianceLog } from './types';
 import { initialComplianceLogs } from './data';
+import { useTheme } from './hooks/useTheme';
 
 function AppContent({ pendingRoomCode }: { pendingRoomCode?: string }) {
   const { currentUser, isLoading } = useAuth();
   const { isInMeeting, joinMeeting } = useMeeting();
   const { incomingCall, dismissIncomingCall, notifyCallAccepted, notifyCallDeclined } = useChat();
 
-  const [currentView, setCurrentView] = useState<AppView>('chats');
+  const [currentView, setCurrentView] = useState<AppView>('dashboard');
   const [logs, setLogs] = useState<ComplianceLog[]>(initialComplianceLogs);
   const [searchFilter, setSearchFilter] = useState('');
   const [autoJoinCode, setAutoJoinCode] = useState<string | undefined>(pendingRoomCode);
@@ -105,8 +108,8 @@ function AppContent({ pendingRoomCode }: { pendingRoomCode?: string }) {
     <div className="min-h-screen text-[#e5e2e1] bg-[#0e0e0e] flex font-sans overflow-hidden w-full max-w-full">
       <Sidebar currentView={effectiveView} onViewChange={setCurrentView} isInMeeting={isInMeeting} />
 
-      {/* FIXED: pl-0 on mobile, pl-[72px] on desktop */}
-      <div className="flex-1 pl-0 md:pl-[72px] flex flex-col h-screen overflow-hidden w-full">
+      {/* FIXED: pl-0 on mobile, pl-[76px] on desktop to match the sidebar rail width */}
+      <div className="flex-1 pl-0 md:pl-[76px] flex flex-col h-screen overflow-hidden w-full">
         {effectiveView !== 'active_meeting' && (
           <TopBar
             currentView={effectiveView}
@@ -127,6 +130,13 @@ function AppContent({ pendingRoomCode }: { pendingRoomCode?: string }) {
               transition={{ duration: 0.12, ease: 'easeOut' }}
               className="flex-grow flex overflow-hidden"
             >
+              {effectiveView === 'dashboard' && (
+                <DashboardView
+                  onNavigate={setCurrentView}
+                  onJoinMeeting={() => setCurrentView('active_meeting')}
+                />
+              )}
+
               {effectiveView === 'chats' && (
                 <ChatsView
                   onJoinMeeting={() => setCurrentView('active_meeting')}
@@ -175,6 +185,8 @@ function AppContent({ pendingRoomCode }: { pendingRoomCode?: string }) {
         onDecline={handleDeclineCall}
       />
     )}
+
+    <CommandPalette onNavigate={setCurrentView} onJoinMeeting={() => setCurrentView('active_meeting')} />
     </>
   );
 }
@@ -185,6 +197,8 @@ function RoomCodeRoute() {
 }
 
 export default function App() {
+  useTheme();
+
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     const urlToken = params.get('token');

@@ -10,6 +10,7 @@ import { useMeeting } from '../../context/MeetingContext';
 import { PeerInfo } from '../../hooks/useWebRTC';
 import { useSpeechTranscription } from '../../hooks/useSpeechTranscription';
 import { useAuth } from '../../context/AuthContext';
+import MeetingInviteDialog from './MeetingInviteDialog';
 
 export type BgMode = 'none' | 'blur' | 'blur-heavy' | 'color-dark' | 'color-space';
 
@@ -223,6 +224,38 @@ function RemoteTile({ peer }: { peer: PeerInfo }) {
       style={{ willChange: 'transform' }}
       className="w-full h-full object-cover"
     />
+  );
+}
+
+// ─── Screen-share spotlight tile ───────────────────────────────────────────────
+// Uses object-contain (not object-cover) so shared screens are never cropped —
+// unlike camera tiles, a screen's content (text, slides, code) is unusable if
+// half of it gets clipped off to fill a square-ish grid cell.
+
+function ScreenTile({ stream, label }: { stream: MediaStream | null; label: string }) {
+  const ref = useRef<HTMLVideoElement>(null);
+
+  useEffect(() => {
+    const vid = ref.current;
+    if (!vid || !stream) return;
+    if (vid.srcObject !== stream) vid.srcObject = stream;
+    vid.play().catch(() => {});
+  }, [stream]);
+
+  return (
+    <div className="relative w-full h-full rounded-2xl overflow-hidden bg-black border border-[#3c4043] shadow-lg flex items-center justify-center">
+      {stream ? (
+        <video ref={ref} autoPlay playsInline muted className="w-full h-full object-contain" />
+      ) : (
+        <div className="flex flex-col items-center gap-2 text-[#9aa0a6]">
+          <ScreenShare className="w-8 h-8 animate-pulse" />
+          <span className="text-xs">Connecting…</span>
+        </div>
+      )}
+      <div className="absolute bottom-2 left-2 md:bottom-3 md:left-3 bg-[#111]/80 backdrop-blur-sm px-2 py-1 md:px-3 md:py-1.5 rounded-lg text-[10px] md:text-xs font-semibold text-white flex items-center gap-1.5 shadow-sm">
+        <ScreenShare className="w-3 h-3 shrink-0" />{label}
+      </div>
+    </div>
   );
 }
 
@@ -451,7 +484,7 @@ const KP_COLORS: Record<string, string> = {
 };
 
 export default function ActiveMeetingView({ onLeaveMeeting }: Props) {
-  const { user, roomId, localStream, peers, isMuted, isVideoOff, isScreenSharing, toggleMic, toggleCamera, toggleScreenShare, switchCamera, switchMic, leaveMeeting, chatMessages, sendChatMessage } = useMeeting();
+  const { user, roomId, localStream, peers, isMuted, isVideoOff, isScreenSharing, screenStream, screenPeers, toggleMic, toggleCamera, toggleScreenShare, switchCamera, switchMic, leaveMeeting, chatMessages, sendChatMessage, showInviteDialog, dismissInviteDialog } = useMeeting();
   const { currentUser } = useAuth();
   const displayName = currentUser?.displayName ?? user.name;
 
@@ -498,6 +531,14 @@ export default function ActiveMeetingView({ onLeaveMeeting }: Props) {
     window.history.replaceState(null, '', '/'); onLeaveMeeting();
   }, [stopTranscription, leaveMeeting, onLeaveMeeting]);
 
+  // No dedicated participant-invite picker exists in the app yet — the closest
+  // real equivalent is surfacing the People panel (roster + this same share link).
+  const handleAddPeople = useCallback(() => {
+    dismissInviteDialog();
+    setRightTab('people');
+    setRightOpen(true);
+  }, [dismissInviteDialog]);
+
   const copyCode = useCallback(() => {
     if (!roomId) return;
     navigator.clipboard.writeText(roomId).then(() => {
@@ -513,6 +554,14 @@ export default function ActiveMeetingView({ onLeaveMeeting }: Props) {
   }, [roomId]);
 
   const tiles = [...peers, { id: user.id, name: displayName, isLocal: true as const }];
+
+  // Screen shares render in a dedicated spotlight area (object-contain, never cropped)
+  // instead of replacing anyone's camera tile — camera keeps streaming the whole time.
+  const activeScreens: { id: string; name: string; stream: MediaStream | null }[] = [
+    ...(isScreenSharing ? [{ id: 'local-screen', name: 'You', stream: screenStream }] : []),
+    ...screenPeers.map((p) => ({ id: p.id, name: p.name, stream: p.stream })),
+  ];
+  const sharingPeerIds = new Set(screenPeers.map((p) => p.id));
 
   // CRITICAL MOBILE GRID FIX:
   // Forces exactly 2 horizontal rows (50% height each) when 2 people are in the call on mobile.
@@ -532,6 +581,10 @@ export default function ActiveMeetingView({ onLeaveMeeting }: Props) {
 
   const meetingContent = (
     <div className="fixed inset-0 z-[9999] flex flex-col lg:flex-row bg-[#111] overflow-hidden select-none text-[#e8eaed]">
+
+      {showInviteDialog && (
+        <MeetingInviteDialog onClose={dismissInviteDialog} onAddPeople={handleAddPeople} />
+      )}
 
       {/* ── Left Sidebar (Desktop Transcripts) ─────────────────────────────────── */}
       <section className="hidden lg:flex w-72 shrink-0 flex-col border-r border-[#3c4043] bg-[#202124] h-full">
@@ -612,31 +665,69 @@ export default function ActiveMeetingView({ onLeaveMeeting }: Props) {
             <span className="text-[9px] md:text-[10px] text-[#9aa0a6] font-semibold truncate">Code: <span className="text-[#8ab4f8] font-mono ml-1">{roomId}</span></span>
           </div>
 
-          <div className="flex-1 min-h-0 p-2 md:p-4 pb-20 md:pb-24 flex items-center justify-center">
-            {/* The wrapper div explicitly limits height to 100% so rows don't push past the screen */}
-            <div className={`w-full h-full max-h-full grid gap-2 md:gap-3 ${gridClass}`}>
-              {tiles.map((tile) => {
-                const isLocal = 'isLocal' in tile;
-                return (
-                  <div key={tile.id} className="relative rounded-2xl overflow-hidden bg-[#202124] border border-[#3c4043] shadow-lg transition-all duration-300 w-full h-full">
-                    {isLocal ? (
-                      <LocalTile stream={localStream} isVideoOff={isVideoOff && !isScreenSharing} name={displayName} bgMode={isScreenSharing ? 'none' : bgMode} />
-                    ) : (
-                      <RemoteTile peer={tile as PeerInfo} />
-                    )}
-                    <div className="absolute bottom-2 left-2 md:bottom-3 md:left-3 bg-[#111]/70 backdrop-blur-sm px-2 py-1 md:px-3 md:py-1.5 rounded-lg text-[10px] md:text-xs font-semibold text-white max-w-[80%] truncate shadow-sm">
-                      {isLocal && isScreenSharing ? `${tile.name} (screen)` : tile.name}
-                    </div>
-                    {isLocal && isMuted && (
-                      <div className="absolute top-2 right-2 md:top-3 md:right-3 bg-[#f28b82]/90 backdrop-blur-sm p-1 md:p-1.5 rounded-lg shadow-sm">
-                        <MicOff className="w-3.5 h-3.5 md:w-4 md:h-4 text-[#202124]" />
-                      </div>
-                    )}
+          {activeScreens.length > 0 ? (
+            <div className="flex-1 min-h-0 p-2 md:p-4 pb-20 md:pb-24 flex flex-col gap-2 md:gap-3">
+              {/* Spotlight: the active screen share(s), letterboxed so nothing is cropped off */}
+              <div className={`flex-1 min-h-0 grid gap-2 md:gap-3 ${activeScreens.length === 1 ? 'grid-cols-1' : 'grid-cols-2'}`}>
+                {activeScreens.map((s) => (
+                  <div key={s.id} className="w-full h-full">
+                    <ScreenTile stream={s.stream} label={s.id === 'local-screen' ? 'Your screen' : `${s.name}'s screen`} />
                   </div>
-                );
-              })}
+                ))}
+              </div>
+              {/* Camera strip: everyone's camera keeps streaming, unaffected by screen sharing */}
+              <div className="h-24 md:h-32 shrink-0 flex gap-2 md:gap-3 overflow-x-auto scrollbar-hide">
+                {tiles.map((tile) => {
+                  const isLocal = 'isLocal' in tile;
+                  const isPresenting = isLocal ? isScreenSharing : sharingPeerIds.has(tile.id);
+                  return (
+                    <div key={tile.id} className="relative rounded-xl overflow-hidden bg-[#202124] border border-[#3c4043] shadow-lg aspect-video h-full shrink-0">
+                      {isLocal ? (
+                        <LocalTile stream={localStream} isVideoOff={isVideoOff} name={displayName} bgMode={bgMode} />
+                      ) : (
+                        <RemoteTile peer={tile as PeerInfo} />
+                      )}
+                      <div className="absolute bottom-1 left-1 md:bottom-1.5 md:left-1.5 bg-[#111]/70 backdrop-blur-sm px-1.5 py-0.5 rounded-md text-[9px] md:text-[10px] font-semibold text-white max-w-[85%] truncate shadow-sm flex items-center gap-1">
+                        {isPresenting && <ScreenShare className="w-2.5 h-2.5 text-[#8ab4f8] shrink-0" />}
+                        {tile.name}
+                      </div>
+                      {isLocal && isMuted && (
+                        <div className="absolute top-1 right-1 md:top-1.5 md:right-1.5 bg-[#f28b82]/90 backdrop-blur-sm p-1 rounded-md shadow-sm">
+                          <MicOff className="w-3 h-3 text-[#202124]" />
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
             </div>
-          </div>
+          ) : (
+            <div className="flex-1 min-h-0 p-2 md:p-4 pb-20 md:pb-24 flex items-center justify-center">
+              {/* The wrapper div explicitly limits height to 100% so rows don't push past the screen */}
+              <div className={`w-full h-full max-h-full grid gap-2 md:gap-3 ${gridClass}`}>
+                {tiles.map((tile) => {
+                  const isLocal = 'isLocal' in tile;
+                  return (
+                    <div key={tile.id} className="relative rounded-2xl overflow-hidden bg-[#202124] border border-[#3c4043] shadow-lg transition-all duration-300 w-full h-full">
+                      {isLocal ? (
+                        <LocalTile stream={localStream} isVideoOff={isVideoOff} name={displayName} bgMode={bgMode} />
+                      ) : (
+                        <RemoteTile peer={tile as PeerInfo} />
+                      )}
+                      <div className="absolute bottom-2 left-2 md:bottom-3 md:left-3 bg-[#111]/70 backdrop-blur-sm px-2 py-1 md:px-3 md:py-1.5 rounded-lg text-[10px] md:text-xs font-semibold text-white max-w-[80%] truncate shadow-sm">
+                        {tile.name}
+                      </div>
+                      {isLocal && isMuted && (
+                        <div className="absolute top-2 right-2 md:top-3 md:right-3 bg-[#f28b82]/90 backdrop-blur-sm p-1 md:p-1.5 rounded-lg shadow-sm">
+                          <MicOff className="w-3.5 h-3.5 md:w-4 md:h-4 text-[#202124]" />
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
 
           {/* FLOATING CONTROLS */}
           <div className="absolute bottom-3 md:bottom-6 left-1/2 -translate-x-1/2 flex items-center gap-1.5 md:gap-2 bg-[#202124]/90 backdrop-blur-xl border border-[#5f6368]/40 rounded-2xl p-1.5 md:p-2 shadow-2xl z-20 w-[max-content] max-w-[95vw] overflow-x-auto scrollbar-hide">
