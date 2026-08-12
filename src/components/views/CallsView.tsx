@@ -25,6 +25,7 @@ export default function CallsView({ onJoinMeeting }: { onJoinMeeting: () => void
   const [search, setSearch] = useState('');
   const [viewingUser, setViewingUser] = useState<IBUser | null>(null);
   const [calling, setCalling] = useState<string | null>(null);
+  const [mobilePanel, setMobilePanel] = useState<'history' | 'contacts'>('history');
 
   useEffect(() => {
     if (currentUser) setCalls(loadCalls(currentUser.id));
@@ -69,20 +70,14 @@ export default function CallsView({ onJoinMeeting }: { onJoinMeeting: () => void
     return <PhoneMissed className="w-4 h-4 text-[#ffb4ab]" />;
   };
 
-  return (
-    <div className="flex-1 flex overflow-hidden h-full">
-      {viewingUser && (
-        <UserProfileModal
-          user={viewingUser}
-          onClose={() => setViewingUser(null)}
-          onStartChat={() => { startDM(viewingUser.id); }}
-          onStartCall={() => handleCall(viewingUser, 'video')}
-        />
-      )}
-
-      {/* Call history */}
-      <aside className="w-80 flex-shrink-0 flex flex-col border-r border-[#424655] bg-[#0e0e0e]">
-        <div className="p-4 border-b border-[#424655] sticky top-0 bg-[#0e0e0e] z-10">
+  // Two panels side by side only once there's room for both. Below `lg` they were
+  // still laid out side by side — a fixed 320px history rail plus the contacts
+  // pane — which on a 390px phone left the contacts list a ~70px slice pinned to
+  // the right edge, and on a 320px phone pushed it off-screen entirely. Same
+  // treatment ChatsView already uses: one panel at a time with a switcher.
+  const renderHistory = () => (
+    <>
+      <div className="p-4 border-b border-[#424655] sticky top-0 bg-[#0e0e0e] z-10">
           <h2 className="font-bold text-sm text-[#e5e2e1] mb-3">Recent Calls</h2>
           <button
             onClick={async () => {
@@ -156,11 +151,12 @@ export default function CallsView({ onJoinMeeting }: { onJoinMeeting: () => void
             </div>
           )}
         </div>
-      </aside>
+    </>
+  );
 
-      {/* Contacts / New Call */}
-      <main className="flex-1 flex flex-col bg-[#0e0e0e] overflow-hidden">
-        <div className="p-4 border-b border-[#424655] sticky top-0 bg-[#0e0e0e] z-10">
+  const renderContacts = () => (
+    <>
+      <div className="p-4 border-b border-[#424655] sticky top-0 bg-[#0e0e0e] z-10">
           <div className="flex items-center gap-2 mb-3">
             <Users className="w-4 h-4 text-[#b0c6ff]" />
             <h2 className="font-bold text-sm text-[#e5e2e1]">IB Connect Users</h2>
@@ -239,6 +235,53 @@ export default function CallsView({ onJoinMeeting }: { onJoinMeeting: () => void
             </div>
           )}
         </div>
+    </>
+  );
+
+  const tab = (id: 'history' | 'contacts', label: string, count?: number) => (
+    <button
+      onClick={() => setMobilePanel(id)}
+      className={`flex-1 flex items-center justify-center gap-1.5 py-2.5 rounded-lg text-xs font-bold transition-colors ${
+        mobilePanel === id ? 'bg-[#568dff] text-[#002661]' : 'text-[#8c90a1] hover:text-[#e5e2e1]'
+      }`}
+    >
+      {label}
+      {count !== undefined && (
+        <span className={`text-[10px] px-1.5 py-0.5 rounded-full font-bold ${
+          mobilePanel === id ? 'bg-[#002661]/15 text-[#002661]' : 'bg-[#568dff]/15 text-[#b0c6ff]'
+        }`}>{count}</span>
+      )}
+    </button>
+  );
+
+  return (
+    <div className="flex-1 flex flex-col lg:flex-row overflow-hidden h-full">
+      {viewingUser && (
+        <UserProfileModal
+          user={viewingUser}
+          onClose={() => setViewingUser(null)}
+          onStartChat={() => { startDM(viewingUser.id); }}
+          onStartCall={() => handleCall(viewingUser, 'video')}
+        />
+      )}
+
+      {/* Narrow screens: one panel at a time */}
+      <div className="lg:hidden flex-1 flex flex-col overflow-hidden bg-[#0e0e0e]">
+        <div className="flex gap-1 p-2 border-b border-[#424655] bg-[#0e0e0e]">
+          {tab('history', 'Recent')}
+          {tab('contacts', 'Contacts', otherUsers.length)}
+        </div>
+        <div className="flex-1 flex flex-col overflow-hidden">
+          {mobilePanel === 'history' ? renderHistory() : renderContacts()}
+        </div>
+      </div>
+
+      {/* Wide screens: history rail + contacts, as before */}
+      <aside className="hidden lg:flex w-80 flex-shrink-0 flex-col border-r border-[#424655] bg-[#0e0e0e]">
+        {renderHistory()}
+      </aside>
+      <main className="hidden lg:flex flex-1 flex-col bg-[#0e0e0e] overflow-hidden">
+        {renderContacts()}
       </main>
     </div>
   );

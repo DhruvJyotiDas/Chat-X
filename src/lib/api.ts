@@ -64,6 +64,9 @@ export const api = {
   sendMessage: (threadId: string, text: string, fileAttachment?: ApiFile) =>
     request<ApiMessage>('POST', `/threads/${threadId}/messages`, { text, fileAttachment }),
 
+  markRead: (threadId: string) =>
+    request<{ ok: boolean }>('POST', `/threads/${threadId}/read`),
+
   // ── Meetings (NEW) ────────────────────────────────────────────────────────
   getScheduledMeetings: () => 
     request<ApiScheduledMeeting[]>('GET', '/meetings/scheduled'),

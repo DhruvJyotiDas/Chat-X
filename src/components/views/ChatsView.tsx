@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef, useCallback } from 'react';
 import {
   Paperclip, Sparkles, Bold, Send, FileText, Download, Video,
   PlusCircle, Search, Users, X, Check, ArrowLeft,
-  Smile, MoreVertical, MessageSquare, ChevronsRight, ChevronsLeft
+  Smile, MoreVertical, MessageSquare, ChevronsRight, ChevronsLeft, Share2
 } from 'lucide-react';
 import { IBUser, RealChatMessage, RealChatThread, ExtractedItem } from '../../types';
 import { useAuth } from '../../context/AuthContext';
@@ -84,6 +84,258 @@ function useFreshUsers(currentUserId: string | undefined): IBUser[] {
   return users;
 }
 
+type Attachment = NonNullable<RealChatMessage['fileAttachment']>;
+
+const IMAGE_EXT_RE = /\.(png|jpe?g|gif|webp|avif|bmp|svg)$/i;
+
+// `type` comes straight off the browser's File object and is empty for a few sources
+// (some Android pickers, drag-and-drop from certain apps), so fall back to sniffing the
+// data URL and then the extension rather than dropping to a file card for a real image.
+function isImageAttachment(f: Attachment): boolean {
+  if (!f.dataUrl) return false;
+  return f.type?.startsWith('image/') || f.dataUrl.startsWith('data:image/') || IMAGE_EXT_RE.test(f.name ?? '');
+}
+
+// `fetch` handles data: URLs, so this is the shortest route from the stored attachment
+// back to a real File for the Web Share API / clipboard.
+async function attachmentToFile(file: Attachment): Promise<File> {
+  const blob = await (await fetch(file.dataUrl!)).blob();
+  return new File([blob], file.name, { type: file.type || blob.type });
+}
+
+const TEXT_EXT_RE = /\.(txt|md|markdown|csv|tsv|log|json|xml|ya?ml|ini|conf|env|sql|css|html?|js|jsx|ts|tsx|py|go|rb|java|c|h|cpp|sh)$/i;
+
+type PreviewKind = 'image' | 'pdf' | 'text' | 'none';
+
+// What we can show inline. Anything unrecognised (docx/xlsx/pptx/zip/…) still gets the
+// box — with the same Share/Download controls — just with a "no preview" body, which
+// beats a click that appears to do nothing.
+function previewKind(f: Attachment): PreviewKind {
+  if (!f.dataUrl) return 'none';
+  if (isImageAttachment(f)) return 'image';
+  const type = f.type ?? '';
+  const name = f.name ?? '';
+  if (type === 'application/pdf' || /\.pdf$/i.test(name) || f.dataUrl.startsWith('data:application/pdf')) return 'pdf';
+  // NOTE: html/svg-as-document land here on purpose and are shown as *escaped text*, never
+  // rendered. Attachments come from other users, and a blob: URL inherits this origin — so
+  // iframing their markup would run their script against our session. Only PDFs, which the
+  // browser hands to its own sandboxed viewer, get an iframe.
+  if (type.startsWith('text/') || type === 'application/json' || TEXT_EXT_RE.test(name)) return 'text';
+  return 'none';
+}
+
+// Not every browser has a built-in PDF viewer (some mobile browsers, locked-down
+// enterprise builds, and headless Chromium all report false). Without this check the
+// iframe renders as a silent blank rectangle, which reads as a broken feature — so ask
+// first and fall back to the download prompt instead.
+function browserRendersPdf(): boolean {
+  if (typeof navigator === 'undefined') return false;
+  if (typeof navigator.pdfViewerEnabled === 'boolean') return navigator.pdfViewerEnabled;
+  return !!navigator.mimeTypes?.['application/pdf']; // older browsers
+}
+
+// PDFs need a blob: URL — Chrome refuses to load a data: URL into an iframe.
+function PdfPreviewBody({ file }: { file: Attachment }) {
+  const [url, setUrl] = useState<string | null>(null);
+  const [failed, setFailed] = useState(false);
+  const supported = browserRendersPdf();
+
+  useEffect(() => {
+    if (!supported) return;
+    let revoked = false;
+    let objectUrl: string | null = null;
+    fetch(file.dataUrl!)
+      .then(r => r.blob())
+      .then(b => {
+        if (revoked) return;
+        objectUrl = URL.createObjectURL(b.type ? b : new Blob([b], { type: 'application/pdf' }));
+        setUrl(objectUrl);
+      })
+      .catch(() => setFailed(true));
+    return () => {
+      revoked = true;
+      if (objectUrl) URL.revokeObjectURL(objectUrl);
+    };
+  }, [file.dataUrl, supported]);
+
+  if (!supported) return <PreviewUnavailableBody reason="This browser can't display PDFs inline — download it to open." />;
+  if (failed) return <PreviewUnavailableBody reason="This PDF could not be opened." />;
+  if (!url) return <div className="h-[70vh] flex items-center justify-center text-[10px] text-[#8c90a1]">Loading preview…</div>;
+  return <iframe src={url} title={`Preview of ${file.name}`} className="w-full h-[70vh] bg-[#0e0e0e]" />;
+}
+
+function TextPreviewBody({ file }: { file: Attachment }) {
+  const [text, setText] = useState<string | null>(null);
+  const [failed, setFailed] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    fetch(file.dataUrl!)
+      .then(r => r.text())
+      // Cap it: these are data URLs held in memory and a multi-MB log would jank the modal.
+      .then(t => { if (!cancelled) setText(t.length > 200_000 ? t.slice(0, 200_000) + '\n\n… truncated — download to see the rest.' : t); })
+      .catch(() => { if (!cancelled) setFailed(true); });
+    return () => { cancelled = true; };
+  }, [file.dataUrl]);
+
+  if (failed) return <PreviewUnavailableBody reason="This file could not be read." />;
+  if (text === null) return <div className="h-40 flex items-center justify-center text-[10px] text-[#8c90a1]">Loading preview…</div>;
+  return (
+    <pre className="max-h-[60vh] overflow-auto p-3 text-[11px] leading-relaxed text-[#e5e2e1] whitespace-pre-wrap break-words font-mono">
+      {text}
+    </pre>
+  );
+}
+
+function PreviewUnavailableBody({ reason }: { reason: string }) {
+  return (
+    <div className="flex flex-col items-center justify-center gap-2 py-10 px-4 text-center">
+      <div className="w-10 h-10 rounded-xl bg-[#8083ff]/20 flex items-center justify-center"><FileText className="w-5 h-5 text-[#c0c1ff]" /></div>
+      <p className="text-xs text-[#8c90a1]">{reason}</p>
+    </div>
+  );
+}
+
+// In-place preview for an attachment: a modal box over the chat rather than a new tab,
+// with the download and share controls living on the box itself.
+function AttachmentPreviewModal({ file, onClose }: { file: Attachment; onClose: () => void }) {
+  const [shareLabel, setShareLabel] = useState<string | null>(null);
+  const kind = previewKind(file);
+
+  useEffect(() => {
+    const h = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
+    window.addEventListener('keydown', h);
+    return () => window.removeEventListener('keydown', h);
+  }, [onClose]);
+
+  const handleShare = async () => {
+    try {
+      const f = await attachmentToFile(file);
+      // Real share sheet where the browser has one (mobile Safari/Chrome, Edge).
+      if (navigator.canShare?.({ files: [f] })) {
+        await navigator.share({ files: [f], title: file.name });
+        return;
+      }
+      // Desktop browsers mostly can't share files, so put the image on the clipboard
+      // instead — Chrome only accepts image/png here, hence the try/catch below. For
+      // non-images this reliably throws and we fall through to the Download hint.
+      if (kind === 'image' && navigator.clipboard && 'ClipboardItem' in window) {
+        const blob = await (await fetch(file.dataUrl!)).blob();
+        await navigator.clipboard.write([new ClipboardItem({ [blob.type]: blob })]);
+        setShareLabel('Copied');
+        setTimeout(() => setShareLabel(null), 2000);
+        return;
+      }
+      setShareLabel('Use Download');
+      setTimeout(() => setShareLabel(null), 2000);
+    } catch (e) {
+      // Dismissing the share sheet rejects with AbortError — not a failure.
+      if ((e as Error)?.name === 'AbortError') return;
+      setShareLabel('Use Download');
+      setTimeout(() => setShareLabel(null), 2000);
+    }
+  };
+
+  return (
+    <div
+      className="fixed inset-0 z-[90] flex items-center justify-center bg-black/80 backdrop-blur-sm p-4"
+      onClick={onClose} role="dialog" aria-modal="true" aria-label={`Preview of ${file.name}`}
+    >
+      <div
+        className={`bg-[#131313] border border-[#424655] rounded-2xl shadow-2xl w-full overflow-hidden flex flex-col ${
+          kind === 'pdf' ? 'max-w-3xl' : kind === 'text' ? 'max-w-2xl' : 'max-w-lg'
+        }`}
+        onClick={e => e.stopPropagation()}
+      >
+        <div className="flex items-center justify-between gap-3 p-3 border-b border-[#424655]">
+          <div className="min-w-0">
+            <p className="text-xs font-semibold text-[#e5e2e1] truncate">{file.name}</p>
+            <p className="text-[10px] text-[#8c90a1]">{(file.size / 1024).toFixed(1)} KB</p>
+          </div>
+          <button onClick={onClose} aria-label="Close preview" className="w-7 h-7 flex items-center justify-center rounded-lg text-[#8c90a1] hover:bg-[#201f1f] hover:text-[#e5e2e1] transition-colors flex-shrink-0">
+            <X className="w-4 h-4" />
+          </button>
+        </div>
+
+        <div className="bg-[#0e0e0e] flex flex-col justify-center min-h-0">
+          {kind === 'image' && (
+            <div className="flex items-center justify-center p-2">
+              <img src={file.dataUrl} alt={file.name} className="max-w-full max-h-[60vh] object-contain" />
+            </div>
+          )}
+          {kind === 'pdf' && <PdfPreviewBody file={file} />}
+          {kind === 'text' && <TextPreviewBody file={file} />}
+          {kind === 'none' && <PreviewUnavailableBody reason="No inline preview for this file type — download it to open." />}
+        </div>
+
+        <div className="flex items-center justify-end gap-2 p-3 border-t border-[#424655]">
+          <button
+            onClick={handleShare} aria-label={`Share ${file.name}`}
+            className="flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-bold bg-[#201f1f] text-[#e5e2e1] hover:bg-[#2a2929] transition-colors"
+          >
+            <Share2 className="w-3.5 h-3.5" /> {shareLabel ?? 'Share'}
+          </button>
+          <a
+            href={file.dataUrl} download={file.name} aria-label={`Download ${file.name}`}
+            className="flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-bold bg-[#568dff] text-[#002661] hover:bg-[#568dff]/90 transition-colors"
+          >
+            <Download className="w-3.5 h-3.5" /> Download
+          </a>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// Images render as images; everything else keeps the file card. A truncated or otherwise
+// undecodable data URL falls back to the card via onError, so a broken image is still
+// downloadable rather than an empty box.
+function MessageAttachment({ file, isMe, onPreview }: { file: Attachment; isMe: boolean; onPreview: (f: Attachment) => void }) {
+  const [imageFailed, setImageFailed] = useState(false);
+
+  if (isImageAttachment(file) && !imageFailed) {
+    return (
+      <button
+        type="button"
+        onClick={e => { e.stopPropagation(); onPreview(file); }}
+        title={`Preview ${file.name}`} aria-label={`Preview image ${file.name}`}
+        className={`block overflow-hidden rounded-2xl border cursor-zoom-in ${isMe ? 'border-[#568dff]/30 rounded-tr-sm' : 'border-[#424655]/40 rounded-tl-sm'}`}
+      >
+        <img
+          src={file.dataUrl} alt={file.name} loading="lazy"
+          onError={() => setImageFailed(true)}
+          className="block w-auto max-w-full max-h-[320px] object-contain bg-[#0e0e0e]"
+        />
+      </button>
+    );
+  }
+
+  // The card body opens the preview; the download button stays where it has always been so
+  // "just save it" is still one click and doesn't route through the modal.
+  return (
+    <div className={`p-3 rounded-2xl border ${isMe ? 'bg-[#568dff]/10 border-[#568dff]/30 rounded-tr-sm' : 'bg-[#201f1f] border-[#424655]/40 rounded-tl-sm'}`}>
+      <div className="flex items-center gap-2.5">
+        <button
+          type="button"
+          onClick={e => { e.stopPropagation(); onPreview(file); }}
+          disabled={!file.dataUrl}
+          title={`Preview ${file.name}`} aria-label={`Preview file ${file.name}`}
+          className="flex items-center gap-2.5 flex-1 min-w-0 text-left cursor-pointer disabled:cursor-default"
+        >
+          <div className="w-9 h-9 rounded-lg bg-[#8083ff]/20 flex items-center justify-center flex-shrink-0"><FileText className="w-4 h-4 text-[#c0c1ff]" /></div>
+          <div className="flex-1 min-w-0">
+            <p className="text-xs font-semibold text-[#e5e2e1] truncate">{file.name}</p>
+            <p className="text-[10px] text-[#8c90a1]">{(file.size / 1024).toFixed(1)} KB</p>
+          </div>
+        </button>
+        {file.dataUrl && (
+          <a href={file.dataUrl} download={file.name} onClick={e => e.stopPropagation()} aria-label={`Download ${file.name}`} className="w-7 h-7 flex items-center justify-center rounded-lg bg-[#568dff]/10 text-[#b0c6ff] hover:bg-[#568dff]/20 transition-colors flex-shrink-0"><Download className="w-3.5 h-3.5" /></a>
+        )}
+      </div>
+    </div>
+  );
+}
+
 function renderUser(u: IBUser, onClick: () => void, selected?: boolean) {
   return (
     <button key={u.id} onClick={onClick} className={`w-full flex items-center gap-3 p-2.5 rounded-xl transition-colors text-left ${selected ? 'bg-[#568dff]/20 border border-[#568dff]/40' : 'hover:bg-[#201f1f] border border-transparent'}`}>
@@ -119,7 +371,7 @@ function NewDMModal({ currentUserId, onClose, onSelect }: { currentUserId: strin
   const others = allRaw.filter(u => u.id !== currentUserId);
   const filtered = others.filter(u => !search || u.displayName.toLowerCase().includes(search.toLowerCase()) || u.username.toLowerCase().includes(search.toLowerCase()));
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm p-4" onClick={onClose}>
+    <div className="fixed inset-0 z-[90] flex items-center justify-center bg-black/70 backdrop-blur-sm p-4" onClick={onClose}>
       <div className="bg-[#131313] border border-[#424655] rounded-2xl shadow-2xl w-full max-w-sm overflow-hidden" onClick={e => e.stopPropagation()}>
         <div className="flex items-center justify-between p-4 border-b border-[#424655]">
           <span className="font-bold text-sm text-[#e5e2e1]">New Direct Message</span>
@@ -164,7 +416,7 @@ function NewGroupModal({ currentUserId, onClose, onCreate }: { currentUserId: st
   const toggle = (id: string) => setSelected(prev => prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]);
   const canCreate = name.trim().length > 0 && selected.length >= 1;
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm p-4" onClick={onClose}>
+    <div className="fixed inset-0 z-[90] flex items-center justify-center bg-black/70 backdrop-blur-sm p-4" onClick={onClose}>
       <div className="bg-[#131313] border border-[#424655] rounded-2xl shadow-2xl w-full max-w-sm overflow-hidden" onClick={e => e.stopPropagation()}>
         <div className="flex items-center justify-between p-4 border-b border-[#424655]">
           <span className="font-bold text-sm text-[#e5e2e1]">New Group Chat</span>
@@ -294,6 +546,7 @@ export default function ChatsView({ onJoinMeeting, searchFilter }: ChatsViewProp
   const [showNewThread, setShowNewThread] = useState(false);
   const [showNewGroup, setShowNewGroup] = useState(false);
   const [viewingUser, setViewingUser] = useState<IBUser | null>(null);
+  const [previewFile, setPreviewFile] = useState<Attachment | null>(null);
   const [showGuestModal, setShowGuestModal] = useState(false);
   const [isJoining, setIsJoining] = useState(false);
   const [messages, setMessages] = useState<RealChatMessage[]>([]);
@@ -464,27 +717,41 @@ export default function ChatsView({ onJoinMeeting, searchFilter }: ChatsViewProp
     try { await createMeeting(); onJoinMeeting(); } catch {} finally { setIsJoining(false); }
   };
 
-  const combinedSearch = localSearch || searchFilter;
-  const filteredThreads = threads.filter(t =>
-    t.name.toLowerCase().includes(combinedSearch.toLowerCase()) ||
-    t.lastMessage.toLowerCase().includes(combinedSearch.toLowerCase())
-  ).sort((a, b) => b.lastTimestamp - a.lastTimestamp);
-
   const getThreadUser = (thread: RealChatThread): IBUser | undefined => {
     if (thread.type !== 'dm') return undefined;
     const otherId = thread.participants.find(p => p !== currentUser?.id);
     return otherId ? getUserById(otherId) : undefined;
   };
 
+  // A DM row carries the name/avatar the *creator* saw when the thread was made, so served
+  // as-is the other side sees their own name and face as the person they're talking to
+  // (fixed at source in loadThread, server/main.go — this keeps the UI right regardless of
+  // what the API hands back, and picks up live display-name/avatar changes).
+  const getThreadDisplay = (thread: RealChatThread): { name: string; avatar?: string } => {
+    const other = getThreadUser(thread);
+    if (thread.type === 'dm' && other) return { name: other.displayName, avatar: other.avatar };
+    return { name: thread.name, avatar: thread.avatar };
+  };
+
   const getSenderUser = (msg: RealChatMessage): IBUser | undefined => getUserById(msg.senderId);
+
+  const combinedSearch = localSearch || searchFilter;
+  const filteredThreads = threads.filter(t =>
+    getThreadDisplay(t).name.toLowerCase().includes(combinedSearch.toLowerCase()) ||
+    t.lastMessage.toLowerCase().includes(combinedSearch.toLowerCase())
+  ).sort((a, b) => b.lastTimestamp - a.lastTimestamp);
 
   const renderThreadList = () => (
     <div className="flex flex-col h-full bg-[#0e0e0e]">
       <div className="p-3 border-b border-[#424655] flex justify-between items-center bg-[#0e0e0e] sticky top-0 z-10">
         <h2 className="font-bold text-xs text-[#e5e2e1] uppercase tracking-wider">Messages</h2>
         <div className="flex items-center gap-1">
-          <button onClick={() => setShowNewThread(true)} className="w-7 h-7 flex items-center justify-center rounded-lg text-[#8c90a1] hover:text-[#b0c6ff] hover:bg-[#201f1f] transition-colors"><PlusCircle className="w-4 h-4" /></button>
-          <button onClick={() => setShowNewGroup(true)} className="w-7 h-7 flex items-center justify-center rounded-lg text-[#8c90a1] hover:text-[#b0c6ff] hover:bg-[#201f1f] transition-colors"><Users className="w-4 h-4" /></button>
+          {/* Both of these were unlabelled 28x28 glyphs whose only affordance was a
+              hover state — which does not exist on touch, so on a phone they were two
+              indistinguishable grey icons. Group chat has shipped for months and users
+              still report it missing for exactly this reason. */}
+          <button onClick={() => setShowNewThread(true)} title="New direct message" aria-label="New direct message" className="w-9 h-9 sm:w-7 sm:h-7 flex items-center justify-center rounded-lg text-[#8c90a1] hover:text-[#b0c6ff] hover:bg-[#201f1f] transition-colors cursor-pointer"><PlusCircle className="w-4 h-4" /></button>
+          <button onClick={() => setShowNewGroup(true)} title="New group" aria-label="New group" className="w-9 h-9 sm:w-7 sm:h-7 flex items-center justify-center rounded-lg text-[#8c90a1] hover:text-[#b0c6ff] hover:bg-[#201f1f] transition-colors cursor-pointer"><Users className="w-4 h-4" /></button>
         </div>
       </div>
       <div className="px-3 pt-2 pb-1">
@@ -510,6 +777,7 @@ export default function ChatsView({ onJoinMeeting, searchFilter }: ChatsViewProp
         {filteredThreads.map(thread => {
           const isSelected = thread.id === selectedThreadId;
           const threadUser = getThreadUser(thread);
+          const { name: threadName, avatar: threadAvatar } = getThreadDisplay(thread);
           const displayTime = thread.lastTimestamp ? new Date(thread.lastTimestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '';
           
           return (
@@ -517,21 +785,23 @@ export default function ChatsView({ onJoinMeeting, searchFilter }: ChatsViewProp
               <div className="relative flex-shrink-0" onClick={e => { if (threadUser) { e.stopPropagation(); setViewingUser(threadUser); } }}>
                 {thread.type === 'group' ? (
                   <div className="w-9 h-9 rounded-xl bg-[#8083ff]/15 text-[#c0c1ff] flex items-center justify-center"><Users className="w-4 h-4" /></div>
-                ) : thread.avatar ? (
-                  <img alt={thread.name} className="w-9 h-9 rounded-full object-cover" src={thread.avatar} />
+                ) : threadAvatar ? (
+                  <img alt={threadName} className="w-9 h-9 rounded-full object-cover" src={threadAvatar} />
                 ) : (
-                  <div className="w-9 h-9 rounded-xl bg-[#568dff]/10 text-[#b0c6ff] flex items-center justify-center font-bold text-xs">{thread.name.charAt(0).toUpperCase()}</div>
+                  <div className="w-9 h-9 rounded-xl bg-[#568dff]/10 text-[#b0c6ff] flex items-center justify-center font-bold text-xs">{threadName.charAt(0).toUpperCase()}</div>
                 )}
                 {threadUser && <div className={`absolute bottom-0 right-0 w-2.5 h-2.5 rounded-full border border-[#0e0e0e] ${threadUser.status === 'online' ? 'bg-[#4dffb1]' : 'bg-[#8c90a1]'}`} />}
               </div>
               <div className="flex-1 min-w-0">
                 <div className="flex justify-between items-baseline mb-0.5">
-                  <span className="font-semibold text-xs text-[#e5e2e1] truncate">{thread.name}</span>
+                  <span className="font-semibold text-xs text-[#e5e2e1] truncate">{threadName}</span>
                   <span className="text-[9px] text-[#8c90a1] flex-shrink-0 ml-1">{displayTime}</span>
                 </div>
                 <div className="flex justify-between items-center gap-1">
                   <p className="text-[10px] text-[#8c90a1] truncate flex-1 min-w-0">{thread.lastMessage || 'Start a conversation'}</p>
-                  {thread.unreadCount && thread.unreadCount > 0 && !isSelected && (
+                  {/* (x ?? 0) > 0, not `x && x > 0`: a leading `0 &&` short-circuits to the number
+                      0, which React renders as a literal "0" text node next to every read thread. */}
+                  {(thread.unreadCount ?? 0) > 0 && !isSelected && (
                     <span className="flex-shrink-0 min-w-[16px] h-4 bg-[#568dff] text-[#002661] rounded-full flex items-center justify-center font-bold text-[9px] px-1">{thread.unreadCount}</span>
                   )}
                 </div>
@@ -560,21 +830,22 @@ export default function ChatsView({ onJoinMeeting, searchFilter }: ChatsViewProp
             </button>
             {(() => {
               const threadUser = getThreadUser(activeThread);
+              const { name: headerName, avatar: headerAvatar } = getThreadDisplay(activeThread);
               return (
                 <div className="relative cursor-pointer flex-shrink-0" onClick={() => threadUser && setViewingUser(threadUser)}>
                   {activeThread.type === 'group' ? (
                     <div className="w-9 h-9 rounded-xl bg-[#8083ff]/15 text-[#c0c1ff] flex items-center justify-center"><Users className="w-4 h-4" /></div>
-                  ) : activeThread.avatar ? (
-                    <img src={activeThread.avatar} className="w-9 h-9 rounded-full object-cover" />
+                  ) : headerAvatar ? (
+                    <img src={headerAvatar} alt={headerName} className="w-9 h-9 rounded-full object-cover" />
                   ) : (
-                    <div className="w-9 h-9 rounded-xl bg-[#568dff]/10 flex items-center justify-center"><span className="text-sm font-bold text-[#b0c6ff]">{activeThread.name.charAt(0).toUpperCase()}</span></div>
+                    <div className="w-9 h-9 rounded-xl bg-[#568dff]/10 flex items-center justify-center"><span className="text-sm font-bold text-[#b0c6ff]">{headerName.charAt(0).toUpperCase()}</span></div>
                   )}
                   {threadUser && <div className={`absolute bottom-0 right-0 w-2.5 h-2.5 rounded-full border border-[#0e0e0e] ${threadUser.status === 'online' ? 'bg-[#4dffb1]' : 'bg-[#8c90a1]'}`} />}
                 </div>
               );
             })()}
             <div className="flex-1 min-w-0">
-              <h3 className="font-bold text-sm text-[#e5e2e1] truncate">{activeThread.name}</h3>
+              <h3 className="font-bold text-sm text-[#e5e2e1] truncate">{getThreadDisplay(activeThread).name}</h3>
               <p className="text-[10px] text-[#8c90a1] truncate">
                 {activeTypingUsers.length > 0 ? `${activeTypingUsers.map(u => u.userName).join(', ')} is typing...` : (() => { const u = getThreadUser(activeThread); return u ? (u.status === 'online' ? 'Online' : 'Offline') : `${activeThread.participants.length} participants`; })()}
               </p>
@@ -617,18 +888,7 @@ export default function ChatsView({ onJoinMeeting, searchFilter }: ChatsViewProp
                         <span className="text-[9px] text-[#8c90a1] flex-shrink-0">{messageTime}</span>
                       </div>
                       {msg.fileAttachment ? (
-                        <div className={`p-3 rounded-2xl border ${isMe ? 'bg-[#568dff]/10 border-[#568dff]/30 rounded-tr-sm' : 'bg-[#201f1f] border-[#424655]/40 rounded-tl-sm'}`}>
-                          <div className="flex items-center gap-2.5">
-                            <div className="w-9 h-9 rounded-lg bg-[#8083ff]/20 flex items-center justify-center flex-shrink-0"><FileText className="w-4 h-4 text-[#c0c1ff]" /></div>
-                            <div className="flex-1 min-w-0">
-                              <p className="text-xs font-semibold text-[#e5e2e1] truncate">{msg.fileAttachment.name}</p>
-                              <p className="text-[10px] text-[#8c90a1]">{(msg.fileAttachment.size / 1024).toFixed(1)} KB</p>
-                            </div>
-                            {msg.fileAttachment.dataUrl && (
-                              <a href={msg.fileAttachment.dataUrl} download={msg.fileAttachment.name} onClick={e => e.stopPropagation()} className="w-7 h-7 flex items-center justify-center rounded-lg bg-[#568dff]/10 text-[#b0c6ff] hover:bg-[#568dff]/20 transition-colors"><Download className="w-3.5 h-3.5" /></a>
-                            )}
-                          </div>
-                        </div>
+                        <MessageAttachment file={msg.fileAttachment} isMe={isMe} onPreview={setPreviewFile} />
                       ) : (
                         <div className={`px-3 py-2.5 rounded-2xl text-[16px] sm:text-xs border leading-relaxed ${isMe ? 'bg-[#568dff] text-white border-[#568dff] rounded-tr-sm' : 'bg-[#1c1b1b] text-[#e5e2e1] border-[#424655]/40 rounded-tl-sm'}`}
                           style={{ wordBreak: 'break-word', overflowWrap: 'anywhere', whiteSpace: 'pre-wrap' }}>
@@ -692,6 +952,9 @@ export default function ChatsView({ onJoinMeeting, searchFilter }: ChatsViewProp
       {showNewThread && <NewDMModal currentUserId={currentUser?.id} onClose={() => setShowNewThread(false)} onSelect={handleNewDM} />}
       {showNewGroup && <NewGroupModal currentUserId={currentUser?.id} onClose={() => setShowNewGroup(false)} onCreate={handleNewGroup} />}
       {viewingUser && <UserProfileModal user={viewingUser} onClose={() => setViewingUser(null)} onStartChat={() => { handleNewDM(viewingUser.id); setViewingUser(null); }} />}
+      {/* Rendered here, alongside the other modals, so the lg:hidden and desktop branches
+          below don't each mount their own copy. */}
+      {previewFile && <AttachmentPreviewModal file={previewFile} onClose={() => setPreviewFile(null)} />}
 
       <div className="lg:hidden flex-1 flex flex-col overflow-hidden">
         {mobilePanel === 'list' ? <div className="flex-1 overflow-hidden">{renderThreadList()}</div> : <div className="flex-1 overflow-hidden">{renderChat()}</div>}

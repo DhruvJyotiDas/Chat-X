@@ -8,7 +8,6 @@ import {
   ShieldCheck,
   HelpCircle,
   Settings,
-  Hexagon,
   Menu,
   X
 } from 'lucide-react';
@@ -16,6 +15,7 @@ import { AppView } from '../../types';
 import { useAuth } from '../../context/AuthContext';
 import SettingsModal from '../settings/SettingsModal';
 import { loadStatus, StatusPreference } from '../../lib/preferences';
+import BrandMark from '../BrandMark';
 
 interface SidebarProps {
   currentView: AppView;
@@ -127,7 +127,7 @@ export default function Sidebar({ currentView, onViewChange, unreadCount = 0, is
           onClick={() => handleNavClick('dashboard')}
           className="mt-10 md:mt-1 mb-3 w-11 h-11 rounded-2xl bg-[#0066FF] flex items-center justify-center shadow-[0_0_18px_rgba(0,102,255,0.4)] hover:scale-105 active:scale-95 transition-transform shrink-0"
         >
-          <Hexagon className="w-6 h-6 text-white stroke-[2]" />
+          <BrandMark className="w-6 h-6" />
         </button>
 
         {/* Primary nav */}
@@ -146,6 +146,7 @@ export default function Sidebar({ currentView, onViewChange, unreadCount = 0, is
         <div className="mt-auto flex flex-col items-center gap-2 pt-3 shrink-0">
           <button
             onClick={() => { setShowSettings(true); setIsMobileMenuOpen(false); }}
+            aria-label="Settings"
             className="relative group w-11 h-11 flex items-center justify-center rounded-2xl text-[#8c90a1] hover:bg-white/[0.06] hover:text-[#e5e2e1] transition-all cursor-pointer"
           >
             <Settings className="w-[17px] h-[17px] group-hover:rotate-45 transition-transform duration-300" />
@@ -155,6 +156,10 @@ export default function Sidebar({ currentView, onViewChange, unreadCount = 0, is
           <div className="relative group">
             <div
               className="w-9 h-9 rounded-full overflow-hidden border-2 border-[#353534] hover:border-[#568dff] transition-colors cursor-pointer"
+              role="button"
+              tabIndex={0}
+              aria-label="Your profile and settings"
+              onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setShowSettings(true); setIsMobileMenuOpen(false); } }}
               onClick={() => { setShowSettings(true); setIsMobileMenuOpen(false); }}
             >
               {currentUser?.avatar ? (

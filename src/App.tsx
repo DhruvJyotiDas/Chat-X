@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { useParams } from 'react-router-dom';
 import { Routes, Route } from 'react-router-dom';
 import { motion, AnimatePresence } from 'motion/react';
@@ -23,9 +23,11 @@ import CalendarView from './components/views/CalendarView';
 
 // Meeting
 import ActiveMeetingView from './components/meeting/ActiveMeetingView';
+import FloatingCallWindow from './components/meeting/FloatingCallWindow';
 
 // Context
-import { MeetingProvider, useMeeting } from './context/MeetingContext';
+import { MeetingProvider, useMeeting, readActiveMeeting } from './context/MeetingContext';
+import PreJoinScreen from './components/meeting/PreJoinScreen';
 import { useChat } from './context/ChatContext';
 import IncomingCallModal from './components/meeting/IncomingCallModal';
 import CommandPalette from './components/CommandPalette';
@@ -38,13 +40,69 @@ import { api } from './lib/api';
 
 function AppContent({ pendingRoomCode }: { pendingRoomCode?: string }) {
   const { currentUser, isLoading, loginWithToken } = useAuth();
-  const { isInMeeting, joinMeeting } = useMeeting();
+  const {
+    isInMeeting, joinMeeting, rejoinMeeting, isRejoining,
+    setUserName, meetingError, clearMeetingError,
+    isMinimized, minimizeMeeting, expandMeeting,
+  } = useMeeting();
   const { incomingCall, dismissIncomingCall, notifyCallAccepted, notifyCallDeclined } = useChat();
 
   const [currentView, setCurrentView] = useState<AppView>('dashboard');
   const [logs, setLogs] = useState<ComplianceLog[]>(initialComplianceLogs);
   const [searchFilter, setSearchFilter] = useState('');
   const [autoJoinCode, setAutoJoinCode] = useState<string | undefined>(pendingRoomCode);
+
+  // A reload mid-call must land back in the call, not on the dashboard. This is
+  // the one-shot redial: sessionStorage still knows which room this tab was in
+  // (see MeetingContext.persistActiveMeeting), so we redial it before rendering
+  // any of the normal app chrome. Guests included — the record is auth-agnostic.
+  const [rejoinTarget] = useState<string | null>(() => {
+    const saved = readActiveMeeting();
+    if (!saved) return null;
+    // A stale record from another room shouldn't hijack an explicit /:roomCode link.
+    if (pendingRoomCode && saved.roomId !== pendingRoomCode.toUpperCase()) return null;
+    return saved.roomId;
+  });
+  // 'pending' only covers the in-flight redial. It must settle to 'idle' on success
+  // and on leave, otherwise the spinner below would also swallow the normal
+  // post-call return to the app (the rejoin target outlives the meeting itself).
+  const [rejoinState, setRejoinState] = useState<'idle' | 'pending' | 'failed'>(
+    () => (rejoinTarget ? 'pending' : 'idle'),
+  );
+  const rejoinFailed = rejoinState === 'failed';
+  const rejoinAttemptedRef = useRef(false);
+  // Set when a guest on the lobby screen opts to sign in instead.
+  const [forceLogin, setForceLogin] = useState(false);
+
+  useEffect(() => {
+    if (isLoading || isInMeeting || !rejoinTarget || rejoinAttemptedRef.current) return;
+    rejoinAttemptedRef.current = true;
+    rejoinMeeting(rejoinTarget)
+      .then(() => setRejoinState('idle'))
+      .catch(() => setRejoinState('failed'));
+  }, [isLoading, isInMeeting, rejoinTarget, rejoinMeeting]);
+
+  // Entering a room from a share link (no prior session in this tab). Applies the
+  // mic/camera choices made in the lobby once the real meeting stream exists.
+  const handlePreJoin = useCallback(async (
+    name: string,
+    opts: { muted: boolean; videoOff: boolean },
+    code: string,
+    asGuest: boolean,
+  ) => {
+    clearMeetingError();
+    if (asGuest) setUserName(name, true);
+    try {
+      // The lobby's choices are applied *while* the stream is acquired, not by
+      // toggling afterwards. Toggling after the fact meant "join with camera off"
+      // still opened the camera, released it, and then renegotiated with every
+      // peer — and it read `isVideoOff` from a closure captured before the join,
+      // which initMedia's audio-only fallback could have changed underneath it.
+      await joinMeeting(code, undefined, false, { muted: opts.muted, videoOff: opts.videoOff });
+    } catch {
+      // surfaced through meetingError on the lobby screen
+    }
+  }, [clearMeetingError, setUserName, joinMeeting]);
 
   // Completes the "Continue with IB" redirect: IB Account sends the browser
   // back here with ?code&state (see LoginPage.tsx for the redirect out, and
@@ -84,15 +142,39 @@ function AppContent({ pendingRoomCode }: { pendingRoomCode?: string }) {
       .catch(e => console.error('IB Account sign-in failed:', e));
   }, [loginWithToken]);
 
+  // Where to drop the user when they minimise the call — wherever they were before
+  // joining, rather than an arbitrary default.
+  const viewBeforeMeetingRef = useRef<AppView>('dashboard');
+  useEffect(() => {
+    if (currentView !== 'active_meeting') viewBeforeMeetingRef.current = currentView;
+  }, [currentView]);
+
   useEffect(() => {
     if (isInMeeting) setCurrentView('active_meeting');
   }, [isInMeeting]);
 
+  const handleMinimizeMeeting = useCallback(() => {
+    minimizeMeeting();
+    setCurrentView(viewBeforeMeetingRef.current);
+  }, [minimizeMeeting]);
+
+  const handleExpandMeeting = useCallback(() => {
+    expandMeeting();
+    setCurrentView('active_meeting');
+  }, [expandMeeting]);
+
+  // A signed-in user who opens a meeting link (directly, or after being bounced
+  // through IB Account sign-in) goes straight into the room. Guests get the lobby
+  // instead — see the PreJoinScreen branch below. Falls back to the Meetings page
+  // with the code prefilled if the room turns out to be gone.
+  const linkCode = pendingRoomCode?.trim().toUpperCase();
+  const linkJoinRef = useRef(false);
   useEffect(() => {
-    if (currentUser && autoJoinCode) {
-      setCurrentView('debrief');
-    }
-  }, [currentUser, autoJoinCode]);
+    const target = linkCode ?? autoJoinCode;
+    if (!currentUser || !target || isInMeeting || rejoinTarget || linkJoinRef.current) return;
+    linkJoinRef.current = true;
+    joinMeeting(target).catch(() => setCurrentView('debrief'));
+  }, [currentUser, linkCode, autoJoinCode, isInMeeting, rejoinTarget, joinMeeting]);
 
   const handleLeaveMeeting = () => {
     setCurrentView('debrief');
@@ -124,6 +206,37 @@ function AppContent({ pendingRoomCode }: { pendingRoomCode?: string }) {
     );
   }
 
+  // Guests live entirely inside the call — no sidebar, no top bar, nothing else in
+  // the product is available to them. Rendering the meeting bare also keeps the
+  // app shell's currentUser assumptions (avatars, compliance log actor) intact.
+  if (!currentUser && isInMeeting) {
+    return <ActiveMeetingView onLeaveMeeting={() => { window.location.href = '/'; }} />;
+  }
+
+  // Redialling the room a reload interrupted.
+  if (!isInMeeting && rejoinState === 'pending') {
+    return (
+      <div className="min-h-screen bg-[#111] flex flex-col items-center justify-center gap-3 text-[#e8eaed]">
+        <div className="w-8 h-8 rounded-full border-2 border-[#8ab4f8] border-t-transparent animate-spin" />
+        <p className="text-sm text-[#9aa0a6]">
+          Rejoining <span className="font-mono font-bold text-[#8ab4f8]">{rejoinTarget}</span>…
+        </p>
+      </div>
+    );
+  }
+
+  // Anyone with just a share link: name in, camera check, join. No account needed.
+  if (!currentUser && linkCode && !forceLogin) {
+    return (
+      <PreJoinScreen
+        roomCode={linkCode}
+        error={rejoinFailed ? 'That meeting has ended.' : meetingError}
+        onJoin={(name, opts) => handlePreJoin(name, opts, linkCode, true)}
+        onSignIn={() => setForceLogin(true)}
+      />
+    );
+  }
+
   if (!currentUser) {
     return <LoginPage pendingJoinCode={pendingRoomCode} />;
   }
@@ -140,7 +253,9 @@ function AppContent({ pendingRoomCode }: { pendingRoomCode?: string }) {
 
   const handleClearLogs = () => setLogs([]);
 
-  const effectiveView: AppView = isInMeeting ? 'active_meeting' : currentView;
+  const effectiveView: AppView = isInMeeting && !isMinimized
+    ? 'active_meeting'
+    : (currentView === 'active_meeting' ? viewBeforeMeetingRef.current : currentView);
 
   return (
     <>
@@ -196,7 +311,7 @@ function AppContent({ pendingRoomCode }: { pendingRoomCode?: string }) {
               )}
 
               {effectiveView === 'active_meeting' && (
-                <ActiveMeetingView onLeaveMeeting={handleLeaveMeeting} />
+                <ActiveMeetingView onLeaveMeeting={handleLeaveMeeting} onMinimize={handleMinimizeMeeting} />
               )}
 
               {effectiveView === 'calendar' && <CalendarView />}
@@ -216,6 +331,8 @@ function AppContent({ pendingRoomCode }: { pendingRoomCode?: string }) {
         </div>
       </div>
     </div>
+
+    {isInMeeting && isMinimized && <FloatingCallWindow onExpand={handleExpandMeeting} />}
 
     {incomingCall && !isInMeeting && (
       <IncomingCallModal

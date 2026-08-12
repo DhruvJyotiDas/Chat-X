@@ -52,7 +52,7 @@ export default function DebriefView({ onJoinMeeting, autoJoinCode, onAutoJoinCon
             </div>
             <div className="flex items-center gap-2 bg-[#131313] rounded-xl border border-[#424655] focus-within:border-[#568dff] transition-all overflow-hidden">
               <input type="text" placeholder="ENTER ROOM CODE…" className="flex-1 pl-3 sm:pl-4 pr-2 py-3 bg-transparent text-xs text-[#e5e2e1] placeholder-[#8c90a1]/60 outline-none uppercase font-mono min-w-0" value={meetingCode} onChange={e => setMeetingCode(e.target.value.toUpperCase())} onKeyDown={e => e.key === 'Enter' && handleJoin()} />
-              <button onClick={() => handleJoin()} disabled={isJoining || !meetingCode.trim()} className="mr-1.5 bg-[#568dff] text-[#002661] px-3 sm:px-4 py-1.5 rounded-lg text-xs font-bold hover:bg-[#568dff]/90 disabled:opacity-40 cursor-pointer disabled:cursor-not-allowed transition-colors shrink-0">{isJoining ? '…' : 'Join'}</button>
+              <button onClick={() => handleJoin()} disabled={isJoining || !meetingCode.trim()} className="mr-1.5 bg-[#568dff] text-[#002661] px-3 sm:px-4 py-2.5 sm:py-1.5 min-h-[40px] sm:min-h-0 rounded-lg text-xs font-bold hover:bg-[#568dff]/90 disabled:opacity-40 cursor-pointer disabled:cursor-not-allowed transition-colors shrink-0">{isJoining ? '…' : 'Join'}</button>
             </div>
           </div>
         </div>
@@ -60,7 +60,7 @@ export default function DebriefView({ onJoinMeeting, autoJoinCode, onAutoJoinCon
         <div className="bg-[#1c1b1b] border border-[#424655] rounded-2xl p-4 sm:p-5">
           <div className="flex justify-between items-center mb-4">
             <h3 className="font-semibold text-sm text-[#e5e2e1] flex items-center gap-2"><Calendar className="w-4 h-4 text-[#b0c6ff]" />Scheduled Meetings</h3>
-            <button onClick={() => setShowScheduleModal(true)} className="flex items-center gap-1.5 text-[#b0c6ff] hover:text-[#568dff] font-bold text-xs cursor-pointer transition-colors"><Plus className="w-3.5 h-3.5" /><span>Schedule</span></button>
+            <button onClick={() => setShowScheduleModal(true)} className="flex items-center gap-1.5 text-[#b0c6ff] hover:text-[#568dff] font-bold text-xs cursor-pointer transition-colors min-h-[36px] sm:min-h-0 px-1"><Plus className="w-3.5 h-3.5" /><span>Schedule</span></button>
           </div>
           {scheduledMeetings.length === 0 ? (
             <div className="text-center py-6 sm:py-8">

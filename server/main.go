@@ -1,7 +1,9 @@
 package main
 
 import (
+	"crypto/hmac"
 	"crypto/rand"
+	"crypto/sha1"
 	"crypto/rsa"
 	"database/sql"
 	"encoding/base64"
@@ -14,8 +16,10 @@ import (
 	"net/http/httputil"
 	"net/url"
 	"os"
+	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/go-sql-driver/mysql"
@@ -24,9 +28,46 @@ import (
 )
 
 const (
-	jwtKey    = "ibconnect_jwt_secret_prod_2024_change_me"
-	jwtExpiry = 30 * 24 * time.Hour
+	// The value this used to be hardcoded to. Kept ONLY so the startup guard can
+	// recognise and refuse it — never used to sign anything.
+	jwtKeyLegacyDefault = "ibconnect_jwt_secret_prod_2024_change_me"
+	jwtExpiry           = 30 * 24 * time.Hour
 )
+
+// jwtKey signs every session token. It used to be the compile-time constant
+// above, which meant the signing key for production sessions lived in the git
+// history — anyone able to read the repo could mint a valid token for any user
+// id, with no password and no OIDC round-trip. It now comes from the
+// environment (systemd already loads EnvironmentFile=/etc/ibconnect/env).
+//
+// Rotating it invalidates every existing session, so everyone signs in again.
+var jwtKey = os.Getenv("IBCONNECT_JWT_SECRET")
+
+// mustHaveSigningKey refuses to start rather than fall back to a known key.
+// A silent fallback is how the old value survived for months: everything kept
+// working, so nothing ever surfaced the problem.
+// mustEnv fails fast on a missing credential rather than starting up degraded.
+func mustEnv(key string) string {
+	v := os.Getenv(key)
+	if v == "" {
+		log.Fatalf("%s is not set. Add it to /etc/ibconnect/env (chmod 600) and restart.", key)
+	}
+	return v
+}
+
+func mustHaveSigningKey() {
+	switch {
+	case jwtKey == "":
+		log.Fatal("IBCONNECT_JWT_SECRET is not set. Generate one with `openssl rand -base64 48`, " +
+			"put it in /etc/ibconnect/env as IBCONNECT_JWT_SECRET=..., chmod 600, and restart. " +
+			"Refusing to start rather than sign sessions with a default key.")
+	case jwtKey == jwtKeyLegacyDefault:
+		log.Fatal("IBCONNECT_JWT_SECRET is still the old hardcoded value, which is public in the " +
+			"git history. Generate a fresh one with `openssl rand -base64 48`. Refusing to start.")
+	case len(jwtKey) < 32:
+		log.Fatalf("IBCONNECT_JWT_SECRET is only %d characters; use at least 32 (openssl rand -base64 48).", len(jwtKey))
+	}
+}
 
 var (
 	db       *sql.DB
@@ -256,11 +297,27 @@ func loadThread(threadID, forUID string) (Thread, error) {
 			UNIX_TIMESTAMP((SELECT created_at FROM messages WHERE thread_id=t.id ORDER BY created_at DESC LIMIT 1))*1000,
 			(SELECT COUNT(*) FROM messages m
 			 JOIN thread_members tm ON tm.thread_id=m.thread_id AND tm.user_id=?
-			 WHERE m.thread_id=t.id AND (tm.last_read_at IS NULL OR m.created_at > tm.last_read_at))
+			 WHERE m.thread_id=t.id AND m.sender_id <> tm.user_id
+			   AND (tm.last_read_at IS NULL OR m.created_at > tm.last_read_at))
 		FROM threads t WHERE t.id=?
 	`, forUID, threadID).Scan(&t.ID, &t.Type, &t.Name, &t.Avatar, &lastMsg, &ts, &t.UnreadCount)
 	if err != nil {
 		return t, err
+	}
+	// A DM's stored name/avatar are whatever the *creator* saw at creation time — i.e. the
+	// other participant from their side only. Served as-is, the recipient sees their own
+	// name and their own avatar as the thread title. Resolve the counterpart live, per
+	// viewer, which also keeps the title in step with display-name/avatar changes.
+	if t.Type == "dm" {
+		var otherName, otherAvatar string
+		if e := db.QueryRow(`
+			SELECT u.display_name, COALESCE(u.avatar,'')
+			FROM thread_members tm JOIN users u ON u.id=tm.user_id
+			WHERE tm.thread_id=? AND tm.user_id<>? LIMIT 1
+		`, threadID, forUID).Scan(&otherName, &otherAvatar); e == nil && otherName != "" {
+			t.Name = otherName
+			t.Avatar = otherAvatar
+		}
 	}
 	if lastMsg.Valid {
 		t.LastMessage = lastMsg.String
@@ -803,9 +860,24 @@ func handleMessages(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	path := strings.TrimPrefix(r.URL.Path, "/api/threads/")
-	threadID := strings.TrimSuffix(path, "/messages")
+	isRead := strings.HasSuffix(path, "/read")
+	threadID := strings.TrimSuffix(strings.TrimSuffix(path, "/messages"), "/read")
 	if !isMember(threadID, uid) {
 		fail(w, "not a member", 403)
+		return
+	}
+
+	// POST /api/threads/{id}/read — the only way to clear unread for messages that arrived while
+	// the thread was already open. Those come in over the chat WS, which never touches the DB, so
+	// without this the client zeroes the badge locally and the server still counts them: the badge
+	// reappears on the next reload for messages the user has demonstrably already seen.
+	if isRead {
+		if r.Method != "POST" {
+			fail(w, "method not allowed", 405)
+			return
+		}
+		db.Exec(`UPDATE thread_members SET last_read_at=NOW(6) WHERE thread_id=? AND user_id=?`, threadID, uid) //nolint
+		ok(w, map[string]any{"ok": true})
 		return
 	}
 
@@ -836,7 +908,11 @@ func handleMessages(w http.ResponseWriter, r *http.Request) {
 			}
 			msgs = append(msgs, m)
 		}
-		db.Exec(`UPDATE thread_members SET last_read_at=NOW() WHERE thread_id=? AND user_id=?`, threadID, uid) //nolint
+		// NOW(6), not NOW(): messages.created_at is DATETIME(6) but bare NOW() truncates to whole
+		// seconds, so a message written at 07:13:19.575786 stays "unread" against a marker of
+		// 07:13:19.000000 — forever, since nothing ever re-reads it. That off-by-a-fraction is
+		// what made a thread you had just opened (or posted in) keep a stuck unread badge.
+		db.Exec(`UPDATE thread_members SET last_read_at=NOW(6) WHERE thread_id=? AND user_id=?`, threadID, uid) //nolint
 		ok(w, msgs)
 		return
 	}
@@ -877,7 +953,7 @@ func handleMessages(w http.ResponseWriter, r *http.Request) {
 	}
 	members := threadMembers(threadID)
 	pushTo(members, "new_message", map[string]any{"threadId": threadID, "message": m})
-	db.Exec(`UPDATE thread_members SET last_read_at=NOW() WHERE thread_id=? AND user_id=?`, threadID, uid) //nolint
+	db.Exec(`UPDATE thread_members SET last_read_at=NOW(6) WHERE thread_id=? AND user_id=?`, threadID, uid) //nolint
 	ok(w, m)
 }
 
@@ -1077,30 +1153,175 @@ type SigClient struct {
 	name string
 	conn *websocket.Conn
 	room *Room
-	mu   sync.Mutex
+
+	// Outbound queue. Writes used to happen synchronously inside broadcast(),
+	// while it held the room's read lock — so one client whose TCP send buffer
+	// was full (a phone on bad mobile data) blocked delivery to everyone behind
+	// it in the map AND blocked enterRoom/leaveRoom, which take the write lock.
+	// In a large room that serialised every join and leave behind the slowest
+	// socket, which is why joiners stayed invisible until they reloaded.
+	// Now sendMsg only enqueues; a single writePump goroutine owns the socket.
+	send      chan []byte
+	done      chan struct{}
+	closeOnce sync.Once
+}
+
+// kill tears the connection down from the writer side. Closing the conn makes the
+// read loop's ReadMessage fail, so the normal deferred leaveRoom still runs and
+// the room stays consistent — there is no separate cleanup path to keep in sync.
+func (c *SigClient) kill() {
+	c.closeOnce.Do(func() {
+		close(c.done)
+		c.conn.Close()
+	})
+}
+
+// writePump is the ONLY goroutine that writes to the socket. Gorilla requires a
+// single writer, and folding the keepalive ping in here (rather than a second
+// goroutine with a mutex) is what makes that true without any locking.
+func (c *SigClient) writePump() {
+	ticker := time.NewTicker(sigPingPeriod)
+	defer ticker.Stop()
+	for {
+		select {
+		case msg := <-c.send:
+			c.conn.SetWriteDeadline(time.Now().Add(sigWriteWait)) //nolint
+			if err := c.conn.WriteMessage(websocket.TextMessage, msg); err != nil {
+				c.kill()
+				return
+			}
+		case <-ticker.C:
+			if err := c.conn.WriteControl(websocket.PingMessage, nil, time.Now().Add(sigWriteWait)); err != nil {
+				c.kill()
+				return
+			}
+		case <-c.done:
+			return
+		}
+	}
 }
 
 func (c *SigClient) sendMsg(t string, payload any) {
 	data, _ := json.Marshal(payload)
 	msg, _ := json.Marshal(WSMessage{Type: t, Payload: json.RawMessage(data)})
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	c.conn.WriteMessage(websocket.TextMessage, msg) //nolint
+	select {
+	case c.send <- msg:
+	case <-c.done:
+	default:
+		// The queue is full, so this client is not draining its socket. Drop it
+		// rather than stall the room: a ghost that everyone waits on is strictly
+		// worse than a peer that disconnects and reconnects.
+		log.Printf("[Signaling] send queue full for %s (%s) — dropping connection", c.id, c.name)
+		c.kill()
+	}
 }
 
 type Room struct {
 	id      string
 	clients map[string]*SigClient
 	mu      sync.RWMutex
+
+	// Signalling volume counters, reported in aggregate by sigReporter below.
+	// The relay path deliberately does NOT log per message: at 22 participants a
+	// single join fans out ~21 offers and hundreds of ICE candidates, so
+	// per-message logging would bury the journal. Aggregates answer the question
+	// that actually matters after an incident — "how much renegotiation was this
+	// room doing?" — which was unanswerable for the 2026-08-10 call.
+	sigOffers     atomic.Uint64
+	sigAnswers    atomic.Uint64
+	sigCandidates atomic.Uint64
+	// reap is a pending "delete this empty room" timer, guarded by roomsMu (not
+	// room.mu) because firing it mutates the global rooms map. An empty room is
+	// kept alive for emptyRoomGrace rather than deleted on the spot so that a
+	// participant who reloads the page — including the host, whose departure
+	// empties a 1-person room instantly — can rejoin the same code instead of
+	// getting "Room not found".
+	reap *time.Timer
+}
+
+const emptyRoomGrace = 90 * time.Second
+
+// Signaling keepalive. A call can legitimately sit idle on the wire for minutes
+// (media flows peer-to-peer, not through here), so nothing else would notice a
+// dead socket. Same shape as the chat WS's ping loop.
+const (
+	sigPongWait   = 30 * time.Second
+	sigPingPeriod = (sigPongWait * 8) / 10
+	sigWriteWait  = 10 * time.Second
+	// Deep enough to absorb a burst (a 35-person room re-offering at once) but
+	// shallow enough that a genuinely stuck client is detected in seconds.
+	sigSendBuffer = 256
+)
+
+// maxRoomSize caps participants per room. DEFAULT IS 0 = UNLIMITED, deliberately:
+// this codebase is mesh WebRTC, which realistically supports 6-8 people, but
+// turning a cap on silently would start rejecting users from calls that
+// currently connect (badly). Set MAX_ROOM_SIZE=8 to enforce it.
+var maxRoomSize = func() int {
+	n, err := strconv.Atoi(os.Getenv("MAX_ROOM_SIZE"))
+	if err != nil || n < 0 {
+		return 0
+	}
+	return n
+}()
+
+// roomIsFull reports whether the room already holds maxRoomSize *other* clients.
+// Re-entry by an id already in the room (a reload) is never counted as growth.
+func roomIsFull(room *Room, clientID string) bool {
+	if maxRoomSize <= 0 {
+		return false
+	}
+	room.mu.RLock()
+	defer room.mu.RUnlock()
+	if _, rejoining := room.clients[clientID]; rejoining {
+		return false
+	}
+	return len(room.clients) >= maxRoomSize
+}
+
+// sigReporter periodically logs per-room signalling volume, then resets the
+// counters. This is the only record of renegotiation activity: without it there
+// is no way to distinguish "a room that is quietly working" from "a room in a
+// renegotiation storm", which is precisely the gap that made the 2026-08-10
+// fan-out estimate unverifiable.
+func sigReporter() {
+	const every = 30 * time.Second
+	for range time.Tick(every) {
+		roomsMu.RLock()
+		snapshot := make([]*Room, 0, len(rooms))
+		for _, r := range rooms {
+			snapshot = append(snapshot, r)
+		}
+		roomsMu.RUnlock()
+		for _, r := range snapshot {
+			o := r.sigOffers.Swap(0)
+			a := r.sigAnswers.Swap(0)
+			c := r.sigCandidates.Swap(0)
+			if o == 0 && a == 0 && c == 0 {
+				continue
+			}
+			r.mu.RLock()
+			n := len(r.clients)
+			r.mu.RUnlock()
+			log.Printf("[Signaling] room %s 30s: participants=%d offers=%d answers=%d candidates=%d", r.id, n, o, a, c)
+		}
+	}
 }
 
 func (room *Room) broadcast(senderID, t string, payload any) {
+	// Snapshot the recipients, then release the lock before touching any socket.
+	// sendMsg can now call kill() on a client that has fallen behind, and doing
+	// that while holding room.mu would deadlock against leaveRoom.
 	room.mu.RLock()
-	defer room.mu.RUnlock()
+	targets := make([]*SigClient, 0, len(room.clients))
 	for id, c := range room.clients {
 		if id != senderID {
-			c.sendMsg(t, payload)
+			targets = append(targets, c)
 		}
+	}
+	room.mu.RUnlock()
+	for _, c := range targets {
+		c.sendMsg(t, payload)
 	}
 }
 
@@ -1108,6 +1329,71 @@ var (
 	roomsMu sync.RWMutex
 	rooms   = map[string]*Room{}
 )
+
+// cancelReapLocked stops a pending empty-room deletion. Caller must hold roomsMu.
+func cancelReapLocked(room *Room) {
+	if room.reap != nil {
+		room.reap.Stop()
+		room.reap = nil
+	}
+}
+
+// scheduleReap arms the delayed deletion of a room that just became empty.
+func scheduleReap(room *Room) {
+	roomsMu.Lock()
+	defer roomsMu.Unlock()
+	cancelReapLocked(room)
+	room.reap = time.AfterFunc(emptyRoomGrace, func() {
+		roomsMu.Lock()
+		defer roomsMu.Unlock()
+		room.mu.RLock()
+		empty := len(room.clients) == 0
+		room.mu.RUnlock()
+		// Somebody rejoined during the grace window — keep the room.
+		if !empty {
+			return
+		}
+		// Only delete if the map still points at this exact Room value.
+		if rooms[room.id] == room {
+			delete(rooms, room.id)
+			log.Printf("Room %s closed (empty after grace)", room.id)
+		}
+	})
+}
+
+// enterRoom registers client in room, evicting any previous connection that was
+// holding the same user id (a reload leaves the old socket briefly alive). It
+// returns the peers that were already present, never including the caller.
+func enterRoom(client *SigClient, room *Room) []PeerInfo {
+	room.mu.Lock()
+	peers := []PeerInfo{}
+	for _, c := range room.clients {
+		if c.id == client.id {
+			continue
+		}
+		peers = append(peers, PeerInfo{ID: c.id, Name: c.name})
+	}
+	prev := room.clients[client.id]
+	room.clients[client.id] = client
+	room.mu.Unlock()
+
+	// Drop the stale socket *after* releasing the lock. Its read loop will error
+	// out and run leaveRoom, which no-ops because the map no longer points at it.
+	//
+	// This eviction is INVISIBLE in the logs until now, and it is a real source of
+	// apparent "random disconnects": a room is keyed by user id, so a second tab,
+	// a second device, or a fast reload forcibly closes the previous socket. In the
+	// 2026-08-10 incident 14 of one participant's 24 disconnects carried this
+	// signature (a new connection within <=2s). Whether one user should be able to
+	// hold two seats is a product decision, but it must at least be diagnosable.
+	if prev != nil && prev != client {
+		log.Printf("[Signaling] EVICT %s (%s) from room %s — same user id reconnected (second tab/device or reload)",
+			client.id, client.name, room.id)
+		prev.conn.Close()
+	}
+	client.room = room
+	return peers
+}
 
 func genCode() string {
 	const chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
@@ -1123,15 +1409,89 @@ func genCode() string {
 	return string(code)
 }
 
+// ─── TURN credentials ────────────────────────────────────────────────────────
+//
+// These used to be a hardcoded username/password pair in the client bundle
+// (useWebRTC.ts), i.e. an open relay for anybody who opened the site's
+// JavaScript. Serving them from here means they can be short-lived.
+//
+// ROLLOUT IS TWO-STEP AND ORDER MATTERS. With TURN_STATIC_AUTH_SECRET unset
+// this returns the same long-lived credentials as before, so deploying the
+// backend and frontend together changes nothing operationally. Only once
+// coturn is switched to `use-auth-secret` + a matching `static-auth-secret`
+// should the env var be set here. Setting it before coturn is reconfigured
+// makes every relayed call fail authentication.
+//
+// Deliberately unauthenticated: guests join meetings by link without a session
+// (see PreJoinScreen), so requiring a JWT here would break guest calls. The
+// improvement is that credentials now expire, not that they are gated.
+func handleTurnCredentials(w http.ResponseWriter, r *http.Request) {
+	if r.Method != "GET" {
+		fail(w, "Method not allowed", 405)
+		return
+	}
+	host := getenvOr("TURN_HOST", "meet.icebrkr.space")
+	ttl := 12 * time.Hour
+
+	var username, credential string
+	if secret := os.Getenv("TURN_STATIC_AUTH_SECRET"); secret != "" {
+		// coturn's REST-API scheme: username is "<unix-expiry>:<name>" and the
+		// credential is base64(HMAC-SHA1(secret, username)).
+		username = fmt.Sprintf("%d:ibconnect", time.Now().Add(ttl).Unix())
+		mac := hmac.New(sha1.New, []byte(secret))
+		mac.Write([]byte(username)) //nolint
+		credential = base64.StdEncoding.EncodeToString(mac.Sum(nil))
+	} else {
+		username = getenvOr("TURN_STATIC_USER", "webrtc")
+		credential = getenvOr("TURN_STATIC_PASS", "webrtc123")
+		ttl = 0 // static credentials do not expire; tell the client not to refetch on a timer
+	}
+
+	ok(w, map[string]any{
+		"iceServers": []map[string]any{
+			{"urls": []string{"stun:stun.l.google.com:19302", "stun:stun1.l.google.com:19302"}},
+			{
+				"urls": []string{
+					"turn:" + host + ":3478",
+					"turn:" + host + ":3478?transport=tcp",
+					"turns:" + host + ":5349",
+				},
+				"username":   username,
+				"credential": credential,
+			},
+		},
+		"ttlSeconds": int(ttl.Seconds()),
+	})
+}
+
 func handleSignaling(w http.ResponseWriter, r *http.Request) {
 	conn, err := upgrader.Upgrade(w, r, nil)
 	if err != nil {
 		return
 	}
-	client := &SigClient{id: "tmp-" + newID(), conn: conn}
+	client := &SigClient{
+		id:   "tmp-" + newID(),
+		conn: conn,
+		send: make(chan []byte, sigSendBuffer),
+		done: make(chan struct{}),
+	}
+	go client.writePump()
 	log.Printf("New signaling client: %s", client.id)
+
+	// Keepalive, same reasoning as handleChatWS: a phone that sleeps, switches
+	// from wifi to cellular, or drops off the network never sends a close frame,
+	// so ReadMessage below would block forever and the client would sit in its
+	// room as a ghost — everyone else keeps a frozen tile for someone who is
+	// gone, and the room never empties (so it's never reaped). Pings force the
+	// issue: no pong within sigPongWait trips the read deadline and the deferred
+	// leaveRoom runs like any other disconnect.
+	conn.SetReadDeadline(time.Now().Add(sigPongWait)) //nolint
+	conn.SetPongHandler(func(string) error {
+		conn.SetReadDeadline(time.Now().Add(sigPongWait)) //nolint
+		return nil
+	})
 	defer func() {
-		conn.Close()
+		client.kill()
 		if client.room != nil {
 			leaveRoom(client)
 		}
@@ -1155,18 +1515,43 @@ func handleSignaling(w http.ResponseWriter, r *http.Request) {
 			}
 			client.name = p.UserName
 
+			// Leave whatever room this connection was already in first. Without
+			// this the old room keeps a stale entry for us forever: it never
+			// becomes empty (so it's never reaped) and everyone still in it sees
+			// our name on a frozen, blank tile because no peer_left is ever sent.
+			if client.room != nil {
+				leaveRoom(client)
+			}
+
 			code := p.RoomID
 			if code == "" {
 				code = genCode()
 			}
 
-			room := &Room{id: code, clients: map[string]*SigClient{client.id: client}}
+			// Reuse an existing room with this code rather than replacing it —
+			// overwriting rooms[code] used to orphan everyone already inside.
 			roomsMu.Lock()
-			rooms[code] = room
+			room, exists := rooms[code]
+			if !exists {
+				room = &Room{id: code, clients: map[string]*SigClient{}}
+				rooms[code] = room
+			}
+			cancelReapLocked(room)
 			roomsMu.Unlock()
-			client.room = room
-			client.sendMsg("room_created", map[string]string{"room_id": code})
-			log.Printf("Room %s created by %s (%s)", code, client.id, client.name)
+
+			if roomIsFull(room, client.id) {
+				client.sendMsg("error", map[string]string{
+					"message": fmt.Sprintf("This meeting is full (%d participants max).", maxRoomSize),
+				})
+				continue
+			}
+
+			peers := enterRoom(client, room)
+			client.sendMsg("room_created", map[string]any{"room_id": code, "peers": peers})
+			if len(peers) > 0 {
+				room.broadcast(client.id, "peer_joined", map[string]string{"peer_id": client.id, "peer_name": client.name})
+			}
+			log.Printf("Room %s created by %s (%s), %d existing peer(s)", code, client.id, client.name, len(peers))
 		case "join_room":
 			var p JoinRoomPayload
 			json.Unmarshal(msg.Payload, &p) //nolint
@@ -1174,21 +1559,36 @@ func handleSignaling(w http.ResponseWriter, r *http.Request) {
 				client.id = p.UserID
 			}
 			client.name = p.UserName
-			roomsMu.RLock()
+
+			// Same leak as create_room: hopping straight from one room to another
+			// on a single socket must vacate the first one.
+			if client.room != nil {
+				leaveRoom(client)
+			}
+
+			roomsMu.Lock()
 			room, found := rooms[p.RoomID]
-			roomsMu.RUnlock()
+			if found {
+				cancelReapLocked(room)
+			}
+			roomsMu.Unlock()
 			if !found {
 				client.sendMsg("error", map[string]string{"message": "Room not found: " + p.RoomID})
 				continue
 			}
-			room.mu.Lock()
-			peers := []PeerInfo{}
-			for _, c := range room.clients {
-				peers = append(peers, PeerInfo{ID: c.id, Name: c.name})
+			if roomIsFull(room, client.id) {
+				client.sendMsg("error", map[string]string{
+					"message": fmt.Sprintf("This meeting is full (%d participants max).", maxRoomSize),
+				})
+				continue
 			}
-			room.clients[client.id] = client
-			room.mu.Unlock()
-			client.room = room
+
+			peers := enterRoom(client, room)
+			// Previously unlogged. Without this a post-incident investigation cannot
+			// attribute ANY participant to a room — only create_room recorded a code,
+			// so joiners were anonymous connect/disconnect pairs. Room membership is
+			// the backbone of every call RCA; log it.
+			log.Printf("Room %s joined by %s (%s), now %d participant(s)", room.id, client.id, client.name, len(peers)+1)
 			client.sendMsg("room_joined", map[string]any{"room_id": room.id, "peers": peers})
 			room.broadcast(client.id, "peer_joined", map[string]string{"peer_id": client.id, "peer_name": client.name})
 		case "offer", "answer", "ice_candidate":
@@ -1197,17 +1597,29 @@ func handleSignaling(w http.ResponseWriter, r *http.Request) {
 			if client.room == nil {
 				continue
 			}
+			switch msg.Type {
+			case "offer":
+				client.room.sigOffers.Add(1)
+			case "answer":
+				client.room.sigAnswers.Add(1)
+			default:
+				client.room.sigCandidates.Add(1)
+			}
 			client.room.mu.RLock()
 			target, found := client.room.clients[p.To]
 			client.room.mu.RUnlock()
 			if found {
-				target.sendMsg(msg.Type, map[string]any{"from": client.id, "sdp": p.SDP, "candidate": p.Candidate, "kind": p.Kind})
+				// from_name matters on `offer`: the receiver may be creating that
+				// peer's tile right here (an offer can land before, or instead of,
+				// the peer_joined that would have named them) and without a name it
+				// falls back to a generic "Guest (…)" label for a known participant.
+				target.sendMsg(msg.Type, map[string]any{
+					"from": client.id, "from_name": client.name,
+					"sdp": p.SDP, "candidate": p.Candidate, "kind": p.Kind,
+				})
 			}
 		case "leave_room":
-			if client.room != nil {
-				leaveRoom(client)
-				client.room = nil
-			}
+			leaveRoom(client) // no-ops when client.room is nil, and clears it itself
 		case "chat_message":
 			var p ChatPayload
 			json.Unmarshal(msg.Payload, &p) //nolint
@@ -1231,16 +1643,27 @@ func handleSignaling(w http.ResponseWriter, r *http.Request) {
 
 func leaveRoom(client *SigClient) {
 	room := client.room
+	if room == nil {
+		return
+	}
 	room.mu.Lock()
-	delete(room.clients, client.id)
+	// Only vacate if the room still points at *this* connection. When someone
+	// reloads, their new socket takes over the id before the old socket's read
+	// loop notices it died; without this guard that late teardown would evict
+	// the freshly-rejoined client and broadcast a bogus peer_left for them.
+	removed := room.clients[client.id] == client
+	if removed {
+		delete(room.clients, client.id)
+	}
 	empty := len(room.clients) == 0
 	room.mu.Unlock()
+	client.room = nil
+	if !removed {
+		return
+	}
 	room.broadcast(client.id, "peer_left", map[string]string{"peer_id": client.id})
 	if empty {
-		roomsMu.Lock()
-		delete(rooms, room.id)
-		roomsMu.Unlock()
-		log.Printf("Room %s closed (empty)", room.id)
+		scheduleReap(room)
 	}
 }
 
@@ -1252,10 +1675,16 @@ func handleHealth(w http.ResponseWriter, r *http.Request) {
 // ── Main ──────────────────────────────────────────────────────────────────────
 
 func main() {
+	mustHaveSigningKey()
+
 	var err error
 	cfg := mysql.NewConfig()
 	cfg.User = "ibconnect_app"
-	cfg.Passwd = "i332jxptdF8N7ewu6xzvlRy9"
+	// Was a hardcoded literal, and this repo is PUBLIC on GitHub — the database
+	// password was world-readable. Mitigated only by MariaDB binding to localhost,
+	// which stops being a mitigation the moment anything else on this host is
+	// compromised. Sourced from the environment like every other credential now.
+	cfg.Passwd = mustEnv("IBCONNECT_DB_PASSWORD")
 	cfg.Net = "tcp"
 	cfg.Addr = "127.0.0.1:3306"
 	cfg.DBName = "lolafire_IBConnect"
@@ -1281,6 +1710,7 @@ func main() {
 	mux.HandleFunc("/api/auth/me", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == "PUT" { handleUpdateMe(w, r) } else { handleMe(w, r) }
 	})
+	mux.HandleFunc("/api/turn-credentials", handleTurnCredentials)
 	mux.HandleFunc("/api/users", handleUsers)
 	mux.HandleFunc("/api/threads", handleThreads)
 	mux.HandleFunc("/api/threads/", handleMessages)
@@ -1323,6 +1753,19 @@ func main() {
 		asrProxy.ServeHTTP(w, r)
 	})
 
-	log.Println("[Server] listening on :8080")
-	log.Fatal(http.ListenAndServe(":8080", cors(mux)))
+	// Defaults to the port the systemd unit expects; overridable so a throwaway
+	// instance can be run alongside it for testing without restarting production.
+	port := os.Getenv("PORT")
+	if port == "" {
+		port = "8080"
+	}
+	go sigReporter()
+
+	// Bind to loopback, not 0.0.0.0. nginx proxies to 127.0.0.1:8080 and terminates
+	// TLS, but the listener was on every interface, so the API and WebSocket were
+	// ALSO reachable directly on the public IP over plain HTTP — bypassing TLS and
+	// anything nginx enforces. BIND_ADDR overrides it for local testing.
+	addr := getenvOr("BIND_ADDR", "127.0.0.1") + ":" + port
+	log.Printf("[Server] listening on %s", addr)
+	log.Fatal(http.ListenAndServe(addr, cors(mux)))
 }

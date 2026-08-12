@@ -421,9 +421,12 @@ export default function SettingsModal({ onClose }: Props) {
     return () => window.removeEventListener('keydown', h);
   }, [onClose]);
 
+  // z-[90] like the chat modals. At z-50 this rendered under the sidebar rail
+  // (z-[70]) and the mobile hamburger (z-[80]), leaving the left edge undimmed and
+  // routing taps there to the sidebar instead of the modal backdrop.
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm"
+      className="fixed inset-0 z-[90] flex items-center justify-center bg-black/70 backdrop-blur-sm p-3 sm:p-4"
       onClick={onClose}
     >
       <div
@@ -434,7 +437,7 @@ export default function SettingsModal({ onClose }: Props) {
         {/* Header */}
         <div className="flex items-center justify-between px-5 py-4 border-b border-[#424655] shrink-0">
           <h2 className="font-bold text-sm text-[#e5e2e1]">Settings</h2>
-          <button onClick={onClose} className="w-7 h-7 rounded-lg bg-[#201f1f] border border-[#424655] flex items-center justify-center text-[#8c90a1] hover:text-[#ffb4ab] hover:border-[#ffb4ab]/40 cursor-pointer transition-all">
+          <button onClick={onClose} aria-label="Close settings" className="w-9 h-9 sm:w-7 sm:h-7 shrink-0 rounded-lg bg-[#201f1f] border border-[#424655] flex items-center justify-center text-[#8c90a1] hover:text-[#ffb4ab] hover:border-[#ffb4ab]/40 cursor-pointer transition-all">
             <X className="w-4 h-4" />
           </button>
         </div>

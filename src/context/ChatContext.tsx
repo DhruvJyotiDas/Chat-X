@@ -131,6 +131,10 @@ export function ChatProvider({ children }: { children: React.ReactNode }) {
           // Force re-render of active thread
           if (activeThreadRef.current === threadId) {
             setActiveThreadId(id => id);
+            // The badge above was zeroed locally because the user is looking right at this thread,
+            // but nothing has re-fetched messages, so the server still counts this message unread.
+            // Persist the read marker or it comes back on the next reload.
+            api.markRead(threadId).catch(() => {});
           }
           break;
         }
@@ -264,8 +268,12 @@ export function ChatProvider({ children }: { children: React.ReactNode }) {
     }
   }, [currentUser]);
 
+  // Clearing the badge locally is not enough: the server recomputes unreadCount from
+  // thread_members.last_read_at on every getThreads(), so a purely local zero comes straight back
+  // on the next reload. Tell the server too.
   const markRead = useCallback((threadId: string) => {
     setThreads(prev => prev.map(t => t.id === threadId ? { ...t, unreadCount: 0 } : t));
+    api.markRead(threadId).catch(() => {});
   }, []);
 
   const dismissIncomingCall = useCallback(() => setIncomingCall(null), []);

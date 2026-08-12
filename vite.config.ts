@@ -4,6 +4,13 @@ import path from 'path';
 import {defineConfig} from 'vite';
 
 export default defineConfig(() => {
+  // Lets a throwaway dev server point at a throwaway backend (see PORT in
+  // server/main.go) so meeting/signaling changes can be exercised end-to-end
+  // without restarting the one that real calls are running on.
+  const backendPort = process.env.BACKEND_PORT ?? '8080';
+  const httpBackend = `http://localhost:${backendPort}`;
+  const wsBackend = `ws://localhost:${backendPort}`;
+
   return {
     plugins: [react(), tailwindcss()],
     resolve: {
@@ -16,16 +23,16 @@ export default defineConfig(() => {
       watch: process.env.DISABLE_HMR === 'true' ? null : {},
       proxy: {
         '/api': {
-          target: 'http://localhost:8080',
+          target: httpBackend,
           changeOrigin: true,
         },
         '/chat-ws': {
-          target: 'ws://localhost:8080',
+          target: wsBackend,
           ws: true,
           changeOrigin: true,
         },
         '/ws': {
-          target: 'ws://localhost:8080',
+          target: wsBackend,
           ws: true,
           changeOrigin: true,
         },

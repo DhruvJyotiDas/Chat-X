@@ -42,12 +42,17 @@ function EventModal({ initialDate, event, onClose, onSave, onDelete }: {
     });
   };
 
+  // z-[90] matches the chat modals. At z-50 this rendered *under* the sidebar rail
+  // (z-[70]), its drawer backdrop (z-[65]) and the mobile hamburger (z-[80]) — the
+  // left edge stayed undimmed and taps there hit the sidebar instead of the modal.
+  // Still below CommandPalette (z-[100]) and IncomingCallModal, so an incoming call
+  // still surfaces over an open modal.
   return (
-    <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-black/70 backdrop-blur-sm p-0 sm:p-4" onClick={onClose}>
+    <div className="fixed inset-0 z-[90] flex items-end sm:items-center justify-center bg-black/70 backdrop-blur-sm p-0 sm:p-4" onClick={onClose}>
       <div className="bg-[#1c1b1b] border border-[#424655] rounded-t-2xl sm:rounded-2xl w-full sm:max-w-sm shadow-2xl overflow-hidden" onClick={e => e.stopPropagation()}>
         <div className="flex items-center justify-between px-5 py-4 border-b border-[#424655]/40">
           <h3 className="font-bold text-sm text-[#e5e2e1]">{event ? 'Edit Event' : 'New Event'}</h3>
-          <button onClick={onClose} className="w-7 h-7 rounded-full bg-[#201f1f] border border-[#424655] flex items-center justify-center hover:border-[#ffb4ab] hover:text-[#ffb4ab] transition-colors cursor-pointer"><X className="w-3.5 h-3.5" /></button>
+          <button onClick={onClose} aria-label="Close" className="w-9 h-9 sm:w-7 sm:h-7 rounded-full bg-[#201f1f] border border-[#424655] flex items-center justify-center hover:border-[#ffb4ab] hover:text-[#ffb4ab] transition-colors cursor-pointer shrink-0"><X className="w-3.5 h-3.5" /></button>
         </div>
         <div className="flex flex-col gap-4 px-5 py-5 max-h-[70vh] overflow-y-auto">
           <div className="flex flex-col gap-1.5">
@@ -239,19 +244,25 @@ export default function CalendarView() {
           {viewMode === 'month' ? (
             <div className="flex-1 flex flex-col min-h-0 p-3 sm:p-6">
               <div className="flex items-center justify-between mb-4 flex-wrap gap-2">
-                <div className="flex items-center gap-2 sm:gap-4"><h1 className="text-base sm:text-xl font-bold text-[#e5e2e1]">{MONTHS[month]} {year}</h1><div className="flex items-center gap-1"><button onClick={() => setViewDate(new Date(year, month - 1, 1))} className="w-7 h-7 sm:w-8 sm:h-8 flex items-center justify-center rounded-lg text-[#8c90a1] hover:bg-[#201f1f] hover:text-[#e5e2e1] transition-colors"><ChevronLeft className="w-3.5 h-3.5 sm:w-4 sm:h-4" /></button><button onClick={() => setViewDate(new Date(year, month + 1, 1))} className="w-7 h-7 sm:w-8 sm:h-8 flex items-center justify-center rounded-lg text-[#8c90a1] hover:bg-[#201f1f] hover:text-[#e5e2e1] transition-colors"><ChevronRight className="w-3.5 h-3.5 sm:w-4 sm:h-4" /></button></div></div>
+                <div className="flex items-center gap-2 sm:gap-4"><h1 className="text-base sm:text-xl font-bold text-[#e5e2e1]">{MONTHS[month]} {year}</h1><div className="flex items-center gap-1"><button onClick={() => setViewDate(new Date(year, month - 1, 1))} aria-label="Previous month" className="w-9 h-9 sm:w-8 sm:h-8 flex items-center justify-center rounded-lg text-[#8c90a1] hover:bg-[#201f1f] hover:text-[#e5e2e1] transition-colors"><ChevronLeft className="w-3.5 h-3.5 sm:w-4 sm:h-4" /></button><button onClick={() => setViewDate(new Date(year, month + 1, 1))} aria-label="Next month" className="w-9 h-9 sm:w-8 sm:h-8 flex items-center justify-center rounded-lg text-[#8c90a1] hover:bg-[#201f1f] hover:text-[#e5e2e1] transition-colors"><ChevronRight className="w-3.5 h-3.5 sm:w-4 sm:h-4" /></button></div></div>
                 <div className="flex items-center gap-2">
                   <div className="flex items-center bg-[#131313] border border-[#424655] rounded-lg p-0.5">
-                    <button onClick={() => setViewMode('month')} title="Month view" className={`w-7 h-7 flex items-center justify-center rounded-md transition-colors ${viewMode === 'month' ? 'bg-[#568dff]/20 text-[#b0c6ff]' : 'text-[#8c90a1] hover:text-[#e5e2e1]'}`}><Grid3x3 className="w-3.5 h-3.5" /></button>
-                    <button onClick={() => setViewMode('list')} title="List view" className={`w-7 h-7 flex items-center justify-center rounded-md transition-colors ${viewMode === 'list' ? 'bg-[#568dff]/20 text-[#b0c6ff]' : 'text-[#8c90a1] hover:text-[#e5e2e1]'}`}><List className="w-3.5 h-3.5" /></button>
+                    <button onClick={() => setViewMode('month')} title="Month view" className={`w-9 h-9 sm:w-7 sm:h-7 flex items-center justify-center rounded-md transition-colors ${viewMode === 'month' ? 'bg-[#568dff]/20 text-[#b0c6ff]' : 'text-[#8c90a1] hover:text-[#e5e2e1]'}`}><Grid3x3 className="w-3.5 h-3.5" /></button>
+                    <button onClick={() => setViewMode('list')} title="List view" className={`w-9 h-9 sm:w-7 sm:h-7 flex items-center justify-center rounded-md transition-colors ${viewMode === 'list' ? 'bg-[#568dff]/20 text-[#b0c6ff]' : 'text-[#8c90a1] hover:text-[#e5e2e1]'}`}><List className="w-3.5 h-3.5" /></button>
                   </div>
-                  <button onClick={() => setViewDate(new Date(today.getFullYear(), today.getMonth(), 1))} className="px-2.5 py-1.5 text-[10px] sm:text-xs font-bold rounded-lg bg-[#201f1f] text-[#b0c6ff] border border-[#424655] hover:bg-[#2a2a2a]">Today</button>
-                  <button onClick={() => setModalState({ date: todayStr, event: null })} className="flex items-center gap-1.5 px-2.5 py-1.5 text-[10px] sm:text-xs font-bold rounded-lg bg-[#568dff] text-[#002661] hover:bg-[#568dff]/90"><Plus className="w-3.5 h-3.5" />New Event</button>
+                  <button onClick={() => setViewDate(new Date(today.getFullYear(), today.getMonth(), 1))} className="px-3 py-2 sm:px-2.5 sm:py-1.5 min-h-[36px] sm:min-h-0 text-[10px] sm:text-xs font-bold rounded-lg bg-[#201f1f] text-[#b0c6ff] border border-[#424655] hover:bg-[#2a2a2a] cursor-pointer">Today</button>
+                  <button onClick={() => setModalState({ date: todayStr, event: null })} className="flex items-center gap-1.5 px-3 py-2 sm:px-2.5 sm:py-1.5 min-h-[36px] sm:min-h-0 text-[10px] sm:text-xs font-bold rounded-lg bg-[#568dff] text-[#002661] hover:bg-[#568dff]/90 cursor-pointer"><Plus className="w-3.5 h-3.5" />New Event</button>
                 </div>
               </div>
               <div className="grid grid-cols-7 mb-1 sm:mb-2">{(window.innerWidth < 400 ? DAYS_SHORT : DAYS_FULL).map((d, i) => (<div key={i} className="text-center text-[9px] sm:text-[11px] font-bold text-[#8c90a1] uppercase tracking-wider py-1 sm:py-2">{d}</div>))}</div>
 
-              <div className="flex-1 grid grid-cols-7 gap-px bg-[#424655]/20 rounded-xl overflow-y-auto border border-[#424655]/20 content-start sm:content-stretch">
+              {/* Mobile day cells are `aspect-square`, so six rows only need about
+                  half a phone screen. Keeping the grid `flex-1` there stretched the
+                  bordered box to the full column height and left a large empty
+                  rectangle under the last week. It hugs its rows below `sm` and only
+                  grows to fill the column from `sm` up, where cells are aspect-auto
+                  and `content-stretch` genuinely distributes the height. */}
+              <div className="flex-none sm:flex-1 grid grid-cols-7 gap-px bg-[#424655]/20 rounded-xl overflow-y-auto border border-[#424655]/20 content-start sm:content-stretch">
                 {cells.map((cell, i) => {
                   const dateStr = formatDate(cell.date); const dayEvts = getEventsForDate(cell.date); const isToday = dateStr === todayStr; const isCurMon = cell.isCurrentMonth;
                   return (
@@ -294,10 +305,10 @@ export default function CalendarView() {
                 <h1 className="text-base sm:text-xl font-bold text-[#e5e2e1]">All Upcoming Events</h1>
                 <div className="flex items-center gap-2">
                   <div className="flex items-center bg-[#131313] border border-[#424655] rounded-lg p-0.5">
-                    <button onClick={() => setViewMode('month')} title="Month view" className="w-7 h-7 flex items-center justify-center rounded-md text-[#8c90a1] hover:text-[#e5e2e1] transition-colors"><Grid3x3 className="w-3.5 h-3.5" /></button>
-                    <button onClick={() => setViewMode('list')} title="List view" className="w-7 h-7 flex items-center justify-center rounded-md bg-[#568dff]/20 text-[#b0c6ff] transition-colors"><List className="w-3.5 h-3.5" /></button>
+                    <button onClick={() => setViewMode('month')} title="Month view" className="w-9 h-9 sm:w-7 sm:h-7 flex items-center justify-center rounded-md text-[#8c90a1] hover:text-[#e5e2e1] transition-colors"><Grid3x3 className="w-3.5 h-3.5" /></button>
+                    <button onClick={() => setViewMode('list')} title="List view" className="w-9 h-9 sm:w-7 sm:h-7 flex items-center justify-center rounded-md bg-[#568dff]/20 text-[#b0c6ff] transition-colors"><List className="w-3.5 h-3.5" /></button>
                   </div>
-                  <button onClick={() => setModalState({ date: todayStr, event: null })} className="flex items-center gap-1.5 px-2.5 py-1.5 text-[10px] sm:text-xs font-bold rounded-lg bg-[#568dff] text-[#002661] hover:bg-[#568dff]/90"><Plus className="w-3.5 h-3.5" />New Event</button>
+                  <button onClick={() => setModalState({ date: todayStr, event: null })} className="flex items-center gap-1.5 px-3 py-2 sm:px-2.5 sm:py-1.5 min-h-[36px] sm:min-h-0 text-[10px] sm:text-xs font-bold rounded-lg bg-[#568dff] text-[#002661] hover:bg-[#568dff]/90 cursor-pointer"><Plus className="w-3.5 h-3.5" />New Event</button>
                 </div>
               </div>
               <ListView />

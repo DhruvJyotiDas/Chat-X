@@ -7,8 +7,9 @@ Secure messaging / video calling / calendar web app. React + Go, deployed at **h
 - **Frontend**: React 19 + TypeScript, Vite 6, Tailwind CSS v4 (`@tailwindcss/vite`, arbitrary-value utility classes like `bg-[#1c1b1b]` rather than a theme config — see Theming below), `lucide-react` icons, `motion` for animation.
 - **Backend**: Go (`server/main.go`) — REST API + WebSocket signaling/chat, JWT auth, MariaDB via `go-sql-driver/mysql`.
 - **DB**: MariaDB 10.11, local (`127.0.0.1:3306`, db `lolafire_IBConnect`, user `ibconnect_app`). Migrated off a remote hostpoint.ch DB during this session's work — `main.go`'s `migrate()` uses `CREATE TABLE IF NOT EXISTS`, so it will **not** retroactively alter columns on tables that already exist (e.g. an `avatar TEXT`→`LONGTEXT` widening won't apply to a pre-existing table without a manual `ALTER TABLE`).
-- **ASR**: separate Python Whisper transcription server (`server/transcription_server.py`), systemd service `ibconnect-transcription.service`, proxied at `/asr` (port 8765).
+- **ASR**: separate Python Whisper transcription server (`server/transcription_server.py`), systemd service `ibconnect-transcription.service`, proxied at `/asr` (port 8765). **Feature is TURNED OFF as of 2026-08-08 — the UI is gone and the service is stopped+disabled. See "Audio-to-text" below before touching it.**
 - **WebRTC**: TURN server at `meet.icebrkr.space` (user `webrtc` — see `src/hooks/useWebRTC.ts`).
+- **Identity**: auth is OIDC-only against **IB Account** (`/home/ubuntu/ib-account`, served at `/auth/`), consumed by `handleOIDCCallback` in `server/main.go`. That repo has its own CLAUDE.md covering the login/OTP/email side; anything about sign-in, verification codes or transactional mail belongs there, not here.
 
 ## Directory structure
 
@@ -23,10 +24,13 @@ src/
     auth/           LoginPage
     CommandPalette.tsx   (⌘K / Ctrl+K global nav+actions)
   context/          AuthContext, ChatContext, MeetingContext
-  hooks/            useWebRTC.ts, useTheme.ts
+  hooks/            useWebRTC.ts, useTheme.ts, useGridLayout.ts + usePagination.ts + useElementSize.ts
+                     + useAudioLevels.ts (call-tiling stack, ported from LiveKit Meet — see WebRTC
+                     section below), useSpeechTranscription.ts
   lib/              api.ts (REST client), signalingSocket.ts, calendarLocal.ts, callsLocal.ts,
                      intelligence.ts (chat message → meeting/deadline/action extraction, regex-based),
-                     preferences.ts (per-user localStorage: status, notification prefs)
+                     preferences.ts (per-user localStorage: status, notification prefs),
+                     gridLayout.ts (selectGridLayout, container-size-aware tile grid picker)
 server/
   main.go           Go backend (single file). Also has several *.bak files and old binaries
                      (ibconnect-server, ibconnect-signaling, signaling-server, main) — cruft, not
@@ -48,7 +52,9 @@ npm run lint        # tsc --noEmit — always run before calling frontend work d
 
 Production services run independently of any local dev server:
 - `ibconnect-backend.service` — the Go binary, already running against local MariaDB.
-- `ibconnect-transcription.service` — ASR.
+- `ibconnect-transcription.service` — ASR. **Stopped and `disable`d 2026-08-08** (feature is off; it
+  was holding 7.7GB resident for nothing). `sudo systemctl enable --now ibconnect-transcription` to
+  bring it back alongside flipping `VITE_ENABLE_TRANSCRIPTION=true`.
 Both managed via systemd; `sudo systemctl status/restart ibconnect-backend`.
 
 ## Deployment (frontend)
@@ -92,8 +98,31 @@ palette) is intentionally excluded from the retrofit and stays dark in both them
 Mesh topology, one `RTCPeerConnection` per remote peer (`src/hooks/useWebRTC.ts`), signaled over the
 `/ws` WebSocket (`src/lib/signalingSocket.ts` client, `handleSignaling` in `server/main.go`). The
 backend is a dumb relay keyed by room: `offer`/`answer`/`ice_candidate` are forwarded verbatim to
-`payload.to`'s socket with the sender's id attached; it does not parse SDP. Any new WS message type
-must be added to the `switch` in `handleSignaling` or it's silently dropped.
+`payload.to`'s socket with the sender's `id` **and `name`** attached (`from`/`from_name`); it does not
+parse SDP. Any new WS message type must be added to the `switch` in `handleSignaling` or it's
+silently dropped.
+
+**Session lifecycle — the three things that keep a room's membership honest.** These are load-bearing;
+breaking any one of them reproduces the "we're in the same room code but can't see each other" class of
+bug (see the 2026-08-03 log entries):
+1. **The client must re-enter its room after a signaling reconnect.** `SignalingSocket` reconnects on
+   its own 3s after an unintentional close, but the server has no memory of who that socket was — it
+   arrives as a fresh client in *no room*. `MeetingContext` keeps `activeRoomRef` and re-sends
+   `join_room` via the constructor's `onReconnect` callback (host falls back to `create_room` if the
+   room was reaped), then resets peers and re-offers everyone. Never construct the socket without that
+   callback: media already flowing makes an orphaned tab look perfectly fine locally while everyone
+   else has been told it left.
+2. **`peer_joined` must discard any `RTCPeerConnection` already held for that id.** Someone
+   (re-)entering means the socket you were connected to is gone; reusing the PC strands both sides on a
+   frozen tile. Don't rely on `peer_left` arriving first — it doesn't on a reconnect.
+3. **`/ws` pings** (`sigPongWait`/`sigPingPeriod`, mirroring `handleChatWS`). A call can sit idle on
+   the wire for minutes because media is peer-to-peer, so a socket that dies without a close frame
+   would otherwise block in `ReadMessage` forever, leaving a ghost in the room that never empties.
+
+Remote `<video>` playback goes through `playWhenAllowed` in `ActiveMeetingView`, not a bare `play()`.
+A reloaded page holds no user activation and remote streams carry audio, so autoplay can reject with
+`NotAllowedError` — silently, leaving a black tile with live media arriving underneath. It retries on
+the next `pointerdown`/`keydown`.
 
 **Screen sharing runs on entirely separate `RTCPeerConnection`s from the camera call** — a peer sharing
 their screen opens one additional PC per remote peer (`outScreenPcsRef`/`inScreenPcsRef` in
@@ -115,6 +144,130 @@ component in a `.map()` fails type-checking (`Property 'key' does not exist...`)
 valid JSX at runtime. Every other list in the codebase works around this by keying a wrapping `<div>`
 instead of the component itself — follow that convention rather than trying to fix the types.
 
+### Video tiling / grid layout
+
+`ActiveMeetingView`'s main grid (the `else` branch when nobody is screen-sharing) is a deliberate port
+of LiveKit Meet's own call-tiling stack (`@livekit/components-react`'s `<GridLayout>`), fetched from
+`livekit/components-js` upstream for reference during the port — not a from-scratch design:
+
+- `src/lib/gridLayout.ts` (`selectGridLayout`) — picks the smallest grid (rows x cols) that fits the
+  tile count for the container's *actual measured pixel size and orientation* (landscape vs portrait),
+  not just a `tileCount` breakpoint table. `src/hooks/useElementSize.ts` (ResizeObserver) +
+  `src/hooks/useGridLayout.ts` wire it to the grid `<div ref>` in `ActiveMeetingView`.
+- `src/hooks/usePagination.ts` — **required**, not optional, alongside `selectGridLayout`: on a small/
+  narrow container the picked layout's `maxTiles` can be *less* than the real tile count (e.g. a phone
+  can't fit a 2x2 grid so it steps down to a 2-tile layout even for a 4-person call) — this is true of
+  upstream LiveKit too, confirmed by reading their `GridLayout.tsx`, which pairs `selectGridLayout` with
+  its own `usePagination` for exactly this reason. Without it, extra tiles silently have no grid cell to
+  render into. `ActiveMeetingView` slices `tiles` through `usePagination(gridLayout.maxTiles, tiles)` and
+  shows prev/next arrows + a dot indicator whenever `totalPageCount > 1`.
+- `src/hooks/useAudioLevels.ts` — client-side active-speaker detection (Web Audio API RMS analysis per
+  peer's own `MediaStream`, 600ms hold to avoid flicker between words). Necessary because mesh WebRTC
+  has no SFU to compute `isSpeaking` server-side the way LiveKit's real backend does — feeds the blue
+  ring highlight on whoever's tile is currently talking.
+- The right-side panel (Chat/People/Transcript, `rightOpen` state) **defaults closed** on all viewports,
+  matching Meet's own default of a full-width stage on join with panels opt-in via the toolbar. It used
+  to default *open* on any screen >768px wide, which was the actual root cause of a "tiling looks bad
+  with multiple people" complaint — a spacious 1400px desktop window would still render 2 tiles stacked
+  vertically because the ever-open People panel had squeezed the real grid container down to a narrow,
+  near-square shape. If reintroducing an auto-open panel (e.g. auto-showing People when someone joins),
+  remeasure the grid at typical desktop widths first — it's very easy to silently reintroduce this.
+
+## Responsive / mobile
+
+The app is used on phones as a first-class case (share a meeting link, join from a phone), so every
+view has to survive 320px. Conventions worth following:
+
+- **A two-pane view must collapse below `lg`.** `ChatsView` is the reference: `mobilePanel` state,
+  panel bodies extracted into `render*()` functions, a `lg:hidden` branch showing one at a time and a
+  `hidden lg:flex` branch with the side-by-side split. `CallsView` now does the same. A fixed-width
+  `<aside>` (`w-80`/`w-72`) next to a `flex-1` `<main>` with no breakpoint is the exact shape of the bug
+  that made Calls unusable on a phone — the aside eats the viewport and the main pane gets pushed off.
+- The sidebar is an off-canvas drawer below `md` (`-translate-x-full md:translate-x-0`, hamburger at
+  `.md:hidden.fixed.top-3.left-3`); the app shell offsets content by `md:pl-[76px]` to match the rail.
+- Hover tooltips (`RailTooltip`, `hidden md:block`) don't exist on touch, so anything whose *only*
+  label is a tooltip is unlabelled on mobile — give it an `aria-label` too.
+- The in-call side panel (Chat/People/Transcript) deliberately takes the full screen on mobile and
+  hides the video, Meet-style; that's not a layout defect.
+
+`_verify_mobile_layout.mjs` (view sweep) and `_verify_mobile_deep.mjs` (overlays, in-call) audit this —
+see Testing below. `_verify_mobile_deep.mjs`'s chat-thread step needs the signed-in test account to
+already have a conversation, otherwise it times out on an empty list and skips; `uitest1` has a DM with
+`uitest2` on production for this.
+
+## Chat / threads
+
+One model covers both DMs and groups: `threads` (`type` = `dm` | `group`) +
+`thread_members` (many-to-many, per-member `last_read_at`) + `messages`, all in
+`migrate()` in `server/main.go`. `POST /api/threads` takes either
+`{type:'dm', otherUserId}` or `{type:'group', name, memberIds}`; DM thread ids are
+the deterministic `dm_<lowId>_<highId>` so the same pair can't create two threads.
+New members are notified over the chat WebSocket with `thread_created`, so a group
+appears in their list without a refresh.
+
+**Group chat is fully built and deployed** — backend (`handleThreads`, the
+`"group"` branch), `api.createGroup`, `ChatContext.createGroup`, and a
+`NewGroupModal` in `ChatsView.tsx` opened by the `<Users />` button in the Messages
+header. Verified present in the live bundle. Before building anything group-related,
+check whether it already exists here; it mostly does.
+
+What it lacks is **discoverability, not function**: both header buttons (new DM,
+new group) are unlabelled 28x28 icon glyphs with no text, no `title` and no
+`aria-label`, so there's nothing distinguishing them without clicking. On touch
+there's no hover state at all. Users reasonably conclude the feature doesn't exist.
+Fixing that is a labelling change, not a feature.
+
+Still missing from groups proper: no add/remove member after creation, no rename,
+no leave-group, no admin concept — `thread_members` supports all of it, there's
+just no endpoint or UI.
+
+## Audio-to-text (ASR)
+
+**Status: SHIPPED OFF as of 2026-08-08.** The feature is disabled behind
+`TRANSCRIPTION_ENABLED` in `src/lib/features.ts` (default `false`, override with
+`VITE_ENABLE_TRANSCRIPTION=true` at build time), and
+`ibconnect-transcription.service` is stopped and disabled. Everything below still
+describes the pipeline accurately — it is dormant, not deleted.
+
+**Why: the pipeline is correct and the transcripts are accurate, but it is
+roughly 27x slower than real time, so live transcription cannot work.** Measured
+2026-08-04, not inferred:
+
+```
+transcribe took 268.6s for 10s of audio      # ~27x real time
+TEXT: "Is the micro machine I'm present in the most minute minute of micro
+       machine. This 1 has dramatic detail perfect trim precision paint job..."
+```
+
+Feeding 20s of real speech over the actual WebSocket protocol returned nothing in
+65s — not a failure, the answer was still being computed. Every segment queues
+behind the previous one, so the backlog grows for as long as anyone talks. The
+service log's only ever transcript is a single word (`"Transcript: Bets."`,
+Jul 30), which is consistent with someone testing and giving up.
+
+Cause is hardware, not configuration: `Oriserve/Whisper-Hindi2Hinglish-Prime` is a
+large-v3-class model (32+32 layers, d_model 1280, **5.8GB** on disk, 6.8GB
+resident) doing autoregressive decoding on **4 CPU cores with no GPU**
+(`torch.cuda.is_available()` is `False`). Nothing is misconfigured.
+
+Options, roughly in order of fidelity: a GPU (keeps this exact Hinglish model,
+~0.1-0.3x real time); `faster-whisper`/CTranslate2 with int8 (4-8x faster on the
+same CPU, cheapest thing to try); a smaller model (`small` ~10x, `base` ~30x, but
+loses the Hinglish fine-tune); or a hosted ASR API (meeting audio then leaves the
+server, which cuts against the product's security positioning).
+
+**Wire protocol** (if you touch either end): browser sends raw **float32 PCM,
+16 kHz, mono** as binary frames; JSON control messages `{"type":"flush"}` and
+`{"type":"ping"}`; server replies `{"type":"transcript","text":...,"isFinal":true}`.
+Silero VAD segments speech in 512-sample windows before anything reaches Whisper.
+A standalone test client that drives all of this lives in the scratchpad
+(`asr_test.py`) — re-derive it from this paragraph if it's gone; testing through
+the browser is far slower than testing the socket directly.
+
+Also note the failure is **silent**: the Transcript panel shows nothing
+indefinitely, with no indication it's still working or has fallen behind. Even
+after a speed fix, that state should surface in the UI.
+
 ## Testing approach
 
 No unit/e2e test suite exists. Verification is done ad hoc with Playwright smoke scripts (not checked
@@ -129,17 +282,589 @@ this headless sandbox even with `--use-fake-device-for-media-stream` (throws `No
 likely no audio backend in the container) — instead override them yourself via
 `page.addInitScript(...)` with a `canvas.captureStream()` (+ a silent `AudioContext` oscillator track
 for audio) before navigating. Use two separate Playwright browser **contexts** (not just tabs — they
-need independent `localStorage`/auth) logged in as two different real accounts (sign up a throwaway one
-via `POST /api/auth/signup`), have one start a meeting and read the room code from the DOM, have the
-other log in and join via the in-app "Join a Meeting" code input on the Meetings/`DebriefView` page —
-there is no working anonymous-guest deep-link flow for an unauthenticated Playwright context (`/{code}`
-without a session lands on `LoginPage`, which requires signup/signin, not a guest-name shortcut). Feed
+need independent `localStorage`/auth). **There is no `/api/auth/signup` or `/api/auth/login` REST
+endpoint** — auth is OIDC-only (`handleOIDCCallback` in `server/main.go`, the "Continue with IB" flow) —
+so don't waste time trying to hit one. Instead mint JWTs directly for pre-existing seeded dev accounts
+(`uitest1`/`uitest2`/`uitest3`, see `_verify_tiling.mjs`/`_verify_tiling_pagination.mjs` in repo root for
+the exact HS256-signing trick against `jwtKey` in `main.go`) and seed `localStorage`
+(`ibconnect_jwt`, `ibconnect_me`) directly instead of driving a real login form. A 3rd/4th throwaway
+account, if needed, can be inserted straight into the `users` table via `mysql` (schema in `migrate()`)
+rather than through the app — there's no signup path to automate. Have one context start a meeting and
+read the room code from the DOM, have the others join via the in-app "Join a Meeting" code input on the
+Meetings/`DebriefView` page. An unauthenticated context **can** now join by deep link: `/{code}` with
+no session renders `PreJoinScreen` ("Ready to join?" + a name field + "Join now"), not `LoginPage` —
+this section used to say otherwise, which stopped being true when the guest lobby landed. Feed
 each fake camera a distinct solid color and sample pixels off a `<video>` via an offscreen canvas
 (`drawImage` + `getImageData`) on the other side to verify tracks actually arrive and decode, and check
 `video.currentTime` advances over a wait to prove a stream isn't just present but actively still
-playing (not frozen).
+playing (not frozen). A tile can also be present, streaming *and* stuck: check `video.paused`, since a
+rejected autoplay leaves exactly that state (see `playWhenAllowed` under WebRTC).
+
+**Reusable verification scripts** (repo root, all take a `BASE` env var so the same script runs against
+`http://127.0.0.1:3100` or `https://meet.icebrkr.space`):
+
+| script | covers |
+|---|---|
+| `_verify_meeting_fixes.mjs` | 20 checks: reload-rejoin, ghost tiles, guest-link join, tile geometry at 3 viewports, pin/focus, overlap |
+| `_verify_reconnect_rejoin.mjs` | signaling-socket drop → re-entry, host reload with a guest present, media liveness before/after a tap |
+| `_verify_mobile_layout.mjs` | every view on iPhone 12 + Galaxy S9+: page h-scroll, cut-off elements, small tap targets |
+| `_verify_mobile_deep.mjs` | the states the sweep can't reach by `aria-label`: Calls' two mobile panels, Settings modal, in-call + side panel |
+| `_verify_tiling.mjs` / `_verify_tiling_pagination.mjs` | grid layout and pagination with 2–3 real peers |
+
+**Simulating a dead socket** (for the reconnect path): wrap `window.WebSocket` in an `addInitScript` to
+collect instances on `window.__sockets`, then `.close()` the one whose `url` contains `/ws`. That
+reproduces a phone locking its screen far more reliably than trying to manipulate the network.
+
+**Writing a layout probe? Filter the false positives first**, or real defects drown in noise. Skip
+(a) `pointer-events: none` decorations — `.accent-glow` is deliberately 200%x200% inside an
+`overflow-hidden` parent and will flag as "wider than screen" on every page that uses it; (b) anything
+inside an ancestor that already scrolls horizontally (`overflow-x: auto` with `scrollWidth >
+clientWidth`) — the Security audit-log table lives in one and is reachable by swiping; (c) subtrees
+under an off-canvas transform, i.e. the closed sidebar drawer at `translateX(-100%)`. Also note
+`scrollHeight > clientHeight` on an `overflow-hidden` box does *not* imply clipped text — an oversized
+decorative child triggers it.
 
 ## Recent work log
+
+**2026-08-12, observability + secrets + DB hardening (code BUILT NOT DEPLOYED; infra changes ARE live):**
+Sweep to fix everything found across the session's investigations. **`DEFERRED.md` in the repo root
+holds everything that could not be done here and why** — read it before picking up this thread.
+- **`IBCONNECT_JWT_SECRET` is now required.** `jwtKey` was a compile-time constant ending
+  `change_me`, in the git history, signing every production session. It now comes from the
+  environment and `mustHaveSigningKey()` **refuses to boot** on empty / legacy / <32 chars — a silent
+  fallback is exactly how the old value survived. A fresh 48-byte secret is already in
+  `/etc/ibconnect/env` (backup `env.bak.20260812`); the running binary doesn't read it, so nothing
+  changed yet. **Deploying rotates it and logs everyone out.** All 15 `_verify_*.mjs` scripts now
+  read the secret from the environment with a legacy fallback, or they'd all have broken.
+- **Signalling is now diagnosable.** The 2026-08-10 RCA failed mostly on missing data. Added:
+  `Room X joined by …` (join_room was *never* logged — participants could not be attributed to a
+  room at all), `[Signaling] EVICT …` (same-user-id eviction was invisible), and `sigReporter()`
+  logging `offers/answers/candidates` per room per 30s. **Deliberately aggregated, not per-message**:
+  one join at 22 participants fans out ~21 offers and hundreds of candidates.
+- **Per-peer operation serialization.** Negotiation is a multi-await sequence and two messages for
+  the same peer could interleave; the perfect-negotiation flags don't prevent that because they are
+  read and written across awaits. `serialize(peerId, fn)` chains them.
+- **`pc.restartIce()` was a no-op.** It only marks the connection as wanting fresh ICE credentials —
+  nothing renegotiated, so the watchdog just waited out its 8s timer and deleted the peer. It now
+  emits a follow-up offer via `createOfferForRef`.
+- **Corrected a wrong comment** (and the RCA claim behind it): unarbitrated glare does **not** throw
+  `InvalidStateError`. Since Chrome 80 / FF 75 / Safari 15, `setRemoteDescription(offer)` in
+  `have-local-offer` performs an *implicit rollback*. The real failure is quieter — both sides roll
+  back, both answer, both land in `stable` with **mismatched descriptions**, each discards the
+  other's answer, and ICE may still connect so nothing reports a failure. Politeness prevents the
+  divergence; it isn't about catching an exception.
+- **MariaDB (LIVE NOW):** `innodb_io_capacity` 200→1000, `slow_query_log` OFF→ON,
+  `long_query_time` 10→1. **`innodb_buffer_pool_size` could NOT be raised at runtime** — MariaDB
+  10.11 rejects it ("Truncated incorrect", verified even for +64 MB) — so 4G is written to
+  `/etc/mysql/mariadb.conf.d/99-ibconnect-tuning.cnf` and needs a restart.
+- **Backups (LIVE NOW):** there were none. `/usr/local/bin/ibconnect-db-backup` +
+  `/etc/cron.d/ibconnect-backup` nightly 03:17, 14-day retention, `--single-transaction`, writes to
+  `.partial` and promotes only on success, and gates on `gzip -t`. **Restore verified** into a
+  scratch DB — all row counts matched live. They land on the *same disk* as the DB; off-host is B3
+  in `DEFERRED.md`.
+- Verified: `tsc` + `npm run build` + `go build` clean; `_verify_multiparty_audio` 12/12,
+  `_verify_media_permissions` 12/12, `_verify_meeting_fixes` 20/20 — all run against a throwaway
+  pair **using the new secret**, proving the env path end to end. New log lines confirmed firing.
+  Production untouched: `ibconnect-backend` never restarted.
+
+**2026-08-12, camera/mic permission logic (BUILT AND VERIFIED — *NOT DEPLOYED*):**
+Asked to check whether the permission logic was correct. The granted path was fine; **every failure
+path was wrong**, two of them badly enough to block joins. New `src/lib/mediaErrors.ts` holds the
+shared failure taxonomy — use it rather than re-deriving `err.name` checks anywhere else.
+- **Blocking only the camera locked users out of the call entirely.** `initMedia` treated any
+  `NotAllowedError` from `getUserMedia({video,audio})` as fatal and returned before its own
+  audio-only fallback. Browsers let a user block the camera while leaving the mic allowed — a normal
+  per-site setting — and that combination rejects the *combined* request with `NotAllowedError`. So
+  the fallback was unreachable for the most common denial case. **It now always retries audio-only,
+  even on a denial.** If the denial genuinely covered both, the retry rejects instantly from the
+  cached decision without a second prompt, so the retry is free.
+- **`NotReadableError` was reported as "No camera or microphone found".** That error means the device
+  exists but is *held by another app* (Zoom, Teams, another tab) — the message sent people to debug
+  hardware that was working. Now distinguished: denied / busy / missing / over-constrained /
+  insecure-context each get their own wording and remedy.
+- **`toggleCamera` failing to re-acquire was silent** (`console.error` only), so if permission was
+  revoked mid-call or another app grabbed the device the button just looked dead. `useWebRTC` now
+  exposes `mediaNotice` / `dismissMediaNotice`, surfaced as a dismissible banner in
+  `ActiveMeetingView` (`z-[10001]`, above the invite dialog). `switchCamera`/`switchMic` feed it too.
+- **The guest lobby asked for the wrong device.** `PreJoinScreen` previewed with `audio: false`, so
+  the *microphone* was first prompted for by `initMedia` — a second permission dialog appearing
+  after the user had pressed Join. The lobby now requests both, and falls back to audio-only so a
+  blocked camera still settles the mic permission there. Its error text comes from the shared
+  taxonomy instead of one generic "Camera unavailable" string.
+- **Lobby mic/camera choices are applied during acquisition, not after.** `initMedia` takes
+  `MediaPrefs {muted, videoOff}`; `joinMeeting(code, title, allowRecreate, prefs)` threads it through.
+  Previously `App.tsx` called `toggleCamera()` *after* joining, which opened the camera, released it,
+  and renegotiated with **every peer** — an avoidable offer round-trip per participant at join time —
+  and it read `isVideoOff` from a closure captured before the join, which `initMedia`'s audio-only
+  fallback could change underneath it. `videoOff` now means the camera is never requested at all.
+- Verified: `tsc` + `npm run build` clean; new **`_verify_media_permissions.mjs` 12/12**, which stubs
+  `getUserMedia` to reject with each `DOMException` name — camera-blocked-mic-allowed still joins,
+  busy vs missing are worded differently, full denial fails with an actionable message, and the lobby
+  is observed requesting `{video:true,audio:true}`. The camera-blocked case is a real regression test:
+  it cannot pass against the old code, which never reached the fallback.
+
+**2026-08-12, mobile pass (BUILT AND VERIFIED — *NOT DEPLOYED*, ships with the call fixes below):**
+Reported as "on mobile view many things don't fit". Ran `_verify_mobile_layout.mjs` +
+`_verify_mobile_deep.mjs` first rather than guessing: **every view was already layout-clean at 390
+and 320** — no h-scroll, nothing cut off. The real problems were one genuine visual defect and a
+backlog of sub-30px tap targets that this file had been carrying as "known, not fixed" since
+2026-08-03. All now fixed; the sweep reports **zero** tap warnings at both widths.
+- **Calendar had a large empty bordered rectangle under the month grid on phones.** Day cells are
+  `aspect-square` below `sm`, so six rows only need ~330px, but the grid kept `flex-1` and stretched
+  its bordered box to the full column height. Now `flex-none sm:flex-1` — it hugs its rows on mobile
+  and only grows from `sm` up, where cells are `aspect-auto` and `content-stretch` actually
+  distributes height. **Don't "simplify" this back to a single `flex-1`.**
+- **`SettingsModal.tsx` and `CalendarView.tsx`'s event modal were still `z-50`** — the last two
+  instances of the modal-under-sidebar bug fixed everywhere else on 2026-08-08. The rail is `z-[70]`
+  and the mobile hamburger `z-[80]`, so the top-left stayed undimmed and taps there hit the sidebar
+  instead of the backdrop. Both now `z-[90]`, and SettingsModal gained `p-3 sm:p-4` so it is inset
+  from the screen edge on a phone. Confirmed by screenshot, not just by grep.
+- **Tap targets raised to 36–40px on mobile only** (`w-9 h-9 sm:w-7 sm:h-7`, or
+  `py-2 sm:py-1.5 min-h-[36px] sm:min-h-0` — desktop geometry is deliberately untouched): Calendar
+  month arrows, view-mode toggles, Today, New Event and both modal close buttons; Security's two
+  toggles (now 32px), PURGE NOW, Reset Area, Export CSV; Support's 12 FAQ links (were 20px tall);
+  Meetings' Join and Schedule.
+- **Labels for touch.** The sidebar Settings gear had no accessible name — its only label was a
+  hover tooltip, which does not exist on touch (this is also why the audit script could never click
+  it). Added `aria-label`, plus a real `role="button"`/`tabIndex`/`aria-label`/`Enter`-`Space`
+  handler on the avatar next to it, which opened Settings on click but was keyboard-unreachable.
+  Also labelled **ChatsView's two header glyphs** (`New direct message` / `New group`) — the exact
+  cause of the long-standing "group chat doesn't exist" reports documented under Chat / threads.
+- Verified: `tsc` + `npm run build` clean; `_verify_mobile_layout.mjs` clean at 390 and 320 with
+  **no tap warnings anywhere** (was 6 on Calendar, 4 on Security, 12 on Support, 2 on Meetings);
+  `_verify_mobile_deep.mjs` clean incl. the in-call screen and its side panel; screenshots at both
+  widths reviewed by eye for the Calendar and Settings fixes specifically.
+- **Known, still open (harness, not product):** `_verify_mobile_layout.mjs`'s Chats step times out
+  at both widths. It did so *before* any of this session's changes too. Chats renders correctly at
+  320 — verified by direct screenshot — so this is a selector/timing quirk in the script, not a
+  layout bug. Worth fixing in the script when someone next touches it.
+
+**2026-08-12, multi-party call RCA + Track-1 fixes (BUILT AND VERIFIED — *NOT DEPLOYED*):**
+Reported as: at ~35 people, not everyone can hear everyone; only 12 fit in a frame; nobody can
+hear whoever is screen-sharing; feeds land on the wrong side; joiners need several reloads.
+Seven distinct causes. **The root cause is the mesh topology and it is not fixed** — see
+"Ceiling" below. Everything else was fixed and verified.
+
+- **The audio bug had nothing to do with the network.** Remote audio was carried *only* by each
+  peer's `<video>` in `RemoteTile`, and the grid renders `gridPagination.tiles` — one page. A peer
+  on page 2 had **no media element, therefore no audio output**. `grep -c "<audio"` on
+  `ActiveMeetingView.tsx` returned **0**. The streams were arriving fine the whole time:
+  `useAudioLevels` subscribes to *every* peer and runs an analyser over it (`source → analyser`,
+  never `ctx.destination`), so the app was measuring audio it never played. At 35 people you could
+  hear at most 11 of 34, and paging changed *which* 11.
+  **Fix:** `PeerAudio` (ported from `FloatingCallWindow`, which had this right already) is now
+  rendered per peer at the top of `meetingContent`, **outside the focus/grid ternary and outside
+  pagination**. `RemoteTile`'s `<video>` is now `muted`. **If you ever un-mute it, every on-screen
+  peer plays twice — which sounds like echo, not like duplication, so it misdiagnoses easily.**
+- **"Only 12" is exact, not approximate.** `GRID_LAYOUTS` caps at 4x4=16; at a ~1000px container
+  (a laptop, after the 76px rail) `selectGridLayout` finds nothing fitting 35, falls to 4x4, sees
+  the container under its 1100px minimum, and recurses to `4x3 landscape` = **12**. Left as-is
+  deliberately — with audio decoupled from tiles, the cap is now cosmetic, and raising it without
+  an SFU just multiplies the encoder count.
+- **No glare handling; every failure swallowed.** `handleOffer` called `setRemoteDescription`
+  without checking `signalingState` and without rollback, so colliding offers threw
+  `InvalidStateError` into one of **ten** empty `catch` blocks and stranded the connection with no
+  recovery. `renegotiateCamera` fans an offer to *every* peer on any camera toggle, so collisions
+  are routine at scale. **Fix:** full perfect-negotiation (`NegotiationState` per peer,
+  polite/impolite by `selfId < peerId`, implicit rollback via no-arg `setLocalDescription()`).
+  `useWebRTC(socket, selfId)` now takes the id — it must be the same id the signaling server knows,
+  or the two sides disagree about who yields. All ten silent catches now log via `logRTC`.
+- **Stray ICE/answers created ghosts.** `handleIceCandidate`/`handleAnswer` went through
+  `getOrCreatePeerConnection`, which *creates*; a late candidate from someone who left spawned a
+  connection that never connected and rendered "Connecting…" forever. Both now look up and drop.
+- **Backend head-of-line blocking.** `room.broadcast` held `room.mu.RLock()` and called a
+  *blocking* `WriteMessage` per client with no send buffer, so one stalled phone blocked delivery
+  to everyone behind it in the map **and** blocked `enterRoom`/`leaveRoom` (write lock). **Fix:**
+  `SigClient` gained `send chan []byte` (256) + a single `writePump` goroutine that also owns the
+  keepalive ping — gorilla requires one writer, and folding the ping in removes the mutex entirely.
+  `sendMsg` is now non-blocking and `kill()`s a client whose queue is full. `broadcast` snapshots
+  recipients under the lock and sends outside it (it must — `kill()` under `room.mu` would deadlock
+  against `leaveRoom`).
+- **Screen share.** Was one unbounded `Promise.all` opening 34 extra peer connections in a single
+  tick, each with its own 30fps encoder — the presenter's uplink and CPU collapsed and their own
+  audio died first. Now `pooled(..., FANOUT_CONCURRENCY=4)` plus a bitrate cap applied before the
+  offer goes out.
+- **Bitrate budget.** No caps existed at all. `applyVideoBudget` now divides `CAMERA_BUDGET_BPS`
+  (3 Mbps) across the peers present and scales resolution down as the room grows, reapplied on
+  every peer-count change (one more participant shrinks *everyone's* share, not just the newcomer's).
+- **TURN credentials were literals in `useWebRTC.ts`** (`webrtc`/`webrtc123`) and therefore in the
+  built bundle — an open relay for anyone with devtools. Now `GET /api/turn-credentials`.
+  **Rollout is two-step and order matters:** with `TURN_STATIC_AUTH_SECRET` unset the endpoint
+  returns the *same static credentials as before*, so deploying changes nothing operationally. Only
+  after coturn is switched to `use-auth-secret` + matching `static-auth-secret` should that env var
+  be set. Setting it first breaks every relayed call. Endpoint is deliberately unauthenticated —
+  guests join by link with no session. Client falls back to **STUN-only** if the fetch fails (on
+  purpose: losing relay is better than re-embedding a permanent secret).
+- **Room cap** `MAX_ROOM_SIZE` exists but **defaults to 0 = unlimited**, deliberately: enforcing 8
+  silently would start rejecting people from calls that currently connect (badly). Opt in when ready.
+- **Ceiling — still true after all of the above.** Mesh means every client uploads a separately
+  encoded copy to every peer: at 35 that is 595 connections room-wide, 34 encoders per client
+  (Chrome sustains ~4–8), ~51 Mbps upstream per client. **Mesh tops out at 6–8 people.** Reaching
+  35 needs an SFU (LiveKit is the natural fit — the tiling stack is already a LiveKit port, and
+  `useAudioLevels` disappears entirely). Not started.
+- Verified: `tsc --noEmit` clean, `npm run build` clean, `go build` clean; new
+  `_verify_multiparty_audio.mjs` **12/12** against a throwaway `:3100`/`:8081` pair — with
+  pagination active and only **1 remote tile rendered**, both remote `<audio>` elements exist, are
+  attached, unmuted, unpaused and `currentTime`-advancing (19.43→21.95, 12.67→15.20), 0 unmuted
+  `<video>`, and `webrtc123` absent from the served JS. Plus `_verify_meeting_fixes.mjs` **20/20**
+  and `_verify_reconnect_rejoin.mjs` full pass (drop, reload both sides, media liveness) — no
+  regressions. HMAC credential generation checked against an independent Python HMAC-SHA1
+  implementation. Production was **not** touched: throwaway backend on 8081/8082, vite on 3100,
+  all stopped afterwards; `ibconnect-backend` never restarted.
+- **Not deployed.** Frontend needs `npm run build` + rsync; backend needs rebuild + restart (which
+  drops live calls). `_verify_multiparty_audio.mjs` honours `BASE`, so re-run it against
+  `https://meet.icebrkr.space` after deploying.
+
+**2026-08-10, unread message badges (DEPLOYED — frontend rsynced *and* backend rebuilt/restarted):**
+Reported as "the websocket server is off and is not working". **It wasn't** — `ibconnect-backend` was
+`active` with 2 days' uptime and `/ws` returned 101 at all three layers (direct :8080, through nginx,
+and from the public domain). The unread badge is computed in SQL from `thread_members.last_read_at`
+and had three independent bugs, none of them WS-related. Worth remembering as a diagnosis pattern:
+"realtime feature looks dead" pointed at the socket, and the socket was fine.
+- **`NOW()` vs `DATETIME(6)`.** `messages.created_at` is `datetime(6)` but both read-marker writes
+  used bare `NOW()`, which truncates to whole seconds. A message created at `07:13:19.575786` stayed
+  permanently newer than its own marker of `07:13:19.000000`, so it never stopped counting as unread.
+  Now `NOW(6)` at both sites. **Any future write to `last_read_at` must use `NOW(6)`.**
+- **Own messages counted as unread against you.** The count subquery in `loadThread` had no
+  `m.sender_id <> tm.user_id` filter. Combined with the precision bug this meant *sending* a message
+  gave you a permanent `1` badge on your own thread — confirmed in live data (user `426abf2f…` had
+  carried a phantom badge since Aug 9) and reproduced A/B against the old binary.
+- **`{thread.unreadCount && ... && <span/>}` rendered a literal "0".** A leading `0 &&` short-circuits
+  to the *number* 0, which React renders as a text node — so every already-read thread showed a bare
+  `0` next to its preview. Now `(thread.unreadCount ?? 0) > 0`. This one was invisible in code review
+  and only turned up in a deploy screenshot; it's the bug a user would actually point at.
+- **New `POST /api/threads/{id}/read`.** There was no mark-read endpoint at all — `last_read_at` only
+  advanced as a side effect of `GET /messages` and `POST /messages`, and `ChatContext.markRead` was
+  local-only. So a message arriving over the chat WS *while you had the thread open* was zeroed in
+  React and left unread in the DB, and the badge came back on reload. `markRead` and the `new_message`
+  WS handler now both persist. Routed inside `handleMessages` (the `/api/threads/` prefix handler), so
+  the path parse strips `/read` as well as `/messages`.
+- Verified: `go build` + `tsc` clean (one pre-existing unrelated `TopBar.tsx` error for the unused
+  `interview` AppView — baseline, confirmed by stashing); full lifecycle on a throwaway `:8081`
+  backend (0 → 1 → 2 → mark read → 0, own message stays 0); endpoint auth guards on production
+  (200 / 405 on GET / 401 unauth / 403 non-member); and `_verify_unread_badge.mjs` 5/5 against the
+  live domain. Test messages deleted and throwaway stopped afterwards.
+- `_verify_unread_badge.mjs` (repo root, honours `BASE`) is the reusable suite. **Note the ChatsView
+  double-render gotcha it documents**: thread rows exist twice in the DOM (mobile + desktop branches),
+  so `getByText(...).first()` returns the hidden copy with a null bounding box — filter `visible=true`.
+- Known, not fixed: opening a thread fires `POST /read` **twice** (once from `handleSelectThread`,
+  once from the `activeThread?.id` effect). The write is idempotent, so this is two tiny UPDATEs
+  instead of one — not worth a deploy on its own, but fold it in if you touch `ChatsView`'s selection
+  path.
+
+**2026-08-08, back-to-app button + nginx cache headers (DEPLOYED — frontend rsynced, nginx reloaded):**
+Reported as "I can't see the back button for going from calls to IB Connect". The button existed and
+was on-screen at every width from 1400 down to 320 — it was just **the sixth unlabelled grey circle
+in a row of seven**, its only label a `title` tooltip, which does not exist on touch. Same failure
+mode this file already documents for group chat: discoverability, not function.
+- Added a real labelled **"← IB Connect"** button top-left of the call screen, next to the room-code
+  badge, where a back control is actually looked for. The toolbar glyph stays; both call `onMinimize`.
+  Guests don't get it (no `onMinimize` on the guest path).
+- `CtrlBtn` now mirrors `title` into `aria-label`, so *every* in-call control is finally named for
+  screen readers and touch, not just on hover.
+- **nginx: `index.html` was served with no `Cache-Control` at all.** It is the only thing pointing at
+  the hashed bundle, so a browser holding a cached copy stays pinned to an old deploy — a plausible
+  reason a shipped change appears missing. Now `no-cache, must-revalidate` for `/index.html` and
+  `public, max-age=31536000, immutable` for `/assets/` (content-addressed, safe forever). Config
+  backed up to the session scratchpad as `nginx-ibconnect.bak`; `nginx -t` clean, reloaded (not
+  restarted), SPA deep-link fallback re-checked (`/ABCD-1234` → 200).
+- Verified: 21-check pass (button present/labelled/on-screen/not covered + no h-scroll at 1400, 1024,
+  768, 390, 360 and 320; leaves the call screen; floating window appears; returns to the call), then
+  the full 26-check floating-call suite re-run against production.
+
+**2026-08-08, floating (minimised) call + document preview (DEPLOYED — frontend only):**
+
+*Floating call — Meet/WhatsApp-style picture-in-picture.* A "Minimise call" button in the call
+toolbar drops you back into the app with the call running in a small draggable window
+(`src/components/meeting/FloatingCallWindow.tsx`). This works at all only because
+**`useWebRTC` lives in `MeetingContext`, not in `ActiveMeetingView`** — minimising unmounts the call
+screen but every `RTCPeerConnection` and `MediaStream` is untouched. Do not move the WebRTC hook
+into a view component.
+- **The load-bearing detail: remote audio.** On the full screen, each peer's audio comes out of that
+  peer's `<video>` element — and those unmount with `ActiveMeetingView`. The floating window shows
+  exactly one tile, so routing audio through it would mute everyone else the moment you minimise a
+  3-way call. `FloatingCallWindow` therefore renders one hidden `<audio>` **per peer** (`PeerAudio`)
+  and keeps the visible `<video muted>`. Verified with three real peers: 2 audio elements, both
+  attached/unmuted/playing, and dropping one peer retires exactly one element.
+- `MeetingContext` gained `isMinimized` / `minimizeMeeting()` / `expandMeeting()`, reset to
+  expanded on join/create/leave so entering a room always lands on the full screen.
+- `App.tsx`: `effectiveView` is `active_meeting` only when `isInMeeting && !isMinimized`, with a
+  guard mapping a stale `active_meeting` currentView back to `viewBeforeMeetingRef` — otherwise the
+  call screen re-opens behind the floating window. `viewBeforeMeetingRef` is why minimising returns
+  you to whatever page you were on rather than a default.
+- **Guests get no minimise button** (`onMinimize` is optional and App only passes it on the
+  signed-in path) — a guest has no app to go back to; see the bare-`ActiveMeetingView` guest branch.
+- Window is drag-positioned with pointer capture, clamped into the viewport on drag *and* on
+  resize/rotate; a tap without movement expands. 232px wide desktop / 150px under 640px. `z-[95]`:
+  above the chat modals (`z-[90]`), below `CommandPalette` (`z-[100]`) and `IncomingCallModal`.
+- Verified: 26-check two-peer suite + 8-check three-peer audio suite, against `:3100` and
+  `https://meet.icebrkr.space`. Covers media still flowing on the *peer's* side after minimising
+  (`currentTime` advancing), navigation while in-call, drag + viewport clamping, mic toggle, expand,
+  mobile fit, and leaving from the floating window. Scripts in the session scratchpad as
+  `verify_floating_call.mjs` and `verify_floating_call_3way.mjs`.
+
+**2026-08-08, document preview (DEPLOYED, frontend only):** `ImagePreviewModal` became
+`AttachmentPreviewModal` — same box, body chosen by type: images as `<img>`, **PDFs in an iframe**
+(`max-w-3xl`, `h-[70vh]`), **text-ish files** (`.txt .md .csv .json .log .xml .yaml .sql` + code) as
+a scrollable `<pre>` (`max-w-2xl`), and anything else (`.docx/.xlsx/.zip`) a "no inline preview —
+download it to open" body. The file card's body opens the preview; its download button stays for
+one-click saving.
+- PDFs need a **`blob:` URL** — Chrome refuses `data:` in an iframe. Revoked on unmount.
+- **HTML/SVG documents are deliberately shown as escaped text, never iframed.** Attachments come
+  from other users and a `blob:` URL inherits this origin, so iframing their markup would run their
+  script against the session. Only PDFs get a frame (browser's own sandboxed viewer).
+- **`PdfPreviewBody` gates on `navigator.pdfViewerEnabled`.** Without it the iframe renders as a
+  silent blank rectangle in any browser lacking a PDF viewer. This bit during testing: the first run
+  "passed" on an assertion that an iframe existed, over a blank box — headless Chromium reports
+  `pdfViewerEnabled: false` with 0 plugins. **Consequence: the PDF *fallback* path is verified but
+  the PDF *rendering* path is NOT** — nothing in this environment can render a PDF. Re-check by hand
+  in a real browser if you touch it.
+
+**2026-08-08, image lightbox + a modal z-index bug (DEPLOYED — frontend only, no backend change):**
+Clicking an image attachment used to be an `<a target="_blank">` to the data URL, which navigated
+away from the chat. It now opens `ImagePreviewModal` (`ChatsView.tsx`) — a contained box (512px
+desktop / 358px at 390px wide), image capped at `max-h-[60vh]`, closable via ✕ / Escape / backdrop,
+with **Share and Download on the box**. The per-thumbnail corner download button was removed; those
+controls live on the preview now.
+- **Share** uses the Web Share API with a real `File` (`fetch` on the data URL → blob → `File`),
+  which gives a genuine share sheet on mobile. Desktop browsers largely can't share files, so it
+  falls back to writing the image to the clipboard (Chrome only accepts `image/png` there — hence
+  the try/catch), and then to a transient "Use Download" label. `AbortError` means the user
+  dismissed the sheet and is deliberately not treated as a failure. **Headless cannot exercise the
+  real share sheet** — automated coverage only proves it degrades without throwing.
+- **Found while testing: every modal in the app rendered UNDER the sidebar.** Modals were `z-50`
+  but the sidebar rail is `z-[70]`, its mobile drawer backdrop `z-[65]`, and the hamburger `z-[80]`,
+  so the left 76px stayed undimmed and clicks there hit the sidebar instead of the modal backdrop.
+  Chat-flow modals (image preview, NewDM, NewGroup, `UserProfileModal`) are now `z-[90]` — above the
+  chrome, still below `CommandPalette` (`z-[100]`) and `IncomingCallModal` (`z-[99999]`) so an
+  incoming call still surfaces over an open modal. **Still unfixed, same defect:**
+  `SettingsModal.tsx:426` and `CalendarView.tsx:46` are both still `z-50`.
+- Verified: 19-check Playwright pass at 1400x900 and 390x844 against `:3100` and
+  `https://meet.icebrkr.space` — opens in place (tab count unchanged, no navigation), box is
+  contained not full-screen, image decodes, all three close paths, Download carries the `download`
+  attribute, Share degrades gracefully, no mobile h-scroll, zero console errors. Script in the
+  session scratchpad as `verify_image_preview.mjs`.
+
+**2026-08-08, two chat bugs (DEPLOYED — frontend rsynced *and* backend rebuilt/restarted):**
+- **A DM showed you your own name and avatar as the person you were talking to.** `loadThread`
+  (`server/main.go`) took a `forUID` but used it only for the unread count: `t.Name`/`t.Avatar` came
+  straight off the `threads` row, and a DM row is stamped at creation time with *the other
+  participant as the creator saw them*. So the creator saw the right person and **the recipient saw
+  themselves**. Confirmed in live data — the `dhruv ↔ Priyanshu grover` thread is `created_by`
+  Priyanshu with `name='dhruv'`, so dhruv saw "dhruv"; same shape for `Ridh saha ↔ Admin`.
+  `loadThread` now resolves the counterpart live per viewer for `type='dm'`, which also makes DM
+  titles track display-name/avatar changes instead of freezing at creation. **No migration needed —
+  the stored `threads.name`/`avatar` columns are simply ignored for DMs now** (they're still written
+  on create; harmless, and group threads still use them).
+- `ChatsView` also got a `getThreadDisplay()` helper that prefers the resolved participant for DM
+  name/avatar (list, header, and the search filter). Belt-and-braces: it keeps the UI right against
+  a stale cached thread or an unpatched backend. If you ever change one, change both.
+- **Image attachments rendered as download cards.** Every `fileAttachment` went through the same
+  `FileText` + `Download` card. New `MessageAttachment` component in `ChatsView.tsx` renders
+  `image/*` inline (click to open full size, always-visible download button — *not* hover-only,
+  since touch has no hover), and keeps the card for everything else. Type detection deliberately
+  falls back from `file.type` to sniffing the `data:` URL and then the extension, because some
+  Android pickers hand back an empty MIME type. `onError` falls back to the card so a truncated
+  data URL is still downloadable rather than an empty box.
+- Attachments are data URLs in `messages.file_data` (`LONGTEXT` live, verified). The 5MB client cap
+  in `handleFileAttach` matters: MariaDB's `max_allowed_packet` is 16MB and base64 inflates ~1.37x,
+  so raising that cap much past ~11MB will start failing inserts.
+- Verified: `tsc --noEmit` + `go build` clean; a 13-check Playwright pass at 1400x900 and 390x844
+  against a throwaway `:3100`/`:8081` pair **and** against `https://meet.icebrkr.space` after
+  deploying — both directions of the DM name, counterpart avatar actually rendering, a 900x600 PNG
+  decoding as an `<img>` with a download control, `.txt` still a card, no mobile h-scroll, zero
+  console errors. Script in the session scratchpad as `verify_chat_fixes.mjs`.
+- **Testing note:** `ChatsView` renders its mobile (`lg:hidden`) and desktop branches *both* into
+  the DOM, so every message element exists twice — selectors need `:visible` or a count of 2, and
+  the thread-list preview `<p class="text-[10px]">` also contains the attachment filename, which
+  will false-positive a naive "is it a file card" check (the card's name is `p.text-xs.font-semibold`).
+- Test data written during verification (6 attachment messages in the uitest1/uitest2 DM, plus a
+  temporary avatar on `uitest1`) was deleted/reverted afterwards; both confirmed back to zero.
+
+**2026-08-08, transcription turned off (DEPLOYED — frontend rsynced; backend untouched):**
+Live transcription is off end to end. New `src/lib/features.ts` holds a single
+`TRANSCRIPTION_ENABLED` flag (default `false`; `VITE_ENABLE_TRANSCRIPTION=true` at build time
+re-enables without a code change). `useSpeechTranscription.start()` short-circuits on it, so no mic
+handle and no `/asr` socket can open even if something calls it, and `isSupported` reports `false`.
+`ActiveMeetingView` drops all four entry points: the desktop "Live Transcript" sidebar, the
+Transcript tab in `RightPanel`, the `lg:hidden` Transcript toolbar button, and both Transcribe
+buttons. `ibconnect-transcription.service` stopped + disabled (freed ~7.7GB resident).
+- **The desktop sidebar also owned the room code, Copy-code and Copy-join-link controls** — hiding it
+  would have silently removed the only way to share a meeting from a desktop. Those moved onto the
+  floating code badge over the stage, which is now visible at *all* widths (it was `lg:hidden`) and
+  gained two icon buttons. If you ever re-enable transcription, the badge reverts to `lg:hidden` and
+  the sidebar takes the controls back — both branches are in the same JSX, keep them in sync.
+- Dropped the panel rather than leaving it in place empty on purpose: a near-empty 288px column
+  squeezes the video grid, which is the exact mechanism behind the earlier "tiling looks bad with
+  multiple people" complaint (see the 2026-08-02 entry).
+- The `/asr` proxy entries in `vite.config.ts` and nginx are deliberately left in place so
+  re-enabling is a one-line flip. `/asr` will 502 until the service is started again; nothing calls it.
+- Transcript-related *copy* in `SecurityView.tsx` / `data.ts` (data residency, audit log) is policy
+  wording, not the feature — intentionally untouched.
+- Verified: `tsc --noEmit` and `npm run build` clean; an 18-check Playwright pass at 1400x900 and
+  390x844 against **both** `:3100` and `https://meet.icebrkr.space` — no transcript UI anywhere, room
+  code + both copy buttons present and on-screen at both sizes, video stage starts at x=17 instead of
+  behind a 288px sidebar, no mobile h-scroll, only `/ws` and `/chat-ws` sockets opened (never `/asr`),
+  zero console errors. Script in the session scratchpad as `verify_transcription_off.mjs`; re-derive
+  from this paragraph if gone.
+- **Deploy note that will bite someone:** `rsync -a --delete dist/ /var/www/ibconnect/` deletes
+  `email-logo.png`, which lives only on the server (it is *not* in `public/`, so it is not in `dist/`)
+  and is hotlinked by already-sent transactional emails. It was backed up and restored by hand this
+  time. Check `comm -23` of the live file list against `dist/` before any `--delete` rsync, or move
+  that asset into `public/`.
+- This deploy also shipped the frontend work that had been sitting uncommitted in the tree since
+  2026-08-03/08-04 (`BrandMark` call sites, the `CallsView` mobile fix, `useWebRTC`/`MeetingContext`/
+  `App.tsx` changes) — those were previously marked "working tree only" below and are now live.
+  The backend was **not** rebuilt or restarted, so no calls were dropped.
+
+**2026-08-04, investigations that produced no code change here** (both worth reading
+before picking up related work — each looks like a missing feature and isn't):
+- **Group chat already exists and is live.** Backend, context, modal and button all
+  ship today; the problem is that the entry point is an unlabelled icon. See
+  "Chat / threads" above. Don't rebuild it.
+- **Audio-to-text works but is ~27x slower than real time** on this CPU-only box,
+  which is why it appears to do nothing. Measured end-to-end; see "Audio-to-text"
+  above for the numbers, the wire protocol, and the options.
+- Most of that day's actual work was in **`ib-account`** (SMTP brought up, all six
+  transactional emails redesigned, two production login bugs fixed). That repo now
+  has its own CLAUDE.md — start there for anything auth- or email-related.
+
+**2026-08-04, brand mark replaced (icons deployed; JS bundle NOT rebuilt — see below):**
+The lucide `Hexagon` placeholder is gone. The real Icebrkr logo is the "IB" monogram (source art:
+`/home/ubuntu/Icebrkr.png`, black ink on an opaque off-white field). Two derived forms:
+- **Blue tile + white mark** — `public/favicon.{svg,ico}`, `favicon-{16,32}x{16,32}.png`,
+  `apple-touch-icon.png`, `icon-512.png`, `email-logo-v2.png`. Standalone use, where nothing else
+  supplies a background.
+- **`public/logo-mark-white.png`** — the bare mark, white on transparency, for in-app use. Every
+  in-app call site already wraps the mark in a `bg-[#0066FF]` tile, so using the *tiled* asset there
+  gives you blue on blue. `src/components/BrandMark.tsx` is the single component for this; use it
+  rather than a fresh `<img>` so the five call sites can't drift apart again (Sidebar, LoginPage x2,
+  PreJoinScreen, plus ib-account's `AuthCard`).
+
+Generation: still no imagemagick/rsvg/sharp, but **Pillow is installed** and is a far better fit than
+the old Playwright-screenshot trick. The alpha mask is recovered from the source's *luminance* (ink →
+opaque, paper → transparent) since the supplied PNG has no transparency of its own. Small favicons use
+a proportionally larger mark (`optical_scale`: 0.82 at 16px vs 0.60 at 512px) — at a flat 0.60 the
+monogram's counters blur shut at 16px. Script: `/tmp/.../scratchpad/mkassets.py` (scratch; re-derive
+from this description if it's gone).
+
+**Deployment state**: the static icons were copied straight into `/var/www/ibconnect/` under their
+existing filenames, so the live favicon updated with **no rebuild**. The `BrandMark` component changes
+are **working-tree only** — this tree carries unrelated uncommitted work (`useWebRTC.ts`,
+`MeetingContext.tsx`, `App.tsx`, `ActiveMeetingView.tsx`, the CallsView mobile fix), so `npm run build`
+would have shipped all of it. The in-app marks change on the next deliberate frontend deploy.
+`ib-account/web` *was* rebuilt and deployed (its tree was clean).
+
+**2026-08-03, mobile layout audit (fix NOT YET DEPLOYED — working tree only):**
+Swept every view plus the overlays at 390px (iPhone 12) and 320px (Galaxy S9+) with
+`_verify_mobile_layout.mjs` and `_verify_mobile_deep.mjs` (repo root; both honour `BASE`). They flag
+page-level horizontal scroll, elements cut off past the right edge, and undersized tap targets,
+filtering three classes of false positive that will otherwise bury the signal: `.accent-glow`
+decorations (deliberately 200%x200% inside an `overflow-hidden` parent), anything inside an existing
+`overflow-x-auto` scroller (the audit-log table), and the off-canvas sidebar at `translateX(-100%)`.
+- **Only one view was actually broken: `CallsView`.** It rendered its desktop two-pane layout at every
+  width — a fixed `w-80` (320px) call-history `<aside>` plus the contacts `<main>` — so on a 390px
+  phone the contacts list was squeezed into a ~70px strip against the right edge (names cut mid-word,
+  the Video/Audio buttons off-screen), and at 320px it was pushed off the viewport entirely. Fixed by
+  adopting the pattern `ChatsView` already used: panels extracted into `renderHistory`/`renderContacts`,
+  a Recent/Contacts segmented switcher below `lg`, and the unchanged two-pane split at `lg` and up.
+- Everything else — Dashboard, Chats (list *and* an open thread, incl. long unbroken tokens), Meetings,
+  Calendar, Security, Support, the sidebar drawer, Settings/Schedule modals, the guest lobby, the login
+  page and the in-call screen with its side panel — is layout-clean at both widths, zero console errors.
+- **Known, not fixed** (cosmetic/a11y, no display breakage, out of scope for "things don't show
+  properly"): tap targets under the 44px guideline — Calendar's month arrows and day-cell buttons
+  (28x28), Security's toggles (48x26) and "Reset Area" (76x29), Support's FAQ links (~20px tall),
+  Meetings' "Join" (52x28) and "Schedule" (80x16); and the Settings gear in `Sidebar.tsx` has no
+  `aria-label` (its label lives only in a hover tooltip, so it's unreachable by name for screen readers
+  and test selectors).
+
+**2026-08-03, later session — orphaned participants after a reload** (deployed to production —
+frontend rsynced *and* backend rebuilt/restarted):
+Reported as: host and a link guest are in a call fine, host reloads, now neither can see the other
+even though the room code is unchanged — and reloading again fixes it. Reproduced with
+`_verify_reconnect_rejoin.mjs` (repo root).
+- **Root cause: a reconnected signaling socket never re-entered its room.** `SignalingSocket` auto-
+  reconnects 3s after an unintentional close, but `MeetingContext` constructed it without the
+  `onReconnect` callback the class already supported, so the reconnected socket was a brand-new
+  server-side client sitting in *no room*. Nothing looked wrong locally — media keeps flowing over the
+  existing `RTCPeerConnection`s — but the server had already broadcast `peer_left`, so anyone who
+  joined or reloaded afterwards couldn't see that tab and vice versa. All it takes on a phone is a
+  screen lock or a wifi→cellular hop. `MeetingContext` now tracks `activeRoomRef` and re-sends
+  `join_room` on reconnect (falling back to `create_room` if the room was reaped and we're the host,
+  matching the post-reload redial's rule), resetting peers and re-offering everyone.
+- **`peer_joined` now discards any connection already held for that peer id.** Someone (re-)entering
+  the room means the socket we were connected to is gone; reusing that `RTCPeerConnection` leaves both
+  sides on a frozen tile. Previously this only worked because `peer_left` happened to arrive first.
+- **Peers from `room_joined`/`room_created` get a tile immediately.** `registerPeerName` only *renames*
+  an existing tile, so a peer whose media never arrived was completely invisible to the joiner while
+  the joiner was visible to them. New `addPeers` in `useWebRTC` seeds "Connecting…" placeholders.
+- **Remote tiles could sit paused forever.** `RemoteTile`/`ScreenTile` create their `<video>` only once
+  a stream exists, then call `play()` once and swallow the rejection. A reloaded page holds no user
+  activation and remote streams carry audio, so the autoplay policy can reject with `NotAllowedError`
+  — leaving a black tile with live media arriving underneath (verified in headless; real devices with
+  an active camera capture are usually exempt, so this is a robustness fix rather than the main cause).
+  New `playWhenAllowed` retries on the next `pointerdown`/`keydown`, plus `onCanPlay`/`onPause` hooks.
+- **Backend: `/ws` had no keepalive** (only `/chat-ws` did, added the session before). A socket that
+  dies without a close frame blocked in `ReadMessage` forever, so the client stayed in its room as a
+  ghost and the room never emptied. Mirrored the chat WS's ping/pong + read deadline
+  (`sigPongWait`/`sigPingPeriod`). Also: relayed `offer`/`answer`/`ice_candidate` now carry
+  `from_name`, which the client already read but the server never sent — without it a tile created
+  from an offer fell back to a generic "Guest (…)" label for a known participant.
+- Verified: `npx tsc --noEmit` clean, `go build` clean, `_verify_meeting_fixes.mjs` 20/20 and
+  `_verify_reconnect_rejoin.mjs` (drop the guest's socket → host keeps them; host reload → both still
+  visible; media `currentTime` advancing on both sides) — both against the throwaway `:3100`/`:8081`
+  pair *and* against `https://meet.icebrkr.space` after deploying. Both suites now honour a `BASE` env
+  var so the same script runs against either. Server keepalive confirmed live by opening a raw
+  `wss://meet.icebrkr.space/ws` and observing the ping frame.
+
+**2026-08-03 session** (deployed to production — frontend rsynced *and* backend rebuilt/restarted):
+- **Ghost participants (backend, the big one).** `create_room` and `join_room` in `main.go` both set
+  `client.room = room` without vacating the room the socket was already in, so the old room kept a
+  stale `SigClient` forever: it never became empty (never reaped), and everyone still inside saw the
+  departed user's name on a frozen blank tile. `create_room` also did `rooms[code] = room`
+  unconditionally, orphaning everybody in a pre-existing room with that code. Both now call
+  `leaveRoom(client)` first and reuse an existing room instead of clobbering it. Extracted `enterRoom`
+  (registers the client, evicts a prior socket holding the same user id, returns peers excluding self).
+- **Empty-room grace period.** `leaveRoom` no longer deletes an empty room immediately — it arms a
+  90s `time.Timer` (`emptyRoomGrace`, `scheduleReap`/`cancelReapLocked`, `Room.reap` guarded by
+  `roomsMu`). Without this, a *host* reloading destroys their own 1-person room before the redial
+  lands. Lock order is always roomsMu → room.mu; `leaveRoom` also guards on
+  `room.clients[client.id] == client` so a dying old socket can't evict the freshly-rejoined client
+  or emit a bogus `peer_left`.
+- **Reload no longer dumps you on the dashboard.** `DebriefView` only ever *prefilled* the code input
+  from `autoJoinCode` — it never joined. Now `MeetingContext` persists `{roomId,isHost,title}` to
+  sessionStorage (`ibconnect_active_meeting`, per-tab by design) and `App.tsx` redials it on mount via
+  `rejoinMeeting`. Signed-in users opening a `/:roomCode` link also auto-join instead of landing on the
+  Meetings page. **Watch the `rejoinState` machine** (`idle|pending|failed`): an earlier cut gated the
+  "Rejoining…" screen on `rejoinTarget` alone, which outlives the meeting, so *leaving* a call wedged
+  the app on the spinner forever. It must settle to `idle` on success.
+- **Guest join by link** (`src/components/meeting/PreJoinScreen.tsx`): `/:roomCode` while signed out now
+  shows a Meet-style lobby (camera preview + mic/cam pre-toggles + name field) instead of `LoginPage`.
+  `/ws` never required auth, so this was purely a frontend gate. Guests render the bare
+  `ActiveMeetingView` with no Sidebar/TopBar — the app shell assumes a `currentUser` (avatars,
+  compliance-log actor) and `ChatContext` no-ops without one. The lobby's preview stream is its own
+  `getUserMedia` call, stopped before `initMedia()` runs, because two live camera handles at once makes
+  some webcams fail to open. `MeetingContext.nameRef` exists so a guest typing a name and joining in the
+  same handler doesn't send the stale closure-captured name.
+- **Tiling reworked toward LiveKit Meet.** Added a focus/spotlight layout with pinning: at most one
+  thing on the main stage plus a carousel (right on `xl+`, bottom below that). Screen shares auto-focus;
+  an explicit pin always wins so you can keep watching a person while someone presents. A pin pointing
+  at a departed peer self-clears or it would wedge the stage on a dead id. Consolidated the tile chrome
+  into one `ParticipantTile` (it was hand-rolled twice and had already drifted).
+- **Tiles are now genuinely 16:9.** `computeTileSize` in `useGridLayout.ts` sizes each tile to
+  `min(cellWidth, cellHeight * 16/9)` and the grid became a centered `flex-wrap` (which also centers a
+  partially-filled last row, like Meet). Previously tiles stretched to fill the cell — two people on a
+  1400x900 window got ~690x790 near-portrait boxes that `object-cover` cropped the sides off. This was
+  the "tiling is improper/unfinished" complaint.
+- Also fixed the screen-share spotlight overflowing its container on short windows (missing
+  `grid-rows-1`, so the implicit `auto` row let the video's intrinsic height push past the flex box and
+  overlap the camera strip + toolbar).
+- **Testing infra**: `server/main.go` honours `PORT` and `vite.config.ts` honours `BACKEND_PORT`, so a
+  throwaway backend+dev-server pair can be run alongside the live ones to exercise signaling changes
+  without restarting production. `_verify_meeting_fixes.mjs` (repo root) is the reusable 20-check suite
+  — reload-rejoin, ghost-tile absence, guest-link join, tile geometry at 3 viewports, pin/focus, and
+  overlap detection. It passes against both `:3100` (throwaway) and `https://meet.icebrkr.space`.
+
 
 **2026-07-29 session** (uncommitted as of this writing — nothing from this session has been `git commit`ed):
 - Added `DashboardView` (new Home/landing view), `CommandPalette` (⌘K), `useTheme` hook + full light-mode
@@ -187,7 +912,7 @@ playing (not frozen).
   `#0066FF` rounded square, same as the sidebar's brand button. No image-generation tooling
   (imagemagick/rsvg/sharp) is installed in this environment; PNGs were rasterized by loading the SVG in
   a Playwright page sized to the target dimensions and screenshotting it — reuse that trick if icons
-  need regenerating.
+  need regenerating. **Superseded 2026-08-04 — see the brand mark entry below.**
 - Added `MeetingInviteDialog` (`src/components/meeting/MeetingInviteDialog.tsx`): a floating "Your
   meeting is ready" card (not full-screen — the call stays visible/dimmed behind it, `absolute inset-0`
   inside `ActiveMeetingView`'s own portal, `z-[10000]`) shown automatically to the **host only**, once,
@@ -204,3 +929,60 @@ playing (not frozen).
   "anyone can join" vs "may need permission" copy is driven by an `anyoneCanJoin` prop (default `true`)
   since there's no lobby/approval feature in this app yet — flip that default the day one exists rather
   than editing the JSX.
+
+**2026-08-02 session** (deployed to production):
+- Rebuilt the call grid's tiling logic, inspired directly by Google Meet — see "Video tiling / grid
+  layout" under WebRTC above for the full architecture. Summary: `selectGridLayout` (container-size +
+  orientation aware, ported from `@livekit/components-react`'s real algorithm — fetched upstream source
+  from `livekit/components-js` for reference) replaced the old tile-count-only breakpoint table;
+  `useAudioLevels` adds a client-side active-speaker ring (mesh WebRTC has no SFU to compute this for
+  us); `usePagination` pages tiles when a small container's picked layout can't hold everyone.
+- Found and fixed the actual root cause of the "tiling is bad with multiple people" complaint: the right
+  panel (`rightOpen` in `ActiveMeetingView`) defaulted **open** on any viewport >768px, which silently
+  squeezed the video grid container down to a narrow near-square shape — so even 2 people on a spacious
+  1400px desktop window rendered stacked vertically instead of side-by-side. Now defaults closed
+  (Meet-style: full-width stage on join, panels opt-in via the toolbar toggle buttons, unchanged
+  otherwise). Verified with two live Playwright WebRTC contexts: 2 tiles now correctly go side-by-side
+  at 1400x900 and stack at narrow/portrait sizes.
+- Found and fixed a second, more subtle bug while comparing against upstream LiveKit's actual
+  `GridLayout.tsx`: `selectGridLayout` alone can pick a layout whose `maxTiles` is less than the real
+  tile count on small containers (confirmed upstream has the exact same property — it's inherent to the
+  algorithm, not a porting mistake), so without pagination extra tiles would have no grid cell to render
+  into. Added `usePagination` + prev/next arrows + a dot indicator, verified end-to-end with 3 real
+  Playwright peer contexts on a 390x800 viewport: page 1 correctly shows 2 tiles, page 2 shows the 3rd,
+  nobody silently drops off.
+- Corrected two stale doc inaccuracies found in the process (see Testing section above): the Testing
+  approach section referenced a `POST /api/auth/signup` endpoint that does not exist in `main.go` — auth
+  is OIDC-only; testing scripts mint JWTs directly for pre-existing seeded accounts instead.
+- Type-checked (`tsc --noEmit`) and production-built (`npm run build`) clean. Deployed frontend to
+  production (`rsync` to `/var/www/ibconnect`); no backend changes in this session, so
+  `ibconnect-backend.service` was not restarted and no in-progress calls were affected.
+
+**2026-08-12 (later), PUBLIC-REPO CREDENTIAL EXPOSURE — found, closed, DEPLOYED:**
+While acting on "do what is best" I checked the git remote and found
+`github.com/DhruvJyotiDas/IB-Connect-ver-2` is **`"visibility": "public"`**. Three live
+credentials were readable in it. All are now rotated and both apps are deployed.
+- **JWT signing key** (`origin/main:server/main.go:27`) — signed every session. Anyone could
+  mint a token for any user id, no password, no OIDC. **This was an active auth bypass**, not a
+  theoretical one: the same constant was used all session to mint valid tokens for real accounts.
+- **MariaDB password** (`origin/main:server/main.go:1190`) — mitigated only by MariaDB binding to
+  localhost, which stops mattering the moment anything else on the box is compromised.
+- **TURN password** `webrtc123` (`origin/main:src/hooks/useWebRTC.ts:6`) — open relay for anyone.
+- All three now come from `/etc/ibconnect/env` (600, backup `env.bak.20260812`); the backend
+  **refuses to start** if any is missing. Old values verified dead: old DB password rejected by
+  MariaDB, old TURN password rejected by coturn (`turnutils_uclient` → "Cannot complete
+  Allocation", while the new one reaches channel-bind).
+- **`git history still contains the old values forever` — rotation is what makes them harmless.**
+  History rewriting was judged not worth the disruption. **Treat this repo as public.**
+- Also closed: the Vite dev server serving uncompiled source over plain HTTP on `0.0.0.0:3000`
+  for 14 days, and the backend listening on `0.0.0.0:8080` — directly reachable on the public IP,
+  bypassing nginx and TLS. Now `127.0.0.1:8080` (`BIND_ADDR` overrides). Public listeners are now
+  exactly 22, 80, 443, 3478, 5349.
+- **`email-logo.png` gotcha permanently fixed** — moved into `public/`, so `rsync --delete` can no
+  longer remove it. That workaround can be dropped from the deploy steps above.
+- Deployed and verified **against production**: `_verify_multiparty_audio` 12/12 and
+  `_verify_meeting_fixes` 20/20 before the TURN rotation, then 12/12 again after it.
+- Gotcha worth keeping: `cp` onto a running binary fails with **"Text file busy"** and
+  `systemctl restart` then silently re-launches the OLD binary. Caught it because
+  `/api/turn-credentials` still 404'd. Always `stop` → replace → `start`, and verify with a
+  request that only the new build can answer.

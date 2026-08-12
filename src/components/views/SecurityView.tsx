@@ -178,7 +178,7 @@ export default function SecurityView({
             <span className="text-[10px] font-medium text-[#8c90a1]">Status: {dataSovereignty ? 'FORCE ACTIVE' : 'BYPASS ACTIVE'}</span>
             <button 
               onClick={handleSovereigntyToggle}
-              className={`w-12 h-6.5 rounded-full p-1 transition-all ${
+              className={`w-12 h-8 sm:h-6.5 rounded-full p-1 transition-all shrink-0 cursor-pointer ${
                 dataSovereignty ? 'bg-[#568dff]' : 'bg-[#201f1f] border border-[#424655]'
               }`}
             >
@@ -208,7 +208,7 @@ export default function SecurityView({
             <span className="text-[10px] font-medium text-[#8c90a1]">Status: {mandatoryConsent ? 'ENFORCED' : 'OPTIONAL'}</span>
             <button 
               onClick={handleConsentToggle}
-              className={`w-12 h-6.5 rounded-full p-1 transition-all ${
+              className={`w-12 h-8 sm:h-6.5 rounded-full p-1 transition-all shrink-0 cursor-pointer ${
                 mandatoryConsent ? 'bg-[#c0c1ff]' : 'bg-[#201f1f] border border-[#424655]'
               }`}
             >
@@ -248,7 +248,7 @@ export default function SecurityView({
             <span className="text-[10px] font-medium text-[#8c90a1]">Destructive Wipe:</span>
             <button 
               onClick={() => setPurgeConfirmOpen(true)}
-              className="flex items-center gap-1 bg-[#93000a]/20 text-[#ffb4ab] border border-[#ffb4ab]/35 hover:bg-[#93000a]/35 px-3 py-1 rounded-lg text-[10px] font-black tracking-wider uppercase transition-colors cursor-pointer"
+              className="flex items-center gap-1 bg-[#93000a]/20 text-[#ffb4ab] border border-[#ffb4ab]/35 hover:bg-[#93000a]/35 px-3 py-2 sm:py-1 min-h-[36px] sm:min-h-0 rounded-lg text-[10px] font-black tracking-wider uppercase transition-colors cursor-pointer"
             >
               <Trash2 className="w-3 h-3" />
               <span>PURGE NOW</span>
@@ -271,7 +271,7 @@ export default function SecurityView({
               onClick={() => {
                 alert("Downloading audit logs CSV...");
               }}
-              className="flex items-center gap-1 text-[11px] text-[#c2c6d8] bg-[#201f1f] border border-[#424655] hover:border-[#b0c6ff] hover:text-[#b0c6ff] px-3 py-1.5 rounded-lg cursor-pointer transition-colors"
+              className="flex items-center gap-1 text-[11px] text-[#c2c6d8] bg-[#201f1f] border border-[#424655] hover:border-[#b0c6ff] hover:text-[#b0c6ff] px-3 py-2 sm:py-1.5 min-h-[36px] sm:min-h-0 rounded-lg cursor-pointer transition-colors"
             >
               <Download className="w-3.5 h-3.5" />
               <span>Export CSV</span>
@@ -281,7 +281,7 @@ export default function SecurityView({
                 onClearLogs();
                 onAddLog("Audit logs reset manually.", "SUCCESS");
               }}
-              className="text-[11px] text-[#ffb4ab] hover:text-white px-2 py-1.5 rounded"
+              className="text-[11px] text-[#ffb4ab] hover:text-white px-3 py-2 sm:py-1.5 min-h-[36px] sm:min-h-0 rounded cursor-pointer"
             >
               Reset Area
             </button>

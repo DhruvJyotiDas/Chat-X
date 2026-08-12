@@ -150,7 +150,7 @@ export default function SupportView({ searchFilter }: SupportViewProps) {
                       <li key={item}>
                         <button
                           onClick={() => setSelectedQuestion(item)}
-                          className="text-left text-xs text-[#c2c6d8] hover:text-[#b0c6ff] hover:underline transition-all block truncate max-w-xs cursor-pointer py-0.5"
+                          className="text-left text-xs text-[#c2c6d8] hover:text-[#b0c6ff] hover:underline transition-all block truncate max-w-xs cursor-pointer py-2 sm:py-0.5 min-h-[32px] sm:min-h-0 flex items-center"
                         >
                           • {item}
                         </button>

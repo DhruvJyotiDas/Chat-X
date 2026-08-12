@@ -1,4 +1,5 @@
 import { useRef, useState, useCallback, useEffect } from 'react';
+import { TRANSCRIPTION_ENABLED } from '../lib/features';
 
 export interface TranscriptLine {
   id: string;
@@ -38,7 +39,7 @@ interface AudioPipeline {
 
 export function useSpeechTranscription(speakerName: string, remotePeers: RemotePeer[] = []) {
   const [isActive, setIsActive] = useState(false);
-  const [isSupported] = useState(() => !!(navigator.mediaDevices && window.AudioContext));
+  const [isSupported] = useState(() => TRANSCRIPTION_ENABLED && !!(navigator.mediaDevices && window.AudioContext));
   const [lines, setLines] = useState<TranscriptLine[]>([]);
   const [keyPoints, setKeyPoints] = useState<KeyPoint[]>([]);
 
@@ -144,7 +145,8 @@ export function useSpeechTranscription(speakerName: string, remotePeers: RemoteP
   }, [teardownPipeline]);
 
   const start = useCallback(async () => {
-    if (isActiveRef.current) return;
+    // Feature-flagged off (see src/lib/features.ts) — never open a mic or an /asr socket.
+    if (!TRANSCRIPTION_ENABLED || isActiveRef.current) return;
     try {
       const micStream = await navigator.mediaDevices.getUserMedia({
         audio: { sampleRate: SAMPLE_RATE, channelCount: 1, echoCancellation: true, noiseSuppression: true },
