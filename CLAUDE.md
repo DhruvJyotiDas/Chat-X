@@ -1024,3 +1024,31 @@ nothing in the stack could say so.**
   live socket via the `window.__sockets` trick, and assert on the reconnect. **10/10 against
   production.** A test that passes for the wrong reason is worse than no test.
 - Also verified: `_verify_multiparty_audio` 12/12 and `_verify_meeting_fixes` 20/20 on production.
+
+**2026-08-13, Virtual Interview — BUILT AND DEPLOYED (model not yet connected):**
+CV upload → parsing → GitHub enrichment → AI mock interview → scored report. The model
+(`Qwen3-Omni-30B-A3B-Instruct-AWQ-4bit`) runs on a **separate GPU VM that does not exist yet**, so
+this was built against a documented contract with a local mock — see `INTERVIEW_PLAN.md` and
+`gpu/CONTRACT.md`.
+- **Live now:** sidebar entry, CV upload, PDF/DOCX/text parsing, link + skill extraction, live
+  GitHub enrichment, session history. **`/api/interview/status` reports `configured:false`** and the
+  UI shows "AI interviewer not connected yet" instead of failing obscurely.
+- **To connect the GPU box:** set `INTERVIEW_GPU_URL` + `INTERVIEW_GPU_TOKEN` in
+  `/etc/ibconnect/env` and restart. Nothing else changes — implement `gpu/interview_server.py`
+  against `gpu/CONTRACT.md` on that machine and it drops in.
+- **No media in the database, by design.** Answer audio and JPEG frames go browser → Go → GPU →
+  discarded; only transcripts and scores persist. `_verify_interview.mjs` fails if any audio or
+  frame data appears in a stored session. Verified in production: **0 media-ish columns** across the
+  four new tables.
+- **No media containers anywhere.** Answers are 16 kHz mono WAV encoded in the browser plus sampled
+  JPEG stills, because neither this box nor the GPU box has `ffmpeg`. Same PCM approach as
+  `useSpeechTranscription.ts`.
+- **LinkedIn is linked, never scraped** (no public API, blocked, ToS). GitHub is enriched for real.
+- Interviewer voice uses the browser's `SpeechSynthesis`; `/v1/speak` exists in the contract and
+  answers `501` until Qwen3-Omni's Talker is available. Swappable with no UI change.
+- Verified: `_verify_interview.mjs` **17/17** against the mock, `_verify_interview_prod.mjs` **9/9**
+  against production (honest-degradation path), `_verify_multiparty_audio` **12/12** post-deploy.
+- **GOTCHA THAT BIT ME:** the throwaway test backend shares the PRODUCTION database, so building
+  against it wrote real rows into `interview_*`. Found 3 test profiles/sessions in production after
+  deploying and deleted them (`user-815ce7061367244d` / uitest1). **Check for test data before and
+  after any feature that writes new tables** — see `DEFERRED.md` B7 for why staging matters.
