@@ -1,4 +1,27 @@
+import {
+  diag, classifyDisconnect, reportSessionExpired, backoffDelay,
+} from './diagnostics';
+
 type EventHandler = (payload: unknown) => void;
+
+/**
+ * WebSocket close codes worth naming in logs. The code is very often the only
+ * clue about why a connection died, and `1006` in particular means "closed
+ * abnormally, no close frame" — i.e. the browser never completed a handshake or
+ * the connection was cut. A rejected handshake (401, 502, blocked by a proxy)
+ * shows up here as 1006 with no further detail, which is exactly why
+ * classifyDisconnect() has to ask over HTTP instead.
+ */
+const CLOSE_CODES: Record<number, string> = {
+  1000: 'normal',
+  1001: 'going away',
+  1005: 'no status',
+  1006: 'abnormal — handshake rejected, dropped, or blocked',
+  1011: 'server error',
+  1012: 'server restarting',
+  1013: 'try again later',
+  1015: 'TLS failure',
+};
 
 export class SignalingSocket {
   private ws: WebSocket | null = null;
@@ -7,6 +30,8 @@ export class SignalingSocket {
   private intentionalClose = false;
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   private onReconnect?: () => void;
+  private attempt = 0;
+  private openedAt = 0;
 
   constructor(url: string, onReconnect?: () => void) {
     this.url = url;
@@ -16,44 +41,82 @@ export class SignalingSocket {
   connect(): Promise<void> {
     this.intentionalClose = false;
     return new Promise((resolve, reject) => {
+      diag('signaling', 'info', 'connecting', { url: this.url, attempt: this.attempt });
+      let settled = false;
+
       this.ws = new WebSocket(this.url);
 
       this.ws.onopen = () => {
-        console.log('[SignalingSocket] connected');
+        this.openedAt = performance.now();
+        this.attempt = 0;
+        diag('signaling', 'info', 'connected');
+        settled = true;
         resolve();
       };
 
-      this.ws.onerror = (err) => {
-        console.error('[SignalingSocket] error', err);
-        reject(new Error('WebSocket connection failed'));
+      this.ws.onerror = () => {
+        // The event object carries nothing useful by design — no status, no
+        // reason. Logging it verbatim (as this used to) produces a wall of
+        // WebSocket internals that says nothing. onclose does the real work.
+        diag('signaling', 'warn', 'socket error (no detail available from the WebSocket API)');
+        if (!settled) { settled = true; reject(new Error('WebSocket connection failed')); }
       };
 
-      this.ws.onclose = () => {
-        console.log('[SignalingSocket] disconnected');
+      this.ws.onclose = (ev) => {
+        const heldMs = this.openedAt ? Math.round(performance.now() - this.openedAt) : 0;
+        this.openedAt = 0;
         this.ws = null;
-        if (!this.intentionalClose) {
-          this.reconnectTimer = setTimeout(() => {
-            console.log('[SignalingSocket] reconnecting…');
-            this.connect().then(() => this.onReconnect?.()).catch(() => {});
-          }, 3000);
-        }
+        diag('signaling', 'warn', 'disconnected', {
+          code: ev.code,
+          meaning: CLOSE_CODES[ev.code] ?? 'unspecified',
+          reason: ev.reason || '(none)',
+          wasClean: ev.wasClean,
+          heldOpenMs: heldMs,
+          intentional: this.intentionalClose,
+        });
+        if (!settled) { settled = true; reject(new Error('WebSocket closed before opening')); }
+        if (!this.intentionalClose) void this.scheduleReconnect();
       };
 
       this.ws.onmessage = (event) => {
         try {
           const msg = JSON.parse(event.data as string) as { type: string; payload: unknown };
           const handlers = this.handlers.get(msg.type);
-          if (handlers) {
-            handlers.forEach((h) => h(msg.payload));
-          }
+          if (handlers) handlers.forEach((h) => h(msg.payload));
         } catch (e) {
-          console.error('[SignalingSocket] parse error', e);
+          diag('signaling', 'error', 'message parse failed', { err: String(e) });
         }
       };
     });
   }
 
+  /**
+   * Reconnect, but first find out WHY we dropped. Retrying a dead session
+   * forever is what made a routine key rotation look like a server outage.
+   */
+  private async scheduleReconnect() {
+    const cause = await classifyDisconnect();
+    diag('signaling', cause === 'session-expired' ? 'error' : 'warn', 'disconnect classified', {
+      cause, attempt: this.attempt,
+    });
+
+    if (cause === 'session-expired') {
+      reportSessionExpired('signaling');
+      return; // deliberately do NOT reconnect — the token will never work again
+    }
+
+    const delay = backoffDelay(this.attempt);
+    this.attempt += 1;
+    diag('signaling', 'info', 'reconnect scheduled', { inMs: delay, attempt: this.attempt, cause });
+    this.reconnectTimer = setTimeout(() => {
+      this.connect()
+        .then(() => this.onReconnect?.())
+        .catch((e) => diag('signaling', 'warn', 'reconnect attempt failed', { err: String(e) }));
+    }, delay);
+  }
+
   disconnect() {
+    diag('signaling', 'info', 'closing (intentional)');
     this.intentionalClose = true;
     if (this.reconnectTimer) { clearTimeout(this.reconnectTimer); this.reconnectTimer = null; }
     this.ws?.close();
@@ -62,20 +125,18 @@ export class SignalingSocket {
 
   send(type: string, payload: unknown) {
     if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
-      console.warn('[SignalingSocket] not open, dropping:', type);
+      diag('signaling', 'warn', 'send dropped — socket not open', {
+        type, readyState: this.ws?.readyState ?? 'null',
+      });
       return;
     }
     this.ws.send(JSON.stringify({ type, payload }));
   }
 
   on(type: string, handler: EventHandler): () => void {
-    if (!this.handlers.has(type)) {
-      this.handlers.set(type, new Set());
-    }
+    if (!this.handlers.has(type)) this.handlers.set(type, new Set());
     this.handlers.get(type)!.add(handler);
-    return () => {
-      this.handlers.get(type)?.delete(handler);
-    };
+    return () => { this.handlers.get(type)?.delete(handler); };
   }
 
   get isOpen(): boolean {

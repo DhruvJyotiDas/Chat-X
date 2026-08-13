@@ -986,3 +986,41 @@ credentials were readable in it. All are now rotated and both apps are deployed.
   `systemctl restart` then silently re-launches the OLD binary. Caught it because
   `/api/turn-credentials` still 404'd. Always `stop` → replace → `start`, and verify with a
   request that only the new build can answer.
+
+**2026-08-13, WebSocket session-expiry handling + connection diagnostics (DEPLOYED):**
+Reported as "Firefox can't establish a connection to wss://…/chat-ws" plus an endless
+`reconnecting…` loop. **Root cause: the 2026-08-12 JWT rotation invalidated live sessions, and
+nothing in the stack could say so.**
+- `handleChatWS` correctly returned 401 — but **the WebSocket API deliberately hides handshake
+  status from JavaScript**, so the browser could only report a generic connection failure. A dead
+  session was indistinguishable from an unreachable host.
+- Both sockets then reconnected unconditionally every 3s **forever**
+  (`signalingSocket.ts` + the chat socket in `api.ts`); grep for `401|unauthorized|sessionExpired`
+  across both returned **zero hits**. This was never rotation-specific: `jwtExpiry` is 30 days, so
+  every user would eventually hit it.
+- **The single 401 that explained the whole incident existed ONLY in nginx's access log.**
+- **Fix:** new `src/lib/diagnostics.ts`. On a non-intentional close both sockets call
+  `classifyDisconnect()`, which probes `/api/auth/me` — where the status IS readable — and maps
+  401/403 → `session-expired`, 5xx → `server-down`, else `network`. A dead session calls
+  `reportSessionExpired()` (idempotent) → `AuthContext` clears the session and returns to sign-in
+  **instead of reconnecting**. Genuine network faults now use exponential backoff with jitter
+  (1s→30s) rather than a flat 3s forever.
+- **Every connection event is now recorded**: a 300-entry ring buffer, dumpable in any browser via
+  **`window.__ibDiag()`**, and shipped to `POST /api/client-events` which logs to the journal as
+  `[Client] <user>@<ip> <cat>/<level> +Nms <event> {detail}`. Server side also logs
+  `[ChatWS] AUTH REJECTED … expired | bad signature (key rotated?) | missing token`, and signaling
+  connect/disconnect now carry IP, user-agent, duration and room.
+- **Use `sendBeacon`, not `fetch`, for the flush.** A periodic fetch still in flight at page
+  teardown surfaces as `net::ERR_ABORTED` — telemetry manufacturing the exact false signal this
+  module exists to remove. Caught by `_verify_multiparty_audio` dropping to 11/12. sendBeacon can't
+  set headers, so the token rides in the body and the server falls back to it.
+- **Testing lesson worth keeping.** The first version of `_verify_session_expiry.mjs` set a stale
+  token *at page load* — and passed locally but failed 3 checks on production. Not flaky: on
+  production `AuthContext`'s mount-time `/api/auth/me` check wins the race and cleans up first, so
+  the socket close is marked `intentional` and classification never runs. Correct behaviour, wrong
+  assertion. **That was also not the reported scenario** — the user's page was already open and
+  authenticated, so no mount-time check ever re-ran. The suite now reproduces the real thing:
+  authenticate with a good token, swap localStorage to a stale one *without reloading*, sever the
+  live socket via the `window.__sockets` trick, and assert on the reconnect. **10/10 against
+  production.** A test that passes for the wrong reason is worse than no test.
+- Also verified: `_verify_multiparty_audio` 12/12 and `_verify_meeting_fixes` 20/20 on production.

@@ -1,6 +1,7 @@
 import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
 import { IBUser } from '../types';
 import { api, ApiUser } from '../lib/api';
+import { diag, onSessionExpired, resetSessionExpiry } from '../lib/diagnostics';
 
 interface AuthContextType {
   currentUser: IBUser | null;
@@ -69,6 +70,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   // "Continue with IB" flow's only entry point into a local session.
   const loginWithToken = useCallback((token: string, user: ApiUser): IBUser => {
     saveSession(token, user);
+    resetSessionExpiry();   // a new session may expire again later
+    diag('session', 'info', 'signed in', { userId: user.id });
     const ibUser = toIBUser(user);
     setCurrentUser(ibUser);
     api.getUsers().then(users => setAllUsers(users.map(toIBUser))).catch(() => {});
@@ -79,6 +82,19 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     clearSession();
     setCurrentUser(null);
     setAllUsers([]);
+  }, []);
+
+  // A WebSocket cannot tell JavaScript that its handshake was rejected with 401,
+  // so the sockets probe /api/auth/me and report here when the session is dead.
+  // Before this, an expired or rotated token produced an endless "reconnecting…"
+  // loop with no way for the user to understand they simply needed to sign in.
+  useEffect(() => {
+    onSessionExpired(() => {
+      diag('session', 'warn', 'clearing local session and returning to sign-in');
+      clearSession();
+      setCurrentUser(null);
+      setAllUsers([]);
+    });
   }, []);
 
   const updateProfile = useCallback(async (fields: { displayName?: string; bio?: string; avatar?: string }): Promise<IBUser> => {

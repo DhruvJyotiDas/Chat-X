@@ -1,4 +1,5 @@
 // Typed API client — all calls go to the Go backend
+import { diag, classifyDisconnect, reportSessionExpired, backoffDelay } from './diagnostics';
 
 const BASE = '/api';
 
@@ -154,22 +155,64 @@ export function connectChatWS(
   if (!jwt) return () => {};
 
   const proto = window.location.protocol === 'https:' ? 'wss' : 'ws';
+  // NOTE: the token travels in the query string, which means it is written in
+  // plaintext to nginx's access log on every connection. That is how the 401
+  // behind the 2026-08-12 incident was found — and also why anyone with log
+  // access holds replayable sessions. Moving this to a subprotocol header or a
+  // one-time ticket is tracked in DEFERRED.md.
   const url = `${proto}://${window.location.host}/chat-ws?token=${encodeURIComponent(jwt)}`;
   let ws: WebSocket | null = null;
   let closed = false;
+  let attempt = 0;
+  let openedAt = 0;
 
   const connect = () => {
+    diag('chat-ws', 'info', 'connecting', { attempt });
     ws = new WebSocket(url);
-    ws.onopen = () => { onWS?.(ws); };
+
+    ws.onopen = () => {
+      openedAt = performance.now();
+      attempt = 0;
+      diag('chat-ws', 'info', 'connected');
+      onWS?.(ws);
+    };
+
+    ws.onerror = () => {
+      diag('chat-ws', 'warn', 'socket error (no detail available from the WebSocket API)');
+    };
+
     ws.onmessage = (ev) => {
       try {
         const msg = JSON.parse(ev.data as string) as ChatWSEvent;
         onEvent(msg);
-      } catch {}
+      } catch (e) {
+        diag('chat-ws', 'error', 'message parse failed', { err: String(e) });
+      }
     };
-    ws.onclose = () => {
+
+    ws.onclose = async (ev) => {
+      const heldMs = openedAt ? Math.round(performance.now() - openedAt) : 0;
+      openedAt = 0;
       onWS?.(null);
-      if (!closed) setTimeout(connect, 3000); // auto-reconnect
+      diag('chat-ws', 'warn', 'disconnected', {
+        code: ev.code, reason: ev.reason || '(none)', wasClean: ev.wasClean,
+        heldOpenMs: heldMs, intentional: closed,
+      });
+      if (closed) return;
+
+      // A rejected handshake (401 for a dead token) reaches JS as a bare close
+      // with code 1006 and no detail, identical to an unreachable server. Ask
+      // over HTTP, where the status IS readable, before retrying forever.
+      const cause = await classifyDisconnect();
+      diag('chat-ws', cause === 'session-expired' ? 'error' : 'warn', 'disconnect classified', { cause });
+      if (cause === 'session-expired') {
+        reportSessionExpired('chat-ws');
+        return;
+      }
+      const delay = backoffDelay(attempt);
+      attempt += 1;
+      diag('chat-ws', 'info', 'reconnect scheduled', { inMs: delay, attempt, cause });
+      setTimeout(connect, delay);
     };
   };
 
@@ -177,6 +220,7 @@ export function connectChatWS(
 
   return () => {
     closed = true;
+    diag('chat-ws', 'info', 'closing (intentional)');
     ws?.close();
     onWS?.(null);
   };

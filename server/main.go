@@ -9,7 +9,9 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"log"
 	"math/big"
 	"net/http"
@@ -959,6 +961,24 @@ func handleMessages(w http.ResponseWriter, r *http.Request) {
 
 // ── Chat WebSocket ────────────────────────────────────────────────────────────
 
+// clientIP prefers X-Forwarded-For since every request arrives via nginx.
+func roomLabel(c *SigClient) string {
+	if c.room == nil {
+		return "(none)"
+	}
+	return c.room.id
+}
+
+func clientIP(r *http.Request) string {
+	if f := r.Header.Get("X-Forwarded-For"); f != "" {
+		if i := strings.IndexByte(f, ','); i > 0 {
+			return strings.TrimSpace(f[:i])
+		}
+		return strings.TrimSpace(f)
+	}
+	return r.RemoteAddr
+}
+
 func handleChatWS(w http.ResponseWriter, r *http.Request) {
 	token := r.URL.Query().Get("token")
 	if token == "" {
@@ -966,6 +986,21 @@ func handleChatWS(w http.ResponseWriter, r *http.Request) {
 	}
 	claims, err := parseToken(token)
 	if err != nil {
+		// Previously silent. The single 401 that explained the 2026-08-12
+		// incident existed ONLY in nginx's access log — the app logged nothing,
+		// and the browser cannot see a WebSocket handshake status at all. Log
+		// the reason (expired vs bad signature vs malformed) so an expired
+		// session is never again mistaken for the server being down.
+		reason := "malformed"
+		switch {
+		case token == "":
+			reason = "missing token"
+		case errors.Is(err, jwt.ErrTokenExpired):
+			reason = "expired"
+		case errors.Is(err, jwt.ErrTokenSignatureInvalid):
+			reason = "bad signature (key rotated?)"
+		}
+		log.Printf("[ChatWS] AUTH REJECTED from %s: %s (%v)", clientIP(r), reason, err)
 		http.Error(w, "unauthorized", 401)
 		return
 	}
@@ -1425,6 +1460,74 @@ func genCode() string {
 // Deliberately unauthenticated: guests join meetings by link without a session
 // (see PreJoinScreen), so requiring a JWT here would break guest calls. The
 // improvement is that credentials now expire, not that they are gated.
+
+// ─── Client-side diagnostics sink ────────────────────────────────────────────
+//
+// The 2026-08-10 call RCA and the 2026-08-12 session incident both failed on the
+// same gap: everything that actually goes wrong happens in the BROWSER — ICE
+// state, WebSocket handshake rejections, media errors — and none of it was ever
+// recorded anywhere. The browser cannot even see a WebSocket handshake status.
+//
+// This accepts connection-lifecycle events from the client and writes them to
+// the journal alongside the server's own view, so the two can be correlated.
+// Deliberately NOT stored in the database: this is operational telemetry with a
+// short useful life, and journald already has rotation and retention.
+//
+// Scope is connection metadata only — never message contents. Unauthenticated
+// because the most important events (a rejected session) happen precisely when
+// there is no valid token; the user id is taken from the token when present and
+// otherwise reported as anonymous.
+func handleClientEvents(w http.ResponseWriter, r *http.Request) {
+	if r.Method != "POST" {
+		fail(w, "Method not allowed", 405)
+		return
+	}
+	var body struct {
+		// Token fallback: sendBeacon cannot set an Authorization header, so the
+		// client includes it here. Header still wins when present.
+		Token  string `json:"token"`
+		Events []struct {
+			T      string         `json:"t"`
+			Since  int            `json:"since"`
+			Cat    string         `json:"cat"`
+			Level  string         `json:"level"`
+			Event  string         `json:"event"`
+			Detail map[string]any `json:"detail"`
+		} `json:"events"`
+	}
+	// Cap the body so this endpoint cannot be used to flood the journal.
+	if err := json.NewDecoder(io.LimitReader(r.Body, 256*1024)).Decode(&body); err != nil {
+		fail(w, "bad payload", 400)
+		return
+	}
+
+	who := "anon"
+	if uid, err := bearerUID(r); err == nil {
+		who = uid
+	} else if body.Token != "" {
+		if claims, err := parseToken(body.Token); err == nil {
+			who = claims.UserID
+		}
+	}
+	ip := clientIP(r)
+
+	const maxPerBatch = 100
+	for i, e := range body.Events {
+		if i >= maxPerBatch {
+			log.Printf("[Client] %s@%s — %d further events dropped (batch cap)", who, ip, len(body.Events)-maxPerBatch)
+			break
+		}
+		detail := ""
+		if len(e.Detail) > 0 {
+			if b, err := json.Marshal(e.Detail); err == nil {
+				detail = " " + string(b)
+			}
+		}
+		log.Printf("[Client] %s@%s %s/%s +%dms %s%s", who, ip, e.Cat, e.Level, e.Since, e.Event, detail)
+	}
+	w.WriteHeader(204)
+}
+
 func handleTurnCredentials(w http.ResponseWriter, r *http.Request) {
 	if r.Method != "GET" {
 		fail(w, "Method not allowed", 405)
@@ -1469,6 +1572,7 @@ func handleSignaling(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		return
 	}
+	connectedAt := time.Now()
 	client := &SigClient{
 		id:   "tmp-" + newID(),
 		conn: conn,
@@ -1476,7 +1580,7 @@ func handleSignaling(w http.ResponseWriter, r *http.Request) {
 		done: make(chan struct{}),
 	}
 	go client.writePump()
-	log.Printf("New signaling client: %s", client.id)
+	log.Printf("New signaling client: %s from %s ua=%q", client.id, clientIP(r), r.UserAgent())
 
 	// Keepalive, same reasoning as handleChatWS: a phone that sleeps, switches
 	// from wifi to cellular, or drops off the network never sends a close frame,
@@ -1495,7 +1599,8 @@ func handleSignaling(w http.ResponseWriter, r *http.Request) {
 		if client.room != nil {
 			leaveRoom(client)
 		}
-		log.Printf("Signaling client disconnected: %s (%s)", client.id, client.name)
+		log.Printf("Signaling client disconnected: %s (%s) after %s, room=%s",
+			client.id, client.name, time.Since(connectedAt).Round(time.Second), roomLabel(client))
 	}()
 	for {
 		_, data, err := conn.ReadMessage()
@@ -1711,6 +1816,7 @@ func main() {
 		if r.Method == "PUT" { handleUpdateMe(w, r) } else { handleMe(w, r) }
 	})
 	mux.HandleFunc("/api/turn-credentials", handleTurnCredentials)
+	mux.HandleFunc("/api/client-events", handleClientEvents)
 	mux.HandleFunc("/api/users", handleUsers)
 	mux.HandleFunc("/api/threads", handleThreads)
 	mux.HandleFunc("/api/threads/", handleMessages)
