@@ -1806,6 +1806,7 @@ func main() {
 	}
 	log.Println("[DB] connected to MariaDB")
 	migrate()
+	migrateInterview()
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/ws", handleSignaling)
@@ -1817,6 +1818,7 @@ func main() {
 	})
 	mux.HandleFunc("/api/turn-credentials", handleTurnCredentials)
 	mux.HandleFunc("/api/client-events", handleClientEvents)
+	mux.HandleFunc("/api/interview/", handleInterviewRoutes)
 	mux.HandleFunc("/api/users", handleUsers)
 	mux.HandleFunc("/api/threads", handleThreads)
 	mux.HandleFunc("/api/threads/", handleMessages)

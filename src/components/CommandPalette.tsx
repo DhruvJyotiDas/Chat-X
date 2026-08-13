@@ -2,7 +2,7 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   Search, LayoutDashboard, MessageSquare, Phone, Video, CalendarDays,
   ShieldCheck, HelpCircle, PlusCircle, CalendarPlus, Settings as SettingsIcon,
-  CornerDownLeft, ArrowUp, ArrowDown, Users,
+  CornerDownLeft, ArrowUp, ArrowDown, Users, Sparkles,
 } from 'lucide-react';
 import { AppView } from '../types';
 import { useAuth } from '../context/AuthContext';
@@ -75,6 +75,7 @@ export default function CommandPalette({ onNavigate, onJoinMeeting }: Props) {
       { id: 'nav-calls', section: 'Go to', label: 'Calls', Icon: Phone, run: () => { onNavigate('calls'); close(); } },
       { id: 'nav-debrief', section: 'Go to', label: 'Meetings', Icon: Video, run: () => { onNavigate('debrief'); close(); } },
       { id: 'nav-calendar', section: 'Go to', label: 'Calendar', Icon: CalendarDays, run: () => { onNavigate('calendar'); close(); } },
+      { id: 'nav-interview', section: 'Go to', label: 'Virtual Interview', Icon: Sparkles, run: () => { onNavigate('interview'); close(); } },
       { id: 'nav-security', section: 'Go to', label: 'Security', Icon: ShieldCheck, run: () => { onNavigate('security'); close(); } },
       { id: 'nav-support', section: 'Go to', label: 'Help & Support', Icon: HelpCircle, run: () => { onNavigate('support'); close(); } },
     ];

@@ -5,6 +5,7 @@ import {
   Users,
   Phone,
   Calendar,
+  Sparkles,
   ShieldCheck,
   HelpCircle,
   Settings,
@@ -32,6 +33,7 @@ const PRIMARY_NAV: NavItem[] = [
   { id: 'calls', name: 'Calls', Icon: Phone },
   { id: 'debrief', name: 'Meetings', Icon: Users },
   { id: 'calendar', name: 'Calendar', Icon: Calendar },
+  { id: 'interview', name: 'Interview', Icon: Sparkles },
 ];
 
 const UTILITY_NAV: NavItem[] = [

@@ -20,6 +20,7 @@ import SecurityView from './components/views/SecurityView';
 import SupportView from './components/views/SupportView';
 import CallsView from './components/views/CallsView';
 import CalendarView from './components/views/CalendarView';
+import InterviewView from './components/views/InterviewView';
 
 // Meeting
 import ActiveMeetingView from './components/meeting/ActiveMeetingView';
@@ -315,6 +316,7 @@ function AppContent({ pendingRoomCode }: { pendingRoomCode?: string }) {
               )}
 
               {effectiveView === 'calendar' && <CalendarView />}
+              {effectiveView === 'interview' && <InterviewView />}
 
               {effectiveView === 'security' && (
                 <SecurityView

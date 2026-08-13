@@ -22,6 +22,7 @@ const VIEW_INFO: Record<AppView, { title: string; subtitle: string; badge: strin
   calendar: { title: 'Calendar', subtitle: 'Schedule & Events', badge: 'PERSONAL' },
   security: { title: 'Security & Compliance', subtitle: 'Operational Integrity Console', badge: 'AES-256' },
   support: { title: 'Help & Support', subtitle: 'Intelligence Knowledge Center', badge: 'DEDICATED' },
+  interview: { title: 'Virtual Interview', subtitle: 'AI mock interviews from your CV', badge: 'AI COACH' },
 };
 
 export default function TopBar({ currentView, onViewChange, searchFilter, onSearchChange, onNewChatClicked }: TopBarProps) {
