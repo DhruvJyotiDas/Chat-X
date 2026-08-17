@@ -5,7 +5,7 @@ import {
   PhoneOff, MessageSquare, Send, X, Users, Copy, Check,
   MoreVertical, Volume2, Lightbulb, Tag, Hash, HelpCircle,
   Activity, Zap, Mic2, ChevronDown, Link, ChevronLeft, ChevronRight,
-  Pin, PinOff, Minimize2, ArrowLeft, AlertTriangle,
+  Pin, PinOff, Minimize2, ArrowLeft, AlertTriangle, Hand, Smile,
 } from 'lucide-react';
 import { useMeeting } from '../../context/MeetingContext';
 import { PeerInfo } from '../../hooks/useWebRTC';
@@ -13,11 +13,27 @@ import { useSpeechTranscription } from '../../hooks/useSpeechTranscription';
 import { useAuth } from '../../context/AuthContext';
 import { useGridLayout, computeTileSize } from '../../hooks/useGridLayout';
 import { useAudioLevels } from '../../hooks/useAudioLevels';
-import { usePagination } from '../../hooks/usePagination';
+import { usePagination, type Pagination } from '../../hooks/usePagination';
 import MeetingInviteDialog from './MeetingInviteDialog';
 import { TRANSCRIPTION_ENABLED } from '../../lib/features';
+import { registerAudioSink, isSpeakerSelectionSupported, setPreferredSpeaker } from '../../lib/audioOutput';
+import { watchDevices, resolveSelection, loadDevicePrefs, EMPTY_SNAPSHOT, type DeviceSnapshot } from '../../lib/devicePrefs';
+import { useConnectionQuality, type PeerLink } from '../../hooks/useConnectionQuality';
+import { useTileOrder } from '../../hooks/useTileOrder';
+import { useHasVideo } from '../../hooks/useHasVideo';
+import { useSilentMic } from '../../hooks/useSilentMic';
+import { useCallShortcuts, SHORTCUT_HINTS } from '../../hooks/useCallShortcuts';
+import { REACTIONS } from '../../lib/reactions';
+import type { LinkQuality } from '../../lib/connectionStats';
 
 export type BgMode = 'none' | 'blur' | 'blur-heavy' | 'color-dark' | 'color-space';
+
+/**
+ * A grid slot: either a remote peer or the local participant. Named explicitly because
+ * it flows through useMemo -> useTileOrder -> usePagination, and TypeScript will happily
+ * infer `unknown` for a union element type somewhere along that chain.
+ */
+type MeetingTile = PeerInfo | { id: string; name: string; isLocal: true };
 
 interface Props {
   onLeaveMeeting: () => void;
@@ -75,6 +91,12 @@ function PeerAudio({ peer }: { peer: PeerInfo }) {
 
   useEffect(() => { attach(ref.current); }, [attach]);
 
+  // Peers join and leave throughout a call, so each new element has to be pointed at
+  // the chosen speaker as it mounts — a device selected earlier cannot reach an
+  // element that did not exist yet, and the whole point of the picker is that it
+  // applies to everyone you can hear.
+  useEffect(() => registerAudioSink(ref.current), []);
+
   const ensurePlaying = () => {
     const el = ref.current;
     if (el && el.paused) playWhenAllowed(el);
@@ -89,6 +111,90 @@ function PeerAudio({ peer }: { peer: PeerInfo }) {
       onPause={ensurePlaying}
       style={{ display: 'none' }}
     />
+  );
+}
+
+// ─── Link quality badge ──────────────────────────────────────────────────────
+//
+// Three bars, filled according to the grade. Shown only when there is something worth
+// saying: a healthy link renders nothing at all. An indicator that is always lit is an
+// indicator nobody reads, and in a mesh call the useful signal is precisely the
+// exception — one peer's link degrading while everyone else's is fine.
+function QualityBadge({ quality, relayed }: { quality: LinkQuality; relayed: boolean }) {
+  if (quality === 'good' || quality === 'unknown') return null;
+
+  const bars = quality === 'fair' ? 2 : 1;
+  const colour = quality === 'fair' ? 'bg-[#fdd663]' : 'bg-[#f28b82]';
+  const label = quality === 'fair'
+    ? `Unstable connection${relayed ? ' (relayed)' : ''}`
+    : `Poor connection${relayed ? ' (relayed)' : ''}`;
+
+  return (
+    <div
+      className="flex items-end gap-[2px] h-3 px-1.5 py-1 rounded-md bg-black/60 backdrop-blur-sm"
+      title={label}
+      aria-label={label}
+      role="img"
+    >
+      {[0, 1, 2].map((i) => (
+        <span
+          key={i}
+          className={`w-[3px] rounded-sm ${i < bars ? colour : 'bg-[#5f6368]'}`}
+          style={{ height: `${4 + i * 3}px` }}
+        />
+      ))}
+    </div>
+  );
+}
+
+// ─── Floating reactions ──────────────────────────────────────────────────────
+//
+// Rendered once for the whole call rather than per tile: a reaction belongs to the
+// room, and in a paginated grid the sender's tile may not even be on screen — tying
+// the animation to a tile would make reactions randomly invisible.
+function ReactionOverlay({ reactions }: { reactions: { id: string; emoji: string; peerName: string; lane: number }[] }) {
+  if (reactions.length === 0) return null;
+  return (
+    <div className="pointer-events-none absolute inset-0 overflow-hidden z-[60]" aria-live="polite" aria-atomic="false">
+      {reactions.map((r) => (
+        <div
+          key={r.id}
+          className="absolute bottom-4 flex flex-col items-center gap-1 ib-reaction-rise"
+          style={{ left: `${8 + r.lane * 76}%` }}
+        >
+          <span className="text-3xl md:text-5xl drop-shadow-lg">{r.emoji}</span>
+          <span className="text-[10px] font-semibold text-white bg-black/60 rounded-full px-2 py-0.5 whitespace-nowrap">
+            {r.peerName}
+          </span>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+// ─── Reaction picker ─────────────────────────────────────────────────────────
+
+function ReactionBar({ onPick, onClose }: { onPick: (emoji: string) => void; onClose: () => void }) {
+  return (
+    // Eight 40px targets plus padding come to 366px, which overflows a 360px phone.
+    // Tighter on mobile — 36px is still at the tap-target minimum used elsewhere in
+    // this file — and wrapping as a last resort rather than spilling off screen.
+    <div
+      className="absolute bottom-20 left-1/2 -translate-x-1/2 flex flex-wrap justify-center items-center gap-1 p-1.5 md:p-2 rounded-2xl bg-[#202124] border border-[#5f6368] shadow-2xl z-30 max-w-[92vw]"
+      role="group"
+      aria-label="Send a reaction"
+    >
+      {REACTIONS.map((emoji) => (
+        <button
+          key={emoji}
+          onClick={() => { onPick(emoji); onClose(); }}
+          className="w-9 h-9 md:w-10 md:h-10 flex items-center justify-center rounded-xl text-lg md:text-xl hover:bg-[#3c4043] active:scale-90 transition-all cursor-pointer"
+          aria-label={`React with ${emoji}`}
+        >
+          {emoji}
+        </button>
+      ))}
+    </div>
   );
 }
 
@@ -296,6 +402,11 @@ function RemoteTile({ peer }: { peer: PeerInfo }) {
     if (vid && vid.paused) playWhenAllowed(vid);
   };
 
+  // A peer who turns their camera off still has a stream — it carries their audio —
+  // so `!peer.stream` alone never caught it. The <video> kept the last decoded frame
+  // painted, which looked exactly like a frozen connection.
+  const hasVideo = useHasVideo(peer.stream);
+
   if (!peer.stream) {
     return (
       <div className="w-full h-full flex flex-col items-center justify-center bg-[#202124]">
@@ -309,20 +420,37 @@ function RemoteTile({ peer }: { peer: PeerInfo }) {
   }
 
   return (
-    <video
-      ref={attach}
-      autoPlay
-      playsInline
-      // Video only — this peer's audio comes out of the persistent <PeerAudio>
-      // mounted outside the grid, so it keeps playing when this tile is on
-      // another page, in the carousel, or unmounted by a layout switch.
-      muted
-      onLoadedMetadata={ensurePlaying}
-      onCanPlay={ensurePlaying}
-      onPause={ensurePlaying}
-      style={{ willChange: 'transform' }}
-      className="w-full h-full object-cover"
-    />
+    <>
+      <video
+        ref={attach}
+        autoPlay
+        playsInline
+        // Video only — this peer's audio comes out of the persistent <PeerAudio>
+        // mounted outside the grid, so it keeps playing when this tile is on
+        // another page, in the carousel, or unmounted by a layout switch.
+        muted
+        onLoadedMetadata={ensurePlaying}
+        onCanPlay={ensurePlaying}
+        onPause={ensurePlaying}
+        style={{ willChange: 'transform' }}
+        className={`w-full h-full object-cover ${hasVideo ? '' : 'invisible'}`}
+      />
+      {/* Covers the element rather than replacing it: unmounting the <video> would
+          drop the srcObject, so turning the camera back on would have to re-attach and
+          re-negotiate autoplay. Keeping it mounted and hidden means the picture returns
+          the instant frames do. Deliberately worded and styled apart from "Connecting…"
+          — a camera that is off is a choice, not a fault. */}
+      {!hasVideo && (
+        <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 bg-[#202124]">
+          <div className="w-14 h-14 md:w-16 md:h-16 rounded-full bg-[#c0c1ff]/10 flex items-center justify-center border border-[#c0c1ff]/20">
+            <span className="text-xl md:text-2xl font-bold text-[#c0c1ff]">{peer.name.charAt(0).toUpperCase()}</span>
+          </div>
+          <span className="text-[9px] md:text-[10px] text-[#9aa0a6] flex items-center gap-1">
+            <VideoOff className="w-3 h-3" />Camera off
+          </span>
+        </div>
+      )}
+    </>
   );
 }
 
@@ -422,11 +550,16 @@ interface ParticipantTileProps {
   onToggleFocus: () => void;
   /** Carousel tiles shrink their badges/controls so they stay legible when small. */
   compact?: boolean;
+  /** Grade of *our* link to this peer, from getStats(). Absent for the local tile. */
+  quality?: LinkQuality;
+  relayed?: boolean;
+  handRaised?: boolean;
 }
 
 function ParticipantTile({
   name, isLocal, localStream, peer, isVideoOff, isMuted, bgMode,
   isSpeaking, isPresenting, isFocused, onToggleFocus, compact = false,
+  quality = 'unknown', relayed = false, handRaised = false,
 }: ParticipantTileProps) {
   return (
     <div
@@ -448,7 +581,24 @@ function ParticipantTile({
         {isPresenting && <ScreenShare className={`${compact ? 'w-2.5 h-2.5' : 'w-3 h-3'} text-[#8ab4f8] shrink-0`} />}
         {isLocal && isMuted && <MicOff className={`${compact ? 'w-2.5 h-2.5' : 'w-3 h-3'} text-[#f28b82] shrink-0`} />}
         <span className="truncate">{name}</span>
+        {!isLocal && <QualityBadge quality={quality} relayed={relayed} />}
       </div>
+
+      {/* A raised hand has to be visible on the tile, not only in the roster — in a
+          call big enough for someone to need the button, nobody has the People panel
+          open. Positioned left so it never collides with the pin control. */}
+      {handRaised && (
+        <div
+          className={`absolute rounded-lg bg-[#fdd663] text-[#202124] shadow-lg flex items-center justify-center ${
+            compact ? 'top-1 left-1 w-5 h-5' : 'top-1.5 left-1.5 md:top-2 md:left-2 w-7 h-7'
+          }`}
+          title={`${name} has their hand raised`}
+          aria-label={`${name} has their hand raised`}
+          role="img"
+        >
+          <Hand className={compact ? 'w-3 h-3' : 'w-4 h-4'} />
+        </div>
+      )}
 
       {/* Pin/unpin. Keyboard-reachable always; revealed on hover for pointer users. */}
       <button
@@ -507,23 +657,24 @@ function DeviceSelect({ label, Icon, devices, selected, onChange }: {
 
 function SettingsPanel({
   bgMode, onBgChange, videoDevices, audioDevices, outputDevices,
-  selectedCamera, selectedMic, selectedSpeaker,
+  selectedCamera, selectedMic, selectedSpeaker, speakerSelectable,
   onCameraChange, onMicChange, onSpeakerChange, onClose,
 }: {
   bgMode: BgMode; onBgChange: (m: BgMode) => void;
   videoDevices: MediaDeviceInfo[]; audioDevices: MediaDeviceInfo[]; outputDevices: MediaDeviceInfo[];
   selectedCamera: string; selectedMic: string; selectedSpeaker: string;
+  speakerSelectable: boolean;
   onCameraChange: (id: string) => void; onMicChange: (id: string) => void; onSpeakerChange: (id: string) => void;
   onClose: () => void;
 }) {
-  const [tab, setTab] = useState<'bg' | 'devices'>('bg');
+  const [tab, setTab] = useState<'bg' | 'devices' | 'keys'>('bg');
   return (
     <div className="absolute bottom-20 right-4 w-[90vw] md:w-72 max-w-sm bg-[#202124] border border-[#5f6368] rounded-2xl shadow-2xl z-30 overflow-hidden">
       <div className="flex items-center justify-between px-4 py-3 border-b border-[#3c4043]">
         <div className="flex gap-1">
-          {(['bg', 'devices'] as const).map(t => (
+          {(['bg', 'devices', 'keys'] as const).map(t => (
             <button key={t} onClick={() => setTab(t)} className={`px-3 py-1 rounded-lg text-xs font-semibold transition-colors ${tab === t ? 'bg-[#8ab4f8]/20 text-[#8ab4f8]' : 'text-[#9aa0a6] hover:text-[#e8eaed]'}`}>
-              {t === 'bg' ? 'Backgrounds' : 'Devices'}
+              {t === 'bg' ? 'Backgrounds' : t === 'devices' ? 'Devices' : 'Shortcuts'}
             </button>
           ))}
         </div>
@@ -551,7 +702,29 @@ function SettingsPanel({
           <div className="flex flex-col gap-4">
             <DeviceSelect label="Camera"   Icon={Video}   devices={videoDevices}  selected={selectedCamera}  onChange={onCameraChange} />
             <DeviceSelect label="Mic"      Icon={Mic}     devices={audioDevices}  selected={selectedMic}     onChange={onMicChange} />
-            <DeviceSelect label="Speaker"  Icon={Volume2} devices={outputDevices} selected={selectedSpeaker} onChange={onSpeakerChange} />
+            {/* Safari has no setSinkId and Firefox only shipped it recently. Hiding the
+                control is the honest fallback — leaving it visible and inert is exactly
+                the bug this replaced. */}
+            {speakerSelectable ? (
+              <DeviceSelect label="Speaker" Icon={Volume2} devices={outputDevices} selected={selectedSpeaker} onChange={onSpeakerChange} />
+            ) : (
+              <div className="flex flex-col gap-1">
+                <span className="text-[10px] text-[#9aa0a6] uppercase font-bold tracking-wider">Speaker</span>
+                <p className="text-[11px] text-[#9aa0a6] leading-snug">
+                  This browser can't choose an output device. Pick your speaker in the operating system's sound settings.
+                </p>
+              </div>
+            )}
+          </div>
+        )}
+        {tab === 'keys' && (
+          <div className="flex flex-col gap-2">
+            {SHORTCUT_HINTS.map((s) => (
+              <div key={s.keys} className="flex items-center justify-between gap-3">
+                <span className="text-xs text-[#e8eaed]">{s.action}</span>
+                <kbd className="px-2 py-0.5 rounded-md bg-[#3c4043] border border-[#5f6368] text-[10px] font-mono text-[#9aa0a6] whitespace-nowrap">{s.keys}</kbd>
+              </div>
+            ))}
           </div>
         )}
       </div>
@@ -564,11 +737,13 @@ function SettingsPanel({
 
 function RightPanel({
   tab, onTabChange, chatMessages, onSend, peers, userName, isMuted, onClose,
+  links, raisedHands, isHandRaised,
   transcribing, speechSupported, startTranscription, stopTranscription, transcriptLines, keyPoints, transcriptEndRef
 }: {
   tab: 'chat' | 'people' | 'transcript'; onTabChange: (t: 'chat' | 'people' | 'transcript') => void;
   chatMessages: { id: string; fromId: string; fromName: string; text: string; time: string; isSelf: boolean }[];
   onSend: (text: string) => void; peers: PeerInfo[]; userName: string; isMuted: boolean; onClose: () => void;
+  links: ReadonlyMap<string, PeerLink>; raisedHands: ReadonlySet<string>; isHandRaised: boolean;
   transcribing: boolean; speechSupported: boolean; startTranscription: () => void; stopTranscription: () => void;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   transcriptLines: any[]; keyPoints: any[]; transcriptEndRef: React.RefObject<HTMLDivElement>;
@@ -636,19 +811,33 @@ function RightPanel({
             <div className="flex-1 min-w-0">
               <p className="text-[11px] md:text-xs font-semibold text-[#e8eaed] truncate">{userName} <span className="text-[9px] text-[#8ab4f8]">(you)</span></p>
             </div>
+            {isHandRaised && <Hand className="w-3 h-3 text-[#fdd663] shrink-0" aria-label="Your hand is raised" />}
             {isMuted && <MicOff className="w-3 h-3 text-[#f28b82] shrink-0" />}
           </div>
-          {peers.map((peer) => (
+          {peers.map((peer) => {
+            const link = links.get(peer.id);
+            return (
             <div key={peer.id} className="flex items-center gap-3 p-2 md:p-2.5 rounded-xl hover:bg-[#3c4043] transition-colors">
               <div className="w-8 h-8 md:w-9 md:h-9 rounded-full bg-[#81c995]/10 flex items-center justify-center shrink-0 border border-[#81c995]/20">
                 <span className="text-xs md:text-sm font-bold text-[#81c995]">{peer.name.charAt(0).toUpperCase()}</span>
               </div>
               <div className="flex-1 min-w-0">
                 <p className="text-[11px] md:text-xs font-semibold text-[#e8eaed] truncate">{peer.name}</p>
-                <p className="text-[9px] text-[#81c995]">{peer.stream ? 'Connected' : 'Connecting…'}</p>
+                {/* The roster is where a connection problem should be diagnosable, so
+                    unlike the tile badge this spells out the path rather than only
+                    grading it — "relayed" is the answer to "why is this call bad on
+                    the college wifi but fine at home". */}
+                <p className="text-[9px] text-[#81c995]">
+                  {peer.stream ? 'Connected' : 'Connecting…'}
+                  {link?.stats?.rttMs !== undefined && <span className="text-[#9aa0a6]"> · {link.stats.rttMs} ms</span>}
+                  {link?.stats?.relayed && <span className="text-[#9aa0a6]"> · relayed</span>}
+                </p>
               </div>
+              {raisedHands.has(peer.id) && <Hand className="w-3 h-3 text-[#fdd663] shrink-0" aria-label={`${peer.name} has their hand raised`} />}
+              {link && <QualityBadge quality={link.quality} relayed={!!link.stats?.relayed} />}
             </div>
-          ))}
+            );
+          })}
         </div>
       )}
 
@@ -692,7 +881,37 @@ const KP_COLORS: Record<string, string> = {
 };
 
 export default function ActiveMeetingView({ onLeaveMeeting, onMinimize }: Props) {
-  const { user, roomId, localStream, peers, isMuted, isVideoOff, isScreenSharing, screenStream, screenPeers, toggleMic, toggleCamera, toggleScreenShare, switchCamera, switchMic, leaveMeeting, chatMessages, sendChatMessage, showInviteDialog, dismissInviteDialog, mediaNotice, dismissMediaNotice } = useMeeting();
+  const { user, roomId, localStream, peers, isMuted, isVideoOff, isScreenSharing, screenStream, screenPeers, toggleMic, setMicMuted, toggleCamera, toggleScreenShare, switchCamera, switchMic, leaveMeeting, chatMessages, sendChatMessage, showInviteDialog, dismissInviteDialog, mediaNotice, dismissMediaNotice, getPeerConnections, reactions, sendReaction, raisedHands, isHandRaised, toggleHand } = useMeeting();
+
+  // Per-peer link grades, read from getStats(). Nothing in the app used to call
+  // getStats() at all, so a degraded call produced no client-side evidence whatsoever.
+  const links = useConnectionQuality(getPeerConnections, peers.length > 0);
+
+  // Only watch for a dead microphone while the user believes it is live — a muted
+  // track is legitimately silent and warning about it would be nonsense.
+  const silentMic = useSilentMic(localStream, !isMuted);
+
+  // Whether holding space actually opened the mic. Without this, pressing space while
+  // *already* unmuted is a no-op on the way down but still mutes on the way up — so
+  // the shortcut would silently mute people who were mid-sentence.
+  const pttEngagedRef = useRef(false);
+
+  useCallShortcuts({
+    toggleMic,
+    toggleCamera: () => { void toggleCamera(); },
+    toggleHand,
+    setPushToTalk: (talking) => {
+      if (talking) {
+        if (!isMuted) return;
+        pttEngagedRef.current = true;
+        setMicMuted(false);
+      } else {
+        if (!pttEngagedRef.current) return;
+        pttEngagedRef.current = false;
+        setMicMuted(true);
+      }
+    },
+  }, true);
   const { currentUser } = useAuth();
   const displayName = currentUser?.displayName ?? user.name;
 
@@ -706,30 +925,33 @@ export default function ActiveMeetingView({ onLeaveMeeting, onMinimize }: Props)
   // on every desktop call and was part of why 2-3 person layouts looked cramped/stacked.)
   const [rightOpen, setRightOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [reactionBarOpen, setReactionBarOpen] = useState(false);
+  const [moreOpen, setMoreOpen] = useState(false);
   const [codeCopied, setCodeCopied] = useState(false);
   const [linkCopied, setLinkCopied] = useState(false);
 
-  const [videoDevices, setVideoDevices] = useState<MediaDeviceInfo[]>([]);
-  const [audioDevices, setAudioDevices] = useState<MediaDeviceInfo[]>([]);
-  const [outputDevices, setOutputDevices] = useState<MediaDeviceInfo[]>([]);
-  const [selectedCamera, setSelectedCamera] = useState('');
-  const [selectedMic, setSelectedMic] = useState('');
-  const [selectedSpeaker, setSelectedSpeaker] = useState('');
+  // Device list used to be fetched once, lazily, only when the settings sheet opened,
+  // and nothing listened for `devicechange` — so plugging in a headset mid-call did
+  // nothing until you reopened settings, and unplugging one left a dead entry showing
+  // as selected. Subscribe for the whole call instead.
+  const [devices, setDevices] = useState<DeviceSnapshot>(EMPTY_SNAPSHOT);
+  useEffect(() => watchDevices(setDevices), []);
 
-  useEffect(() => {
-    if (!settingsOpen) return;
-    navigator.mediaDevices.enumerateDevices().then((devices) => {
-      const vid = devices.filter(d => d.kind === 'videoinput');
-      const aud = devices.filter(d => d.kind === 'audioinput');
-      const out = devices.filter(d => d.kind === 'audiooutput');
-      setVideoDevices(vid);
-      setAudioDevices(aud);
-      setOutputDevices(out);
-      if (!selectedCamera && vid[0]) setSelectedCamera(vid[0].deviceId);
-      if (!selectedMic && aud[0]) setSelectedMic(aud[0].deviceId);
-      if (!selectedSpeaker && out[0]) setSelectedSpeaker(out[0].deviceId);
-    }).catch(() => {});
-  }, [settingsOpen, selectedCamera, selectedMic, selectedSpeaker]);
+  // Selections start from what this browser used last time rather than from whatever
+  // happens to be first in the enumeration order.
+  const [savedPrefs] = useState(loadDevicePrefs);
+  const [selectedCamera, setSelectedCamera] = useState(savedPrefs.cameraId);
+  const [selectedMic, setSelectedMic] = useState(savedPrefs.micId);
+  const [selectedSpeaker, setSelectedSpeaker] = useState(savedPrefs.speakerId);
+
+  // A saved id that is no longer present must not be rendered as the current value:
+  // the <select> would silently display its first option while the app still believed
+  // the saved device was in use, so the label and the actual routing would disagree.
+  const shownCamera = resolveSelection(selectedCamera, devices.videoDevices);
+  const shownMic = resolveSelection(selectedMic, devices.audioDevices);
+  const shownSpeaker = resolveSelection(selectedSpeaker, devices.outputDevices);
+
+  const speakerSelectable = useMemo(isSpeakerSelectionSupported, []);
 
   const transcriptEndRef = useRef<HTMLDivElement>(null);
   const transcriptEndDesktopRef = useRef<HTMLDivElement>(null);
@@ -751,6 +973,63 @@ export default function ActiveMeetingView({ onLeaveMeeting, onMinimize }: Props)
     setRightOpen(true);
   }, [dismissInviteDialog]);
 
+  // ── Control bar composition ────────────────────────────────────────────────
+  //
+  // Adding raise-hand and reactions pushed the bar past the width of a phone: at
+  // 390px the last buttons ended up outside the viewport, scrollable in principle
+  // but unreachable in practice. Rather than branch on breakpoints inside one long
+  // block of JSX, the secondary actions are declared once as data and rendered two
+  // ways — inline on desktop, inside a labelled sheet behind "More" on mobile.
+  // This is the split suitenumerique/meet makes with DesktopControlBar and
+  // MobileControlBar, and it is why their equivalent file is a third of the size.
+  const secondaryActions = useMemo(() => {
+    const actions: {
+      key: string; label: string; Icon: React.FC<{ className?: string }>;
+      onClick: () => void; active?: boolean; badge?: boolean;
+    }[] = [
+      {
+        key: 'screen', label: isScreenSharing ? 'Stop sharing' : 'Share screen',
+        Icon: isScreenSharing ? ScreenShareOff : ScreenShare,
+        onClick: () => { void toggleScreenShare(); }, active: isScreenSharing,
+      },
+      {
+        key: 'hand', label: isHandRaised ? 'Lower hand' : 'Raise hand', Icon: Hand,
+        onClick: toggleHand, active: isHandRaised,
+      },
+      {
+        key: 'reactions', label: 'Send a reaction', Icon: Smile,
+        onClick: () => { setReactionBarOpen((v) => !v); setSettingsOpen(false); }, active: reactionBarOpen,
+      },
+      {
+        key: 'chat', label: 'Chat', Icon: MessageSquare,
+        onClick: () => { setRightTab('chat'); setRightOpen((v) => !v); },
+        active: rightOpen && rightTab === 'chat',
+        badge: chatMessages.length > 0 && !(rightOpen && rightTab === 'chat'),
+      },
+      {
+        key: 'people', label: 'People', Icon: Users,
+        onClick: () => { setRightTab('people'); setRightOpen((v) => !v); },
+        active: rightOpen && rightTab === 'people',
+      },
+    ];
+    if (TRANSCRIPTION_ENABLED) {
+      actions.push({
+        key: 'transcript', label: 'Transcript', Icon: Activity,
+        onClick: () => { setRightTab('transcript'); setRightOpen((v) => !v); },
+        active: rightOpen && rightTab === 'transcript',
+      });
+    }
+    if (onMinimize) {
+      actions.push({ key: 'minimise', label: 'Minimise call', Icon: Minimize2, onClick: onMinimize });
+    }
+    actions.push({
+      key: 'settings', label: 'Settings', Icon: MoreVertical,
+      onClick: () => { setSettingsOpen((v) => !v); setReactionBarOpen(false); }, active: settingsOpen,
+    });
+    return actions;
+  }, [isScreenSharing, toggleScreenShare, isHandRaised, toggleHand, reactionBarOpen,
+      rightOpen, rightTab, chatMessages.length, onMinimize, settingsOpen]);
+
   const copyCode = useCallback(() => {
     if (!roomId) return;
     navigator.clipboard.writeText(roomId).then(() => {
@@ -765,7 +1044,12 @@ export default function ActiveMeetingView({ onLeaveMeeting, onMinimize }: Props)
     });
   }, [roomId]);
 
-  const tiles = [...peers, { id: user.id, name: displayName, isLocal: true as const }];
+  // Memoised: `useTileOrder` keys off this array, so a fresh identity every render
+  // would recompute the ordering constantly and defeat its own stability pass.
+  const tiles = useMemo<MeetingTile[]>(
+    () => [...peers, { id: user.id, name: displayName, isLocal: true as const }],
+    [peers, user.id, displayName],
+  );
 
   // Screen shares render in a dedicated spotlight area (object-contain, never cropped)
   // instead of replacing anyone's camera tile — camera keeps streaming the whole time.
@@ -774,6 +1058,73 @@ export default function ActiveMeetingView({ onLeaveMeeting, onMinimize }: Props)
     ...screenPeers.map((p) => ({ id: p.id, name: p.name, stream: p.stream })),
   ];
   const sharingPeerIds = new Set(screenPeers.map((p) => p.id));
+
+  // Client-side active-speaker detection (mesh WebRTC has no SFU to compute this for us —
+  // see src/hooks/useAudioLevels.ts). Feeds the highlight ring AND the tile ordering
+  // below; note it covers every peer, not only the rendered ones, which is what makes
+  // ranking off-page speakers possible without a server.
+  const audioLevelSources = useMemo(
+    () => [
+      { id: user.id, stream: localStream },
+      ...peers.map((p) => ({ id: p.id, stream: p.stream })),
+    ],
+    [user.id, localStream, peers],
+  );
+  const speakingIds = useAudioLevels(audioLevelSources);
+
+  // Container-size + orientation aware grid (see src/lib/gridLayout.ts), replacing the old
+  // tile-count-only breakpoint table — a wide desktop window and a narrow phone no longer
+  // get forced into the same rows/cols just because they both have e.g. 4 tiles.
+  const { ref: gridRef, layout: gridLayout, size: gridSize } = useGridLayout(tiles.length);
+  const gridGap = gridSize.width >= 768 ? 12 : 8;
+  const tileSize = computeTileSize(gridSize, gridLayout, gridGap);
+
+  // ── Who gets a visible slot ────────────────────────────────────────────────
+  //
+  // Tile order used to be `[...peers, local]` — signalling arrival order — so in any
+  // call big enough to paginate, whether you could see someone came down to when they
+  // joined, and a person speaking on page 2 was invisible. `useTileOrder` ranks by
+  // presenting / speaking / recently spoke and swaps hidden speakers into the page you
+  // are looking at, keeping every already-visible tile where it is. See src/lib/tileOrder.ts
+  // for why the naive "just sort by who is talking" is worse than doing nothing.
+  //
+  // The page number is read from a ref rather than straight from `gridPagination`,
+  // because pagination consumes the ordered list and would otherwise be a cycle. One
+  // render of lag after a manual page change is invisible: paging is a user action and
+  // the order settles on the very next render.
+  const pageRef = useRef(0);
+  const orderable = useMemo(
+    () => tiles.map((t) => ({
+      id: t.id,
+      isLocal: 'isLocal' in t,
+      isPresenting: 'isLocal' in t ? isScreenSharing : sharingPeerIds.has(t.id),
+      hasVideo: 'isLocal' in t ? !isVideoOff : !!(t as PeerInfo).stream?.getVideoTracks().length,
+    })),
+    [tiles, isScreenSharing, sharingPeerIds, isVideoOff],
+  );
+  const orderedIds = useTileOrder(orderable, speakingIds, gridLayout.maxTiles, pageRef.current);
+  const orderedTiles = useMemo<MeetingTile[]>(() => {
+    // Explicit generic: with a union element type TS will not infer the [K, V] tuple
+    // from `.map`, and the Map silently degrades to Map<unknown, unknown> — which then
+    // makes every tile downstream `unknown`.
+    const byId = new Map<string, MeetingTile>(tiles.map((t) => [t.id, t]));
+    // Anything the ordering did not place (it cannot happen, but a dropped tile would
+    // be an invisible participant) is appended rather than lost.
+    const placed: MeetingTile[] = [];
+    for (const id of orderedIds) {
+      const t = byId.get(id);
+      if (t) placed.push(t);
+    }
+    const seen = new Set(placed.map((t) => t.id));
+    return [...placed, ...tiles.filter((t) => !seen.has(t.id))];
+  }, [orderedIds, tiles]);
+
+  // A layout picked for a small/cramped container can have maxTiles < tiles.length (e.g. a
+  // narrow phone stepping down to a 2-tile layout for a 4-person call) — paginate instead of
+  // silently dropping tiles that have nowhere to render. Same fix Meet's own <GridLayout>
+  // applies on top of `selectGridLayout` (see src/hooks/usePagination.ts).
+  const gridPagination: Pagination<MeetingTile> = usePagination(gridLayout.maxTiles, orderedTiles);
+  useEffect(() => { pageRef.current = gridPagination.currentPage; }, [gridPagination.currentPage]);
 
   // ── Focus (spotlight) state ────────────────────────────────────────────────
   // Mirrors LiveKit Meet's FocusLayout: at most one thing occupies the main stage
@@ -813,31 +1164,8 @@ export default function ActiveMeetingView({ onLeaveMeeting, onMinimize }: Props)
   // Everything not on the main stage. Other people's screen shares stay visible in
   // the carousel rather than disappearing when a second person starts presenting.
   const carouselScreens = activeScreens.filter((s) => s.id !== focusedScreen?.id);
-  const carouselTiles = tiles.filter((t) => t.id !== focusedTile?.id);
+  const carouselTiles = orderedTiles.filter((t) => t.id !== focusedTile?.id);
 
-  // Container-size + orientation aware grid (see src/lib/gridLayout.ts), replacing the old
-  // tile-count-only breakpoint table — a wide desktop window and a narrow phone no longer
-  // get forced into the same rows/cols just because they both have e.g. 4 tiles.
-  const { ref: gridRef, layout: gridLayout, size: gridSize } = useGridLayout(tiles.length);
-  const gridGap = gridSize.width >= 768 ? 12 : 8;
-  const tileSize = computeTileSize(gridSize, gridLayout, gridGap);
-
-  // A layout picked for a small/cramped container can have maxTiles < tiles.length (e.g. a
-  // narrow phone stepping down to a 2-tile layout for a 4-person call) — paginate instead of
-  // silently dropping tiles that have nowhere to render. Same fix Meet's own <GridLayout>
-  // applies on top of `selectGridLayout` (see src/hooks/usePagination.ts).
-  const gridPagination = usePagination(gridLayout.maxTiles, tiles);
-
-  // Client-side active-speaker detection (mesh WebRTC has no SFU to compute this for us —
-  // see src/hooks/useAudioLevels.ts). Feeds a highlight ring on whoever is currently talking.
-  const audioLevelSources = useMemo(
-    () => [
-      { id: user.id, stream: localStream },
-      ...peers.map((p) => ({ id: p.id, stream: p.stream })),
-    ],
-    [user.id, localStream, peers],
-  );
-  const speakingIds = useAudioLevels(audioLevelSources);
 
   const meetingContent = (
     <div className="fixed inset-0 z-[9999] flex flex-col lg:flex-row bg-[#111] overflow-hidden select-none text-[#e8eaed]">
@@ -861,6 +1189,30 @@ export default function ActiveMeetingView({ onLeaveMeeting, onMinimize }: Props)
             onClick={dismissMediaNotice}
             aria-label="Dismiss"
             className="shrink-0 w-7 h-7 -mt-0.5 -mr-1 rounded-lg flex items-center justify-center text-[#f6d5d2]/70 hover:text-white hover:bg-white/10 transition-colors cursor-pointer"
+          >
+            <X className="w-3.5 h-3.5" />
+          </button>
+        </div>
+      )}
+
+      {/* Silent microphone.
+          Sits below mediaNotice rather than replacing it: a media *error* and a mic
+          that opened but produces nothing are different problems with different fixes,
+          and it is entirely possible to have both. This one is deliberately not
+          styled as an error — nothing has failed as far as the browser is concerned,
+          which is exactly why the user needs telling. */}
+      {silentMic.status === 'silent' && (
+        <div className="absolute top-3 left-1/2 -translate-x-1/2 z-[10000] max-w-[92vw] sm:max-w-md flex items-start gap-3 bg-[#3d3323] border border-[#fdd663]/50 text-[#f8e7bd] rounded-xl px-4 py-3 shadow-2xl" style={{ top: mediaNotice ? '5.25rem' : '0.75rem' }}>
+          <MicOff className="w-4 h-4 text-[#fdd663] shrink-0 mt-0.5" />
+          <p className="text-xs leading-relaxed flex-1">
+            Your microphone isn't picking up any sound. Check that it isn't muted in your
+            system settings or by a switch on your headset, then try selecting a different
+            microphone in Settings.
+          </p>
+          <button
+            onClick={silentMic.dismiss}
+            aria-label="Dismiss microphone warning"
+            className="shrink-0 w-7 h-7 -mt-0.5 -mr-1 rounded-lg flex items-center justify-center text-[#f8e7bd]/70 hover:text-white hover:bg-white/10 transition-colors cursor-pointer"
           >
             <X className="w-3.5 h-3.5" />
           </button>
@@ -1015,6 +1367,9 @@ export default function ActiveMeetingView({ onLeaveMeeting, onMinimize }: Props)
                     isPresenting={'isLocal' in focusedTile ? isScreenSharing : sharingPeerIds.has(focusedTile.id)}
                     isFocused
                     onToggleFocus={() => toggleFocus('participant', focusedTile.id)}
+                    quality={links.get(focusedTile.id)?.quality}
+                    relayed={links.get(focusedTile.id)?.stats?.relayed}
+                    handRaised={raisedHands.has(focusedTile.id)}
                   />
                 ) : null}
               </div>
@@ -1049,6 +1404,9 @@ export default function ActiveMeetingView({ onLeaveMeeting, onMinimize }: Props)
                           isPresenting={isLocal ? isScreenSharing : sharingPeerIds.has(tile.id)}
                           isFocused={false}
                           onToggleFocus={() => toggleFocus('participant', tile.id)}
+                          quality={links.get(tile.id)?.quality}
+                          relayed={links.get(tile.id)?.stats?.relayed}
+                          handRaised={raisedHands.has(tile.id)}
                           compact
                         />
                       </div>
@@ -1088,6 +1446,9 @@ export default function ActiveMeetingView({ onLeaveMeeting, onMinimize }: Props)
                         isPresenting={isLocal ? isScreenSharing : sharingPeerIds.has(tile.id)}
                         isFocused={false}
                         onToggleFocus={() => toggleFocus('participant', tile.id)}
+                        quality={links.get(tile.id)?.quality}
+                        relayed={links.get(tile.id)?.stats?.relayed}
+                        handRaised={raisedHands.has(tile.id)}
                       />
                     </div>
                   );
@@ -1122,6 +1483,14 @@ export default function ActiveMeetingView({ onLeaveMeeting, onMinimize }: Props)
             </div>
           )}
 
+          {/* Reactions float over the whole stage, not over a tile — the sender's tile
+              may be on another page of the grid. */}
+          <ReactionOverlay reactions={reactions} />
+
+          {reactionBarOpen && (
+            <ReactionBar onPick={sendReaction} onClose={() => setReactionBarOpen(false)} />
+          )}
+
           {/* FLOATING CONTROLS */}
           <div className="absolute bottom-3 md:bottom-6 left-1/2 -translate-x-1/2 flex items-center gap-1.5 md:gap-2 bg-[#202124]/90 backdrop-blur-xl border border-[#5f6368]/40 rounded-2xl p-1.5 md:p-2 shadow-2xl z-20 w-[max-content] max-w-[95vw] overflow-x-auto scrollbar-hide">
             <CtrlBtn onClick={toggleMic} danger={isMuted} title={isMuted ? 'Unmute' : 'Mute'}>
@@ -1130,47 +1499,78 @@ export default function ActiveMeetingView({ onLeaveMeeting, onMinimize }: Props)
             <CtrlBtn onClick={toggleCamera} danger={isVideoOff} title={isVideoOff ? 'Turn camera on' : 'Turn camera off'}>
               {isVideoOff ? <VideoOff className="w-4 h-4 md:w-5 md:h-5" /> : <Video className="w-4 h-4 md:w-5 md:h-5" />}
             </CtrlBtn>
-            <CtrlBtn onClick={() => toggleScreenShare()} highlight={isScreenSharing} title="Share screen">
-              {isScreenSharing ? <ScreenShareOff className="w-4 h-4 md:w-5 md:h-5" /> : <ScreenShare className="w-4 h-4 md:w-5 md:h-5" />}
-            </CtrlBtn>
-            <div className="w-px h-6 md:h-8 bg-[#5f6368]/50 mx-0.5 md:mx-1 shrink-0" />
-            <CtrlBtn onClick={() => { setRightTab('chat'); setRightOpen((v) => !v); }} highlight={rightOpen && rightTab === 'chat'} title="Chat">
-              <MessageSquare className="w-4 h-4 md:w-5 md:h-5" />
-              {chatMessages.length > 0 && !(rightOpen && rightTab === 'chat') && <span className="absolute top-1 right-1 w-2 h-2 rounded-full bg-[#f28b82] border-2 border-[#202124]" />}
-            </CtrlBtn>
-            <CtrlBtn onClick={() => { setRightTab('people'); setRightOpen((v) => !v); }} highlight={rightOpen && rightTab === 'people'} title="People">
-              <Users className="w-4 h-4 md:w-5 md:h-5" />
-            </CtrlBtn>
-            {TRANSCRIPTION_ENABLED && (
-              <div className="lg:hidden shrink-0">
-                <CtrlBtn onClick={() => { setRightTab('transcript'); setRightOpen((v) => !v); }} highlight={rightOpen && rightTab === 'transcript'} title="Transcript">
-                   <Activity className="w-4 h-4 md:w-5 md:h-5" />
-                </CtrlBtn>
-              </div>
-            )}
-            {onMinimize && (
-              <CtrlBtn onClick={onMinimize} title="Minimise call">
-                <Minimize2 className="w-4 h-4 md:w-5 md:h-5" />
+            {/* Desktop: every secondary action inline, as before. */}
+            <div className="hidden md:flex items-center gap-2">
+              <div className="w-px h-8 bg-[#5f6368]/50 mx-1 shrink-0" />
+              {/* Keyed wrapper, not a key on CtrlBtn: React 19's bundled types reject
+                  `key` on a custom component inside .map() (see CLAUDE.md). */}
+              {secondaryActions.map(({ key, label, Icon, onClick, active, badge }) => (
+                <div key={key} className="contents">
+                  <CtrlBtn onClick={onClick} highlight={active} title={label}>
+                    <Icon className="w-5 h-5" />
+                    {badge && <span className="absolute top-1 right-1 w-2 h-2 rounded-full bg-[#f28b82] border-2 border-[#202124]" />}
+                  </CtrlBtn>
+                </div>
+              ))}
+            </div>
+
+            {/* Mobile: one More button. Mic, camera and Leave stay reachable without
+                scrolling, which is the whole point. */}
+            <div className="md:hidden flex items-center gap-1.5">
+              <CtrlBtn onClick={() => setMoreOpen((v) => !v)} highlight={moreOpen} title="More options">
+                <MoreVertical className="w-4 h-4" />
+                {secondaryActions.some((x) => x.badge) && !moreOpen && (
+                  <span className="absolute top-1 right-1 w-2 h-2 rounded-full bg-[#f28b82] border-2 border-[#202124]" />
+                )}
               </CtrlBtn>
-            )}
-            <CtrlBtn onClick={() => setSettingsOpen((v) => !v)} highlight={settingsOpen} title="Settings">
-              <MoreVertical className="w-4 h-4 md:w-5 md:h-5" />
-            </CtrlBtn>
+            </div>
+
             <div className="w-px h-6 md:h-8 bg-[#5f6368]/50 mx-0.5 md:mx-1 shrink-0" />
             <button onClick={handleLeave} className="px-3 md:px-5 h-9 md:h-11 flex items-center gap-1.5 rounded-xl bg-[#f28b82] text-[#202124] hover:bg-[#f06e62] active:scale-95 font-bold text-[10px] md:text-xs cursor-pointer transition-all shadow-sm shrink-0">
               <PhoneOff className="w-3.5 h-3.5 md:w-4 md:h-4" /><span className="hidden sm:inline">Leave</span>
             </button>
           </div>
 
+          {/* Mobile secondary actions. Labelled rows rather than icons: there is room
+              for words here, and an icon-only grid is guesswork. */}
+          {moreOpen && (
+            <>
+              <button
+                className="md:hidden fixed inset-0 z-20 cursor-default"
+                aria-label="Close options"
+                onClick={() => setMoreOpen(false)}
+              />
+              <div className="md:hidden absolute bottom-20 left-1/2 -translate-x-1/2 w-[min(88vw,20rem)] bg-[#202124] border border-[#5f6368] rounded-2xl shadow-2xl z-30 overflow-hidden">
+                {secondaryActions.map(({ key, label, Icon, onClick, active, badge }) => (
+                  <button
+                    key={key}
+                    onClick={() => { onClick(); setMoreOpen(false); }}
+                    className={`w-full flex items-center gap-3 px-4 py-3 text-left border-b border-[#3c4043] last:border-b-0 active:bg-[#3c4043] cursor-pointer transition-colors ${
+                      active ? 'text-[#8ab4f8]' : 'text-[#e8eaed]'
+                    }`}
+                  >
+                    <Icon className="w-4 h-4 shrink-0" />
+                    <span className="text-xs font-medium flex-1">{label}</span>
+                    {badge && <span className="w-2 h-2 rounded-full bg-[#f28b82] shrink-0" />}
+                  </button>
+                ))}
+              </div>
+            </>
+          )}
+
           {/* Settings overlay */}
           {settingsOpen && (
             <SettingsPanel
               bgMode={bgMode} onBgChange={setBgMode}
-              videoDevices={videoDevices} audioDevices={audioDevices} outputDevices={outputDevices}
-              selectedCamera={selectedCamera} selectedMic={selectedMic} selectedSpeaker={selectedSpeaker}
+              videoDevices={devices.videoDevices} audioDevices={devices.audioDevices} outputDevices={devices.outputDevices}
+              selectedCamera={shownCamera} selectedMic={shownMic} selectedSpeaker={shownSpeaker}
+              speakerSelectable={speakerSelectable}
               onCameraChange={(id) => { setSelectedCamera(id); switchCamera(id); }}
               onMicChange={(id) => { setSelectedMic(id); switchMic(id); }}
-              onSpeakerChange={setSelectedSpeaker}
+              // Actually routes the audio now: setPreferredSpeaker calls setSinkId on
+              // every registered element. This used to be `setSelectedSpeaker` alone,
+              // which changed the label in the dropdown and nothing else.
+              onSpeakerChange={(id) => { setSelectedSpeaker(id); void setPreferredSpeaker(id); }}
               onClose={() => setSettingsOpen(false)}
             />
           )}
@@ -1189,6 +1589,7 @@ export default function ActiveMeetingView({ onLeaveMeeting, onMinimize }: Props)
               chatMessages={chatMessages} onSend={sendChatMessage}
               peers={peers} userName={displayName} isMuted={isMuted}
               onClose={() => setRightOpen(false)}
+              links={links} raisedHands={raisedHands} isHandRaised={isHandRaised}
               transcribing={transcribing} speechSupported={speechSupported}
               startTranscription={startTranscription} stopTranscription={stopTranscription}
               transcriptLines={transcriptLines} keyPoints={keyPoints}

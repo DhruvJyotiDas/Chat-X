@@ -1,16 +1,19 @@
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useState, useRef, useEffect, useMemo } from 'react';
 import {
   X, Camera, User, Lock, Bell, LogOut, Check,
   Loader2, Mail, AtSign, Calendar, ExternalLink,
   ChevronRight, Shield, Palette, Info, Sun, Moon, Monitor,
-  MessageSquare, Video, Volume2, Smile,
+  MessageSquare, Video, Volume2, Smile, Activity,
 } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
 import { api } from '../../lib/api';
 import { useTheme, ThemePreference } from '../../hooks/useTheme';
 import { loadStatus, saveStatus, loadNotifications, saveNotifications, NotificationPreferences } from '../../lib/preferences';
+import { watchDevices, resolveSelection, loadDevicePrefs, EMPTY_SNAPSHOT, type DeviceSnapshot } from '../../lib/devicePrefs';
+import { isSpeakerSelectionSupported, setPreferredSpeaker } from '../../lib/audioOutput';
+import ConnectionTestPanel from '../meeting/ConnectionTestPanel';
 
-type Tab = 'profile' | 'preferences' | 'security' | 'account';
+type Tab = 'profile' | 'preferences' | 'devices' | 'security' | 'account';
 
 const STATUS_EMOJIS = ['', '💬', '🎯', '📚', '🏫', '🚗', '🍽️', '😴', '🌴', '🤒'];
 
@@ -403,11 +406,94 @@ function AccountTab({ onClose }: { onClose: () => void }) {
   );
 }
 
+// ── Devices & network ─────────────────────────────────────────────────────────
+//
+// The connection test used to be reachable only from the guest lobby, which meant the
+// people who most need it — signed-in users starting a meeting from the sidebar, who
+// never see a lobby at all — could not get to it. This is the entry point for them.
+
+function DevicesTab() {
+  const [devices, setDevices] = useState<DeviceSnapshot>(EMPTY_SNAPSHOT);
+  const [testOpen, setTestOpen] = useState(false);
+  const [prefs] = useState(loadDevicePrefs);
+
+  useEffect(() => watchDevices(setDevices), []);
+
+  const speakerSelectable = useMemo(isSpeakerSelectionSupported, []);
+  const [speaker, setSpeaker] = useState(prefs.speakerId);
+  const shownSpeaker = resolveSelection(speaker, devices.outputDevices);
+
+  const label = (d: MediaDeviceInfo) => d.label || `Device ${d.deviceId.slice(0, 8)}`;
+
+  return (
+    <div className="flex flex-col gap-6">
+      <div className="flex flex-col gap-2">
+        <h3 className="text-sm font-semibold text-[#e8eaed]">Your devices</h3>
+        <p className="text-xs text-[#999999] leading-relaxed">
+          Detected on this browser. Names appear once you have allowed camera or microphone
+          access at least once.
+        </p>
+        <div className="flex flex-col gap-2 mt-1">
+          {([
+            ['Cameras', devices.videoDevices],
+            ['Microphones', devices.audioDevices],
+            ['Speakers', devices.outputDevices],
+          ] as const).map(([kind, list]) => (
+            <div key={kind} className="flex items-start justify-between gap-4 py-2 border-b border-[#2a2d35] last:border-b-0">
+              <span className="text-xs font-medium text-[#e8eaed] shrink-0">{kind}</span>
+              <span className="text-xs text-[#999999] text-right">
+                {!devices.synced ? 'Checking…' : list.length === 0 ? 'None found' : list.map(label).join(', ')}
+              </span>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      {speakerSelectable && devices.outputDevices.length > 0 && (
+        <div className="flex flex-col gap-2">
+          <h3 className="text-sm font-semibold text-[#e8eaed]">Speaker</h3>
+          <p className="text-xs text-[#999999] leading-relaxed">
+            Where call audio plays. Applies immediately, including to calls already running.
+          </p>
+          <select
+            value={shownSpeaker}
+            onChange={(e) => { setSpeaker(e.target.value); void setPreferredSpeaker(e.target.value); }}
+            aria-label="Speaker"
+            className="w-full bg-[#1a1d23] border border-[#2a2d35] rounded-lg px-3 py-2 text-xs text-[#e8eaed] outline-none cursor-pointer"
+          >
+            {devices.outputDevices.map((d) => (
+              <option key={d.deviceId} value={d.deviceId}>{label(d)}</option>
+            ))}
+          </select>
+        </div>
+      )}
+
+      <div className="flex flex-col gap-2">
+        <h3 className="text-sm font-semibold text-[#e8eaed]">Connection test</h3>
+        <p className="text-xs text-[#999999] leading-relaxed">
+          Checks whether this network allows video calls at all, and whether they have to be
+          relayed. Run it before an important meeting, or when a call did not work.
+        </p>
+        <button
+          onClick={() => setTestOpen(true)}
+          className="self-start flex items-center gap-2 px-4 py-2 rounded-lg bg-[#0066FF] text-white text-xs font-semibold hover:bg-[#0052cc] cursor-pointer transition-colors"
+        >
+          <Activity className="w-3.5 h-3.5" />
+          Test my connection
+        </button>
+      </div>
+
+      {testOpen && <ConnectionTestPanel onClose={() => setTestOpen(false)} />}
+    </div>
+  );
+}
+
 // ── Main modal ────────────────────────────────────────────────────────────────
 
 const TABS: { id: Tab; label: string; Icon: React.FC<{ className?: string }> }[] = [
   { id: 'profile',     label: 'Profile',     Icon: User },
   { id: 'preferences', label: 'Preferences', Icon: Palette },
+  { id: 'devices',     label: 'Devices',     Icon: Activity },
   { id: 'security',    label: 'Security',    Icon: Lock },
   { id: 'account',     label: 'Account',     Icon: Shield },
 ];
@@ -442,19 +528,28 @@ export default function SettingsModal({ onClose }: Props) {
           </button>
         </div>
 
-        {/* Tab bar */}
-        <div className="flex border-b border-[#424655] shrink-0 px-2 pt-1">
+        {/* Tab bar.
+            Scrollable below `sm`: adding the Devices tab made five, and five
+            `whitespace-nowrap` labels cannot shrink below their min-content width, so
+            the last one ("Account") was pushed past the right edge of a 320px screen.
+            Buttons keep their natural width and the row swipes on a phone; from `sm` up
+            they go back to `flex-1` and fill the width evenly as before. */}
+        <div className="flex overflow-x-auto scrollbar-hide border-b border-[#424655] shrink-0 px-2 pt-1">
           {TABS.map(({ id, label, Icon }) => (
             <button
               key={id}
               onClick={() => setTab(id)}
-              className={`flex-1 flex items-center justify-center gap-1.5 py-2.5 text-[11px] sm:text-xs font-semibold border-b-2 transition-colors cursor-pointer whitespace-nowrap ${
+              className={`shrink-0 sm:flex-1 flex items-center justify-center gap-1.5 px-1.5 sm:px-0 py-2.5 text-[11px] sm:text-xs font-semibold border-b-2 transition-colors cursor-pointer whitespace-nowrap ${
                 tab === id
                   ? 'border-[#568dff] text-[#b0c6ff]'
                   : 'border-transparent text-[#8c90a1] hover:text-[#e5e2e1]'
               }`}
             >
-              <Icon className="w-3.5 h-3.5 shrink-0" />
+              {/* Icon hidden below `sm`: five labelled tabs do not fit a 320px screen with
+                  icons, and the label is the more informative half — Lock vs Shield for
+                  Security vs Account is guesswork without one. Without icons all five fit,
+                  so nothing hides behind the scroll. */}
+              <Icon className="hidden sm:block w-3.5 h-3.5 shrink-0" />
               <span>{label}</span>
             </button>
           ))}
@@ -464,6 +559,7 @@ export default function SettingsModal({ onClose }: Props) {
         <div className="flex-1 overflow-y-auto p-5 scrollbar-hide">
           {tab === 'profile'     && <ProfileTab />}
           {tab === 'preferences' && <PreferencesTab />}
+          {tab === 'devices'     && <DevicesTab />}
           {tab === 'security'    && <SecurityTab />}
           {tab === 'account'     && <AccountTab onClose={onClose} />}
         </div>

@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { SignalingSocket } from '../lib/signalingSocket';
 import { describeMediaError, describeFatalMediaError } from '../lib/mediaErrors';
+import { loadDevicePrefs, deviceConstraint, saveCameraId, saveMicId } from '../lib/devicePrefs';
 
 // ─── ICE configuration ───────────────────────────────────────────────────────
 //
@@ -215,6 +216,10 @@ export function useWebRTC(socket: SignalingSocket | null, selfId = '') {
   const [peers, setPeers] = useState<PeerInfo[]>([]);
   const [isMuted, setIsMuted] = useState(false);
   const [isVideoOff, setIsVideoOff] = useState(false);
+  // switchMic replaces the audio track, and a fresh track always arrives enabled.
+  // It needs to know the current mute state without being re-created on every toggle.
+  const isMutedRef = useRef(isMuted);
+  useEffect(() => { isMutedRef.current = isMuted; }, [isMuted]);
 
   // Non-fatal media problems that the user has to be told about but which do not
   // stop the call: the camera was blocked so we joined with audio only, or
@@ -341,9 +346,17 @@ export function useWebRTC(socket: SignalingSocket | null, selfId = '') {
     let stream: MediaStream | null = null;
     let videoFailure: unknown = null;
 
+    // Reuse the devices this browser chose last time. `deviceConstraint` returns an
+    // `ideal` constraint rather than `exact` on purpose — a saved id that no longer
+    // resolves must degrade to the default device, not reject the whole request and
+    // tell the user their camera is unavailable.
+    const saved = loadDevicePrefs();
+    const videoConstraint = deviceConstraint(saved.cameraId);
+    const audioConstraint = deviceConstraint(saved.micId);
+
     if (wantVideo) {
       try {
-        stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
+        stream = await navigator.mediaDevices.getUserMedia({ video: videoConstraint, audio: audioConstraint });
       } catch (err) {
         videoFailure = err;
       }
@@ -358,7 +371,7 @@ export function useWebRTC(socket: SignalingSocket | null, selfId = '') {
       // really covered both, this retry rejects immediately from the cached
       // decision without showing a second prompt, so it costs nothing.
       try {
-        stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        stream = await navigator.mediaDevices.getUserMedia({ audio: audioConstraint });
         setIsVideoOff(true);
         if (videoFailure) setMediaNotice(describeMediaError(videoFailure, 'camera'));
       } catch (audioErr) {
@@ -768,6 +781,15 @@ export function useWebRTC(socket: SignalingSocket | null, selfId = '') {
     setIsMuted((prev) => !prev);
   }, []);
 
+  // Explicit setter rather than a toggle, for push-to-talk. A toggle can desynchronise
+  // from the key state if a keyup is missed (alt-tab mid-hold) and leave the mic live;
+  // setting the absolute value makes a missed event self-correct on the next one.
+  const setMicMuted = useCallback((muted: boolean) => {
+    if (!cameraStreamRef.current) return;
+    cameraStreamRef.current.getAudioTracks().forEach((t) => { t.enabled = !muted; });
+    setIsMuted(muted);
+  }, []);
+
   // Renegotiates every live camera connection so a peer connection actually reflects
   // whether we currently have a video track to send — used any time toggleCamera
   // adds or removes the local video track (renegotiation, not replaceTrack, because
@@ -890,6 +912,9 @@ export function useWebRTC(socket: SignalingSocket | null, selfId = '') {
         cameraStreamRef.current = newStream;
       }
       setLocalStream(cameraStreamRef.current);
+      // Only persist after the switch has actually succeeded. Saving on selection
+      // would remember a device that failed to open and re-fail on every future join.
+      saveCameraId(deviceId);
     } catch (err) { console.error('[switchCamera]', err); setMediaNotice(describeMediaError(err, 'camera')); }
   }, []);
 
@@ -906,8 +931,21 @@ export function useWebRTC(socket: SignalingSocket | null, selfId = '') {
         cameraStreamRef.current.getAudioTracks().forEach(t => { t.stop(); cameraStreamRef.current!.removeTrack(t); });
         cameraStreamRef.current.addTrack(newTrack);
       }
+      // Carry the current mute state onto the replacement track. Without this,
+      // switching microphones while muted silently unmutes you — the new track
+      // arrives enabled and the button still says "unmute".
+      if (isMutedRef.current) newTrack.enabled = false;
+      setLocalStream(cameraStreamRef.current);
+      saveMicId(deviceId);
     } catch (err) { console.error('[switchMic]', err); setMediaNotice(describeMediaError(err, 'microphone')); }
   }, []);
+
+  // Read-only view of the live camera peer connections, for getStats() polling.
+  // Returns the live map rather than a copy: the caller only reads from it, and a
+  // copy per poll would allocate a fresh Map every two seconds for the whole call.
+  // Screen-share connections are deliberately excluded — they come and go and their
+  // quality is not what a participant tile is reporting on.
+  const getPeerConnections = useCallback((): ReadonlyMap<string, RTCPeerConnection> => pcsRef.current, []);
 
   // Tears down every peer connection but leaves the local camera/mic running.
   // Used when moving between rooms on the same tab: without it the previous
@@ -972,10 +1010,12 @@ export function useWebRTC(socket: SignalingSocket | null, selfId = '') {
     initMedia,
     createOfferFor,
     toggleMic,
+    setMicMuted,
     toggleCamera,
     toggleScreenShare,
     switchCamera,
     switchMic,
+    getPeerConnections,
     cleanup,
     resetPeers,
     registerPeerName,

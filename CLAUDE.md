@@ -310,6 +310,12 @@ rejected autoplay leaves exactly that state (see `playWhenAllowed` under WebRTC)
 | `_verify_mobile_layout.mjs` | every view on iPhone 12 + Galaxy S9+: page h-scroll, cut-off elements, small tap targets |
 | `_verify_mobile_deep.mjs` | the states the sweep can't reach by `aria-label`: Calls' two mobile panels, Settings modal, in-call + side panel |
 | `_verify_tiling.mjs` / `_verify_tiling_pagination.mjs` | grid layout and pagination with 2–3 real peers |
+| `_verify_call_upgrades.mjs` | 38 checks: speaker routing (`setSinkId`), device persistence + `devicechange`, silent-mic detection, reactions + raise-hand across two browsers, keyboard shortcuts incl. push-to-talk, `getStats()` polling, connection test, and the server-side reaction allow-list over raw sockets |
+| `_verify_call_upgrades_mobile.mjs` | the split control bar at 390px/360px: nothing off-screen, tap targets ≥36px, every secondary action reachable via the More sheet, reaction sent from a phone arriving on desktop |
+| `_verify_speaker_promotion.mjs` | 15 checks, three real browsers: speaker-ranked tile order, self never paged off, no churn during silence, promotion following whoever talks, audio unaffected by paging |
+| `_verify_grid_layout.ts` | **`npx tsx`, not node** — property checks on `selectGridLayout`/`computeTileSize`: per-container ceilings against MEASURED sizes, monotonicity, container-fit, orientation, 16:9, no overflow |
+| `_verify_tile_order.ts` | **`npx tsx`** — 27 checks on `orderTiles`: ranking, visual stability, promotion, the anti-flicker hold, degenerate inputs |
+| `_verify_identity_and_camera.mjs` | 16 checks: host identity as joiners see it (starts with `ibconnect_me` ABSENT on purpose), own raised hand on own tile, and camera-off showing an avatar instead of a frozen frame both mid-call and for someone who joined with it off |
 
 **Simulating a dead socket** (for the reconnect path): wrap `window.WebSocket` in an `addInitScript` to
 collect instances on `window.__sockets`, then `.close()` the one whose `url` contains `/ws`. That
@@ -325,6 +331,254 @@ under an off-canvas transform, i.e. the closed sidebar drawer at `translateX(-10
 decorative child triggers it.
 
 ## Recent work log
+
+**2026-08-17 (third), "joiners see me as Guest" + "camera off looks frozen" (DEPLOYED — frontend
+only, no backend change, so no calls were dropped):** Two bugs reported against the deploy above.
+Both reproduced first with a throwaway probe, then fixed, then locked down by
+`_verify_identity_and_camera.mjs` (**16/16** locally and against production).
+
+- **Identity was never picked up after sign-in, and it was worse than the report.**
+  `MeetingProvider` reads `ibconnect_me` in a `useState` **initialiser** — once, at mount.
+  `AuthContext` writes that key *after* it resolves, and on a fresh OIDC landing `loginWithToken`
+  runs well after MeetingProvider has mounted. So the initialiser found nothing, fell through to
+  `{ id: getOrCreateUserId(), name: 'Guest' }`, and **nothing ever re-read it**. Measured payload
+  before the fix: `create_room {"user_id":"user-vqvcj7ok","user_name":"Guest"}`.
+  Three separate symptoms, one cause:
+  1. everyone joining by link saw the host as **"Guest"** (the reported bug);
+  2. the host occupied the room under a **throwaway user id**, which defeats the server's
+     same-user-id eviction on reconnect and the `selfId < peerId` politeness tie-break — so this was
+     quietly degrading reconnect correctness too;
+  3. `raisedHands` was keyed by `getOrCreateUserId()` while tiles are keyed by `user.id`, so **your
+     own raised hand never appeared on your own tile** — a bug in the feature shipped hours earlier.
+  **Fix:** `MeetingProvider` now consumes `useAuth()` and syncs `user` (plus `nameRef`/`userIdRef`
+  synchronously) whenever `currentUser` changes. It is nested inside `AuthProvider` in `App.tsx`, so
+  this is safe and creates no import cycle. `create_room`/`join_room` send `userIdRef.current`, and
+  the four stray `getOrCreateUserId()` calls inside the provider were replaced.
+  **There was already a `getFreshName()` helper written for exactly this and never called** — dead
+  code, now deleted. If you add another `user_*` field to a signalling payload, read it from a ref,
+  not from the `user` state captured in a `useCallback` closure.
+  **Why the existing suites all passed through this:** every one of them seeds *both*
+  `ibconnect_jwt` **and** `ibconnect_me` into localStorage before the first paint, which is precisely
+  the state the bug cannot occur in. `_verify_identity_and_camera.mjs` deliberately sets **only the
+  token**. Seed only what the real flow has, or you test a state your users never reach.
+
+- **Turning the camera off left everyone else looking at a frozen frame.** The *sending* side was
+  already correct — `toggleCamera` does `removeTrack` + `track.stop()` + renegotiate, and measurement
+  confirms the receiver's stream really does drop to **0 video tracks**. The bug is that a `<video>`
+  **keeps the last decoded frame painted**: `videoWidth` goes to 0 and `currentTime` freezes
+  (5.66 while another peer's ran on to 12.71), and `RemoteTile` only fell back to an avatar when
+  `!peer.stream` — but the stream still exists, because it carries audio. So "camera off" was
+  indistinguishable from "their connection died".
+  **Fix:** new `src/hooks/useHasVideo.ts` watches the stream (`addtrack`/`removetrack`, plus
+  `mute`/`unmute`/`ended` on the track, plus a slow 500ms poll because `removetrack` is not fired by
+  every engine) and `RemoteTile` shows an avatar + "Camera off" when there is no live picture.
+  - The `<video>` is hidden with `invisible`, **not unmounted** — unmounting drops `srcObject`, so
+    turning the camera back on would have to re-attach and re-clear the autoplay policy. Hidden means
+    the picture returns the instant frames do.
+  - Wording is deliberately *not* "Connecting…": a camera that is off is a choice, not a fault, and
+    reusing the fault state is what made the two indistinguishable in the first place.
+  - **Watching the stream beats trusting a signalling message**, which is why no `camera_state`
+    broadcast was added: it also covers someone who **joined with their camera already off** (they
+    never had a track to announce), a peer on an older build, and a broadcast that arrives before the
+    renegotiation it describes. Verified: a third participant joining camera-off shows as off, not
+    connecting.
+
+- Verified before deploying: `_verify_call_upgrades` 38/38, `_verify_speaker_promotion` 15/15,
+  `_verify_multiparty_audio` 12/12, `_verify_media_permissions` 12/12, `_verify_meeting_fixes` 20/20,
+  mobile control bar all-pass, `_verify_tile_order` + `_verify_grid_layout` all-pass. Bundle
+  `index-BmBOnWbZ.js` -> `index-Cin5rpW4.js`; rollback at `www.rollback2.tgz` in the scratchpad.
+  **The Go binary was byte-compared against a fresh build first** — identical, so the service was
+  never restarted and nobody's call was interrupted. Worth doing every time: a frontend-only fix
+  should cost users nothing.
+
+**2026-08-17 (later), how many faces fit and who gets a slot (DEPLOYED — frontend rsynced *and*
+backend rebuilt/restarted; see the deploy note at the end of this entry):**
+Asked what the maximum number of camera tiles is and where the overflow goes. Answering it turned up
+four defects, all fixed. **The ceiling is 16** (`GRID_LAYOUTS` tops out at 4x4 and there is no larger
+entry — deliberately, since every tile in a mesh is another peer connection). Overflow goes to
+`usePagination` in grid mode, or into the carousel in focus/spotlight mode; **audio is unaffected
+either way**, because `PeerAudio` is mounted per peer outside the grid.
+
+Container sizes here were **measured in a real browser**, not estimated — `minWidth` is compared
+against the grid container (viewport minus stage padding, ~16px on a phone), and guessing that offset
+is exactly how the first bug survived. 360px viewport -> 344px container; 390px -> 374px.
+
+- **Every 360px-wide Android showed only TWO people.** The 2x3 portrait layout required
+  `minWidth: 360` against a 344px container, so it fell back to 1x2 — a six-person call became three
+  pages on a Galaxy S8/S9/S10e and most budget phones. Now 340.
+- **Layout selection was non-monotonic: 3 and 4 people paginated on a phone while 5 and 6 did not.**
+  `selectGridLayout` picked the smallest layout by *capacity* first (3 tiles -> 2x2, needs 480px),
+  found the container too narrow, and then recursed onto a layout with **less** capacity instead of
+  considering `2x3` — taller, needs only 340px, holds twice as many. Capacity and container-fit are
+  independent constraints and were being applied in sequence. Now: filter to layouts the container can
+  accommodate, then take the smallest sufficient capacity. Simpler, and monotonic by construction.
+- **Widening a window could cost a page.** Portrait reached 12 tiles at 640px via 3x4, but landscape
+  had no 12-tile option until 4x3 at 960px — so dragging from 900 to 920px flipped the container to
+  landscape, dropped capacity 12 -> 9, and lost a page in a large call. 4x3's `minWidth` is now 900,
+  which still leaves 221x124 tiles at that width.
+- **Your own tile was on page 2 in any call big enough to paginate.** Order was `[...peers, local]`,
+  so with 20 peers self sat at index 20. Zoom and Meet both guarantee self-view. Local now takes the
+  **last slot of the first page**, which is byte-identical to the old behaviour for small calls.
+- **Tile order was signalling arrival order, so a person speaking on page 2 was invisible.** Their
+  tile lit up on a page nobody was looking at. New `src/lib/tileOrder.ts` + `useTileOrder.ts` rank by
+  presenting > speaking > recently spoke > has video > join order, and swap a hidden speaker into the
+  page being viewed.
+  - **How Zoom and Meet do it, and why we can too:** both get dominant-speaker ranking from an SFU
+    that sees everyone's audio energy, and both stop sending video for tiles you cannot see. We have
+    no SFU — but `useAudioLevels` already analyses **every** peer, including unrendered ones, because
+    `PeerAudio` mounts an element per peer outside pagination. The speaking signal for off-page
+    participants was already being computed and thrown away. What we still cannot copy is the
+    bandwidth half: in a mesh everyone sends to everyone regardless, so paging saves rendering, not
+    uplink. That is an SFU item, not a blocker for the ordering.
+  - **Do NOT "simplify" this to sorting by who is speaking.** That is worse than no sorting: two
+    people talking over each other trade the same slot several times a second. The previous order is
+    carried forward and only a hidden speaker triggers a swap, against the least-recently-active
+    visible tile, with a 5s `PROMOTE_HOLD_MS` before a promoted tile can be evicted again. Presenters
+    and the local tile are never demoted.
+  - Promotion targets the page the user is **actually on**, not always page 1. The promotion pass runs
+    on the pre-insertion list and offsets its window by one to account for the local tile spliced in
+    afterwards — `_verify_tile_order.ts` asserts against the real post-insertion page so the two
+    cannot drift.
+- **Still true, not fixed:** pagination has no swipe gesture (La Suite uses LiveKit's `useSwipe`), and
+  there is no "+N others" affordance hinting that more people exist beyond the pager dots.
+- **Removed something I had added:** a `tileCount` hint to `computeTileSize`, meant to stop a
+  partly-filled grid reserving height for unused rows. After the monotonicity fix it changed the
+  computed size in **zero** cases across every container from 300x200 to 2000x1200 against 1..16 tiles
+  — a layout with more rows than columns is portrait-restricted, and for those the height term can
+  never bind. Reverted rather than shipped as dead weight; the reasoning is in a comment there so
+  nobody re-adds it.
+- **TS gotcha:** `usePagination(maxTiles, orderedTiles)` needed an explicit
+  `Pagination<MeetingTile>` annotation. Through `useMemo` -> `useTileOrder` -> `usePagination`,
+  inference collapsed the union element type to `unknown` and every tile downstream lost its
+  properties. `new Map(tiles.map((t) => [t.id, t]))` needs its generics spelled out for the same
+  reason.
+- Verified: `_verify_grid_layout.ts` and `_verify_tile_order.ts` all-pass (`npx tsx`);
+  `_verify_speaker_promotion.mjs` **15/15** with three real browsers at 320px, including that the
+  swap follows whoever is talking in both directions and that the grid does **not** churn during
+  silence; `_verify_multiparty_audio.mjs` 12/12; `_verify_meeting_fixes.mjs` 19/20 — the one failure
+  is a `fonts.gstatic.com` 404 that this sandbox cannot reach, present at HEAD and in an
+  `index.html` this work never touched.
+- **Two test-harness fixes** made along the way: `_verify_tiling.mjs` and
+  `_verify_tiling_pagination.mjs` hardcoded `localhost:3000` and failed outright despite this file
+  claiming every script honoured `BASE` — they do now. And `_verify_multiparty_audio.mjs` forced
+  pagination with a 400px viewport, which **stopped reproducing** once 374px containers correctly fit
+  6 tiles; it uses 320px now. A suite whose precondition has silently lapsed passes for the wrong
+  reason, which is worse than failing.
+
+**Deploy, 2026-08-17 09:42 UTC.** Backend first, then frontend — so the new UI never talks to a
+backend that does not understand `reaction`/`hand_state`. Bundle went
+`index-BBHZqq2z.js` -> `index-BmBOnWbZ.js`. Rollback copies are in the session scratchpad
+(`ibconnect-backend.rollback`, `www-ibconnect.rollback.tgz`).
+- **Timed against real traffic:** signalling had been quiet for 41 minutes (no active rooms per
+  `sigReporter`), so **no calls were dropped**. One signed-in user was browsing; their chat and
+  signalling sockets were severed by the restart, classified themselves as `server-down`, backed off
+  ~1.5s and reconnected — the 2026-08-13 diagnostics work proving itself in production. Check
+  `journalctl -u ibconnect-backend | grep "\[Signaling\] room"` for recent activity before restarting;
+  a silent tail means no live calls.
+- **Verified against production, not just locally:** `_verify_call_upgrades` 38/38, mobile control bar
+  all-pass, `_verify_speaker_promotion` 15/15, `_verify_multiparty_audio` 12/12,
+  `_verify_media_permissions` 12/12, `_verify_meeting_fixes` 20/20, `_verify_session_expiry` 10/10,
+  `_verify_interview_prod` 9/9, `_verify_unread_badge` 5/5, `_verify_reconnect_rejoin` full pass,
+  `_verify_mobile_layout` zero issues. Bundle greps confirmed `setSinkId`, `devicechange`, `getStats`,
+  `hand_state`, `ib-reaction-rise`, `selectedCandidatePairId` present and `webrtc123`/`change_me`
+  absent. The running binary was checked via `/proc/$MainPID/exe`, not assumed from `systemctl`.
+- **Regression caught by the mobile sweep, after the first rsync:** adding the Devices tab made five
+  settings tabs, and five `whitespace-nowrap` labels cannot shrink below min-content — "Account" was
+  pushed off a 320px screen. Fixed by making the row `overflow-x-auto` below `sm`, hiding the tab
+  ICONS rather than the labels on mobile (Lock vs Shield for Security vs Account is guesswork without
+  a word), and tightening padding to `px-1.5`. All five now fit at 320px with nothing past the edge.
+  **This is the case for running the sweep on any change that adds a nav item.**
+- **`_verify_speaker_promotion.mjs` originally could not run against production** — it did
+  `await import('/src/lib/gridLayout.ts')`, which only resolves against the Vite dev server. It now
+  asserts the same fact from the DOM. Any suite that imports app source is a dev-server-only suite.
+- **TEST DATA HAZARD, hit again:** `_verify_interview_prod.mjs` **writes a real row** into
+  `interview_profiles` on production (a profile for `uitest1`, "Asha Menon"). Found and deleted, and
+  real data confirmed intact (12 users / 18 messages / 5 threads). This is the same footgun as the
+  2026-08-13 entry, from the other direction — not a shared throwaway backend this time, just running
+  the suite straight at production. **Check `interview_profiles`/`interview_sessions` after running it.**
+
+**2026-08-17, call-surface ports from LiveKit Meet and La Suite Meet (DEPLOYED — frontend rsynced
+*and* backend rebuilt/restarted 09:42 UTC):** Compared `IB-Connect-ver-2/src` against `livekit-examples/meet` (1,762 LOC, 21 files —
+a fixture, not an architecture) and `suitenumerique/meet` v1.27.0 (33,152 LOC, 474 files — a
+production public service), then implemented what was worth taking. `_verify_call_upgrades.mjs` 38/38
+and `_verify_call_upgrades_mobile.mjs` all-pass; `_verify_multiparty_audio.mjs` and
+`_verify_media_permissions.mjs` still 12/12.
+
+- **The speaker picker did nothing.** `onSpeakerChange={setSelectedSpeaker}` set React state and
+  stopped; there was no `setSinkId` call anywhere in the codebase, so choosing a headset changed the
+  dropdown label and left audio wherever it already was. New `src/lib/audioOutput.ts` owns output
+  routing: elements *register* with it (`registerAudioSink`) and it applies the stored preference to
+  each, including ones that mount later — which matters because peers join and leave all call, and
+  `FloatingCallWindow` mounts a whole second set of `<audio>` elements. `NotFoundError` on an
+  unplugged device clears the stored id rather than failing forever. The control is hidden where
+  `setSinkId` is absent (Safari, older Firefox) — leaving it visible and inert is the bug being fixed.
+- **Device choices persist; `devicechange` is observed.** There were **zero** `devicechange` listeners
+  and `enumerateDevices()` ran once, lazily, only when the settings sheet opened — so a headset
+  plugged in mid-call did nothing until you reopened settings. `src/lib/devicePrefs.ts` persists
+  camera/mic/speaker and `watchDevices()` keeps the list live. Constraints are `ideal`, never `exact`:
+  a stale saved id must degrade to the default, not reject getUserMedia and claim the camera is
+  unavailable. `resolveSelection()` stops a `<select>` showing option 0 while the app believes a
+  vanished device is active. Ids are saved only *after* a switch succeeds.
+- **Silent-microphone detection** (`src/hooks/useSilentMic.ts`), ported from La Suite's
+  `stores/silentMic.ts`. A live mic always has a noise floor, so a track pinned at zero is an OS-level
+  block, a headset mute switch, or a dead device — the worst failure in a call app, because every
+  signal the user has says it works. Accumulated (not consecutive) silence over 12s warns; any real
+  sound settles it permanently; dismissal is remembered. Runs in the lobby *and* in-call, and is
+  skipped while intentionally muted.
+- **Reactions and raise-hand.** New `reaction` / `hand_state` cases in `handleClientEvents`, mirroring
+  `screen_share_state`. Reactions are relayed and never stored (transient by design); hands are state
+  and are cleared on `peer_left`, or a hand stays up for someone who has left with nobody able to
+  lower it. **`allowedReactions` in `main.go` is an allow-list** — the emoji is rendered in every other
+  participant's DOM, so the server must not relay arbitrary strings; keep it in sync with `REACTIONS`
+  in `src/lib/reactions.ts`. Your own reaction is rendered locally too, since `broadcast` skips the
+  sender. Overlay lives outside the tile grid: in a paginated grid the sender's tile may be on another
+  page, so tying the animation to a tile makes reactions randomly invisible.
+- **`getStats()` is now read at all** — there were previously zero calls to it, so a degraded call
+  produced no client-side evidence. `src/lib/connectionStats.ts` finds the transport's
+  `selectedCandidatePairId` (with a Firefox fallback to the nominated pair) and resolves both ends;
+  technique from La Suite's `features/diagnostics/checks/selectedCandidate.ts`.
+  `useConnectionQuality` grades each peer every 2s, sequentially rather than in one `Promise.all`
+  burst. **This matters more in a mesh than behind an SFU**: every peer is a separate connection with
+  its own outcome, so per-peer stats are the only way to tell "the call is bad" from "one person's
+  link is bad". Thresholds are deliberately forgiving and a healthy link renders *nothing* — a badge
+  that is always lit is a badge nobody reads. Each peer's path is logged to the diagnostics ring
+  buffer once, on settle, not every poll.
+- **Pre-join connection test** (`src/lib/connectionTest.ts` + `ConnectionTestPanel.tsx`) — the shipped
+  answer to "will this work on college wifi". Six steps ending in a **real loopback call between two
+  local `RTCPeerConnection`s with `iceTransportPolicy: 'relay'`**, so both ends must allocate on
+  coturn and pass media through it. Verdicts are `ok` / `relay-only` / `blocked` / `no-devices`, and
+  "Copy report" bundles the diagnostics buffer for sending to whoever runs the network. Reachable
+  from the guest lobby **and** from Settings → Devices, because signed-in users never see the lobby
+  (`PreJoinScreen` renders only for `!currentUser && linkCode`) and would otherwise have no route to it.
+- **Keyboard shortcuts** (`useCallShortcuts.ts`): Ctrl/⌘-D mute, -E camera, -H hand, hold Space to
+  talk. Handlers live in a ref so the listener is never rebuilt mid-keypress; `blur` releases
+  push-to-talk because losing focus mid-hold never delivers `keyup` and would leave the mic live.
+  `pttEngagedRef` stops Space muting someone who was already unmuted. Typing targets are excluded or
+  the chat composer becomes unusable.
+- **Control bar split desktop/mobile.** Adding two buttons pushed it past a phone: at 390px the last
+  controls sat outside the viewport, scrollable in principle and unreachable in practice. Secondary
+  actions are now declared once as data (`secondaryActions`) and rendered two ways — inline on
+  desktop, in a labelled sheet behind "More" on mobile. This is La Suite's
+  `DesktopControlBar`/`MobileControlBar` split and it is why their equivalent file is a third the size.
+- **Also fixed while in there:** `switchMic` did not carry the mute state onto the replacement track,
+  so switching microphones while muted silently unmuted you. Added `setMicMuted` (absolute, not a
+  toggle) for push-to-talk. Reaction picker wraps and shrinks to 36px targets so it fits 360px.
+- **Not taken, deliberately:** i18n infrastructure (no second language committed), recording (needs
+  egress + object storage, both already deferred), E2EE (a mesh call is already end-to-end encrypted
+  by construction — the SFU migration is what would create that gap), and a Panda CSS migration (a
+  whole styling change to solve a componentisation problem). RNNoise and CPU-pressure degradation are
+  worth doing but get much cheaper after the SFU, so they wait.
+- **Gotcha, and a correction to it:** `_verify_session_expiry.mjs` scores 6/10 against a **local dev
+  server** — but **10/10 against production**, verified after this deploy. An earlier note here said it
+  "fails 3–4 checks at HEAD"; that was measured against localhost and was the wrong conclusion to draw.
+  The suite was written for production (see the 2026-08-13 entry: `AuthContext`'s mount-time
+  `/api/auth/me` check wins a race locally that it loses against the real domain). **Run it with
+  `BASE=https://meet.icebrkr.space`, not against a dev server**, or it fails for environmental reasons
+  and looks like a regression.
+- **Gotcha found:** `vite` started with `DISABLE_HMR=true` sets `watch: null` and then serves **stale
+  modules** — mobile checks kept failing against code that no longer existed. Restart the dev server
+  after editing, or don't set `DISABLE_HMR`. (And `pkill -f "port=3101"` kills your own shell, exit
+  144, same as the documented `npm run dev` case — match on the pid from `ss -lntp` instead.)
 
 **2026-08-12, observability + secrets + DB hardening (code BUILT NOT DEPLOYED; infra changes ARE live):**
 Sweep to fix everything found across the session's investigations. **`DEFERRED.md` in the repo root

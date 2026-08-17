@@ -1178,6 +1178,17 @@ type SignalPayload struct {
 }
 type ChatPayload struct{ Text string `json:"text"` }
 type ScreenSharePayload struct{ Sharing bool `json:"sharing"` }
+type ReactionPayload struct{ Emoji string `json:"emoji"` }
+
+// Kept in sync with REACTIONS in src/lib/reactions.ts. Anything not listed here is
+// dropped silently rather than rejected — a client sending an unknown reaction is
+// either out of date or malicious, and neither deserves an error round-trip.
+var allowedReactions = map[string]bool{
+	"👍": true, "👏": true, "🎉": true, "❤️": true,
+	"😂": true, "😮": true, "🤔": true, "👋": true,
+}
+
+type HandPayload struct{ Raised bool `json:"raised"` }
 type PeerInfo struct {
 	ID   string `json:"id"`
 	Name string `json:"name"`
@@ -1740,6 +1751,30 @@ func handleSignaling(w http.ResponseWriter, r *http.Request) {
 			if client.room != nil {
 				client.room.broadcast(client.id, "screen_share_state", map[string]any{
 					"peer_id": client.id, "sharing": p.Sharing,
+				})
+			}
+		// Reactions are transient by design: they animate for two seconds and are
+		// gone, so they are relayed and never stored. Anyone who joins afterwards
+		// has missed them, which is the correct behaviour for a reaction.
+		case "reaction":
+			var p ReactionPayload
+			json.Unmarshal(msg.Payload, &p) //nolint
+			// Allow-list rather than relaying whatever arrives: this string is
+			// rendered in every other participant's DOM, and an unbounded field
+			// here would let one client push arbitrary payloads at the room.
+			if client.room != nil && allowedReactions[p.Emoji] {
+				client.room.broadcast(client.id, "reaction", map[string]any{
+					"peer_id": client.id, "peer_name": client.name, "emoji": p.Emoji,
+				})
+			}
+		// A raised hand is state, not an event — it stays up until lowered, so it
+		// carries a boolean like screen_share_state rather than firing once.
+		case "hand_state":
+			var p HandPayload
+			json.Unmarshal(msg.Payload, &p) //nolint
+			if client.room != nil {
+				client.room.broadcast(client.id, "hand_state", map[string]any{
+					"peer_id": client.id, "peer_name": client.name, "raised": p.Raised,
 				})
 			}
 		}

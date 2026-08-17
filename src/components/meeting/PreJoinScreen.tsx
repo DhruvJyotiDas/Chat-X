@@ -1,7 +1,10 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { Mic, MicOff, Video, VideoOff, Loader2 } from 'lucide-react';
+import { Mic, MicOff, Video, VideoOff, Loader2, Activity, AlertTriangle, X } from 'lucide-react';
 import BrandMark from '../BrandMark';
 import { describeMediaError } from '../../lib/mediaErrors';
+import { loadDevicePrefs, deviceConstraint, restoreSpeaker } from '../../lib/devicePrefs';
+import { useSilentMic } from '../../hooks/useSilentMic';
+import ConnectionTestPanel from './ConnectionTestPanel';
 
 interface Props {
   roomCode: string;
@@ -30,9 +33,17 @@ export default function PreJoinScreen({ roomCode, initialName, nameEditable = tr
   const [videoOff, setVideoOff] = useState(false);
   const [joining, setJoining] = useState(false);
   const [previewError, setPreviewError] = useState<string | null>(null);
+  const [testOpen, setTestOpen] = useState(false);
+  // Held in state as well as the ref so the silent-mic hook re-runs when it arrives.
+  const [previewStream, setPreviewStream] = useState<MediaStream | null>(null);
 
   const videoRef = useRef<HTMLVideoElement>(null);
   const streamRef = useRef<MediaStream | null>(null);
+
+  // Catching a dead microphone here rather than mid-call is the whole value of a
+  // lobby: the user is already looking at their own preview and expecting to adjust
+  // something, so a warning now costs them nothing.
+  const silentMic = useSilentMic(previewStream, !muted);
 
   useEffect(() => {
     let cancelled = false;
@@ -43,9 +54,18 @@ export default function PreJoinScreen({ roomCode, initialName, nameEditable = tr
         // initMedia() *after* the user pressed Join — a second permission
         // dialog appearing once they thought they were already in the call.
         // Settling both up front is what Meet and Zoom do.
-        const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
+        // Open the devices this browser used last time, so the preview shows the
+        // headset the user expects rather than whatever enumerated first. `ideal`
+        // rather than `exact` — see deviceConstraint.
+        const saved = loadDevicePrefs();
+        void restoreSpeaker();
+        const stream = await navigator.mediaDevices.getUserMedia({
+          video: deviceConstraint(saved.cameraId),
+          audio: deviceConstraint(saved.micId),
+        });
         if (cancelled) { stream.getTracks().forEach((t) => t.stop()); return; }
         streamRef.current = stream;
+        setPreviewStream(stream);
         if (videoRef.current) {
           videoRef.current.srcObject = stream;
           videoRef.current.play().catch(() => {});
@@ -54,9 +74,10 @@ export default function PreJoinScreen({ roomCode, initialName, nameEditable = tr
         // Fall back to audio-only so a blocked camera still gets the mic
         // permission settled here rather than mid-join.
         try {
-          const audioOnly = await navigator.mediaDevices.getUserMedia({ audio: true });
+          const audioOnly = await navigator.mediaDevices.getUserMedia({ audio: deviceConstraint(loadDevicePrefs().micId) });
           if (cancelled) { audioOnly.getTracks().forEach((t) => t.stop()); return; }
           streamRef.current = audioOnly;
+          setPreviewStream(audioOnly);
           if (!cancelled) setPreviewError(describeMediaError(err, 'camera'));
         } catch {
           if (!cancelled) setPreviewError(`${describeMediaError(err, 'camera and microphone')} You can still join.`);
@@ -67,6 +88,7 @@ export default function PreJoinScreen({ roomCode, initialName, nameEditable = tr
       cancelled = true;
       streamRef.current?.getTracks().forEach((t) => t.stop());
       streamRef.current = null;
+      setPreviewStream(null);
     };
   }, []);
 
@@ -89,6 +111,7 @@ export default function PreJoinScreen({ roomCode, initialName, nameEditable = tr
     // Release the preview camera before the meeting grabs its own handle.
     streamRef.current?.getTracks().forEach((t) => t.stop());
     streamRef.current = null;
+    setPreviewStream(null);
     onJoin(trimmed, { muted, videoOff });
   };
 
@@ -170,6 +193,26 @@ export default function PreJoinScreen({ roomCode, initialName, nameEditable = tr
             </p>
           )}
 
+          {/* Not styled as an error: nothing has failed as far as the browser is
+              concerned, which is precisely why it needs saying out loud. */}
+          {silentMic.status === 'silent' && (
+            <div className="flex items-start gap-2 text-left text-[11px] text-[#f8e7bd] bg-[#fdd663]/10 border border-[#fdd663]/30 rounded-lg px-3 py-2">
+              <AlertTriangle className="w-3.5 h-3.5 text-[#fdd663] shrink-0 mt-0.5" />
+              <span className="flex-1 leading-relaxed">
+                Your microphone isn't picking up any sound. Check it isn't muted by a switch on
+                your headset or in your system settings.
+              </span>
+              <button
+                type="button"
+                onClick={silentMic.dismiss}
+                className="shrink-0 text-[#f8e7bd]/60 hover:text-white cursor-pointer"
+                aria-label="Dismiss microphone warning"
+              >
+                <X className="w-3 h-3" />
+              </button>
+            </div>
+          )}
+
           <button
             type="submit"
             disabled={!name.trim() || joining}
@@ -177,6 +220,15 @@ export default function PreJoinScreen({ roomCode, initialName, nameEditable = tr
           >
             {joining && <Loader2 className="w-4 h-4 animate-spin" />}
             {joining ? 'Joining…' : 'Join now'}
+          </button>
+
+          <button
+            type="button"
+            onClick={() => setTestOpen(true)}
+            className="flex items-center justify-center gap-1.5 text-[11px] text-[#9aa0a6] hover:text-[#8ab4f8] cursor-pointer transition-colors"
+          >
+            <Activity className="w-3.5 h-3.5" />
+            Having trouble? Test your connection
           </button>
 
           {onSignIn && (
@@ -189,6 +241,8 @@ export default function PreJoinScreen({ roomCode, initialName, nameEditable = tr
           )}
         </form>
       </div>
+
+      {testOpen && <ConnectionTestPanel onClose={() => setTestOpen(false)} />}
     </div>
   );
 }

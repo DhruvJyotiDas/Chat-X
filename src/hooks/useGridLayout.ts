@@ -29,6 +29,15 @@ export function useGridLayout(tileCount: number): {
  * every tile a real 16:9 frame, and letting them wrap in a centered flex row also
  * centers a partially-filled last row the way Meet does.
  */
+// A note on `layout.rows`, since it looks like a bug and is not: it is the chosen
+// layout's row *capacity*, which can exceed the rows actually drawn — three tiles in a
+// 2x3 layout occupy two rows. Dividing the height by 3 there looks like it would shrink
+// every tile to reserve space for a row that is never rendered. It does not, because in
+// every such case the tile is limited by column WIDTH rather than row height: a layout
+// with more rows than columns is portrait-restricted, and for those the height term can
+// never be the binding one. Verified by scanning every container from 300x200 to
+// 2000x1200 against 1..16 tiles — passing the real tile count instead changed the
+// computed size in exactly zero cases, so the parameter was removed again as dead weight.
 export function computeTileSize(
   size: { width: number; height: number },
   layout: GridLayoutInfo,

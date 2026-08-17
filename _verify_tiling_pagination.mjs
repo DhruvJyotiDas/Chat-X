@@ -1,6 +1,10 @@
 import { chromium } from 'playwright';
 import crypto from 'crypto';
 
+// CLAUDE.md claimed every _verify_ script honoured BASE; these two did not — the dev
+// server port has moved since they were written, so they failed outright.
+const BASE = process.env.BASE ?? 'http://127.0.0.1:3100';
+
 const SHOT_DIR = '/tmp/claude-1001/-home-ubuntu/fceaf7d3-c80b-49ac-8bb1-fa080f16e8b3/scratchpad';
 function b64url(input) { return Buffer.from(input).toString('base64').replace(/=+$/, '').replace(/\+/g, '-').replace(/\//g, '_'); }
 function signHS256(payload, secret) {
@@ -46,7 +50,7 @@ const pageA = await ctxA.newPage();
 pageA.on('pageerror', (e) => console.log('PAGE ERROR A:', e.message));
 
 const t1 = signHS256({ userId: users[0].id, exp }, JWT_SECRET);
-await pageA.goto('http://localhost:3000/');
+await pageA.goto(`${BASE}/`);
 await pageA.evaluate(({ token, user }) => {
   localStorage.setItem('ibconnect_jwt', token);
   localStorage.setItem('ibconnect_me', JSON.stringify(user));
@@ -68,7 +72,7 @@ for (let i = 1; i < users.length; i++) {
   await ctx.addInitScript(fakeMediaFn, { color: u.color });
   const page = await ctx.newPage();
   const t = signHS256({ userId: u.id, exp }, JWT_SECRET);
-  await page.goto('http://localhost:3000/');
+  await page.goto(`${BASE}/`);
   await page.evaluate(({ token, user }) => {
     localStorage.setItem('ibconnect_jwt', token);
     localStorage.setItem('ibconnect_me', JSON.stringify(user));

@@ -129,7 +129,12 @@ await host.waitForTimeout(7000);
 // Narrow the host so selectGridLayout drops to a 2-tile layout and the third
 // participant is pushed onto page 2 — the exact condition that used to silence them.
 console.log('Narrowing host viewport to force pagination…');
-await host.setViewportSize({ width: 400, height: 780 });
+// 320px, not 400. `selectGridLayout` used to fall back to a 2-tile layout at 400px
+// wide, but that was the non-monotonic bug fixed on 2026-08-17 — a 374px container now
+// correctly fits 6 tiles, so 3 participants no longer paginate there and this suite's
+// precondition silently stopped reproducing. 320px gives a 304px container, below the
+// 340px minimum for 2x3, so it genuinely lands on a 2-tile layout.
+await host.setViewportSize({ width: 320, height: 740 });
 await host.waitForTimeout(2500);
 
 // ── The measurements ──────────────────────────────────────────────────────────

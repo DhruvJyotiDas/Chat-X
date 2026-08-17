@@ -32,10 +32,21 @@ export const GRID_LAYOUTS: GridLayoutDefinition[] = [
   { columns: 1, rows: 2, orientation: 'portrait' },
   { columns: 2, rows: 1, orientation: 'landscape' },
   { columns: 2, rows: 2, minWidth: 480 },
-  { columns: 2, rows: 3, minWidth: 360, orientation: 'portrait' },
+  // minWidth is compared against the GRID CONTAINER, not the viewport, and the
+  // container is the viewport minus the stage padding (~16px at phone widths). At 360
+  // it therefore needed a >=376px viewport, so every 360px-wide Android — Galaxy S8/S9/
+  // S10e and most budget phones — fell back to 1x2 and showed TWO people, turning a
+  // six-person call into three pages. Measured container widths: 360px viewport -> 344,
+  // 390px -> 374. 340 clears the smallest of those.
+  { columns: 2, rows: 3, minWidth: 340, orientation: 'portrait' },
   { columns: 3, rows: 2, minWidth: 640, orientation: 'landscape' },
   { columns: 3, rows: 3, minWidth: 760 },
-  { columns: 4, rows: 3, minWidth: 960, orientation: 'landscape' },
+  // Was 960 (upstream's number). Portrait reaches 12 tiles at 640px via 3x4, but
+  // landscape had no 12-tile option until 960 — so dragging a window from 900 to 920px
+  // wide flipped the container from portrait to landscape, dropped capacity 12 -> 9, and
+  // cost a page in a large call. Widening a window should never show fewer people. 900
+  // closes the gap and still leaves 221x124 tiles at that width.
+  { columns: 4, rows: 3, minWidth: 900, orientation: 'landscape' },
   { columns: 3, rows: 4, minWidth: 640, orientation: 'portrait' },
   { columns: 4, rows: 4, minWidth: 1100 },
 ];
@@ -54,9 +65,20 @@ function expandAndSort(defs: GridLayoutDefinition[]): GridLayoutInfo[] {
 }
 
 /**
- * Picks the smallest grid that still fits `tileCount` tiles, preferring the definition
- * that matches the container's current orientation, then falls back to a smaller layout
- * if the container is too small (minWidth/minHeight) for that pick.
+ * Picks the smallest grid that holds `tileCount` tiles *and* actually fits the container.
+ *
+ * The original port picked the smallest layout by capacity first and, if the container
+ * turned out to be too narrow for it, recursed onto a layout with LESS capacity. That
+ * produced a non-monotonic result: on a measured 374px-wide phone, 3 people got a 2-tile
+ * layout and paginated, while 6 people got a 6-tile layout and did not. The cause is that
+ * 3 tiles selected `2x2` (which needs 480px), the container failed that, and the fallback
+ * stepped down to 2 instead of considering `2x3` — a TALLER layout that needs only 340px
+ * and holds twice as many. Capacity and container-fit are independent constraints, so
+ * they have to be applied independently rather than one after the other.
+ *
+ * Filtering by what the container can accommodate first, then taking the smallest
+ * sufficient capacity, is both simpler and monotonic — more participants can never mean
+ * more pages for the same container.
  */
 export function selectGridLayout(
   tileCount: number,
@@ -66,28 +88,22 @@ export function selectGridLayout(
 ): GridLayoutInfo {
   const layouts = expandAndSort(layoutDefs);
   if (layouts.length === 0) return { columns: 1, rows: 1, maxTiles: 1, minWidth: 0, minHeight: 0 };
+  // Container not measured yet (first render, before the ResizeObserver fires).
   if (width <= 0 || height <= 0) return layouts[0];
 
   const orientation: 'landscape' | 'portrait' = width / height > 1 ? 'landscape' : 'portrait';
 
-  let pickIndex = 0;
-  let pick = layouts.find((candidate, index, all) => {
-    pickIndex = index;
-    const biggerSameCapacityExists = all.some(
-      (l, i) =>
-        i > index &&
-        l.maxTiles === candidate.maxTiles &&
-        (!l.orientation || l.orientation === orientation),
-    );
-    return candidate.maxTiles >= tileCount && !biggerSameCapacityExists;
-  });
+  const fits = layouts.filter((l) => (
+    width >= l.minWidth
+    && height >= l.minHeight
+    && (!l.orientation || l.orientation === orientation)
+  ));
 
-  if (!pick) pick = layouts[layouts.length - 1];
+  // 1x1 carries no minimum and no orientation, so this only triggers on a
+  // pathological definition table.
+  if (fits.length === 0) return layouts[0];
 
-  if ((width < pick.minWidth || height < pick.minHeight) && pickIndex > 0) {
-    const smaller = layouts[pickIndex - 1];
-    return selectGridLayout(smaller.maxTiles, width, height, layouts.slice(0, pickIndex));
-  }
-
-  return pick;
+  // Smallest capacity that shows everyone, or the largest the container can manage —
+  // `usePagination` covers whoever is left over.
+  return fits.find((l) => l.maxTiles >= tileCount) ?? fits[fits.length - 1];
 }

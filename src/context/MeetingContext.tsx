@@ -1,7 +1,9 @@
 import React, { createContext, useCallback, useContext, useEffect, useRef, useState } from 'react';
 import { SignalingSocket } from '../lib/signalingSocket';
+import { useAuth } from './AuthContext';
 import { useWebRTC, PeerInfo, MediaPrefs } from '../hooks/useWebRTC';
 import { api } from '../lib/api';
+import { makeFloatingReaction, isReaction, REACTION_TTL_MS, type FloatingReaction } from '../lib/reactions';
 
 export interface AppUser { id: string; name: string; isGuest: boolean; }
 export interface LiveChatMessage { id: string; fromId: string; fromName: string; text: string; time: string; isSelf: boolean; }
@@ -41,10 +43,21 @@ interface MeetingContextType {
   screenStream: MediaStream | null;
   screenPeers: PeerInfo[];
   toggleMic: () => void;
+  /** Absolute mic control, used by push-to-talk. */
+  setMicMuted: (muted: boolean) => void;
   toggleCamera: () => Promise<void>;
   toggleScreenShare: () => Promise<void>;
   switchCamera: (deviceId: string) => Promise<void>;
   switchMic: (deviceId: string) => Promise<void>;
+  /** Live camera peer connections, for getStats() polling. Stable identity. */
+  getPeerConnections: () => ReadonlyMap<string, RTCPeerConnection>;
+  /** Reactions currently floating on screen; each expires on its own timer. */
+  reactions: FloatingReaction[];
+  sendReaction: (emoji: string) => void;
+  /** Peer ids with a raised hand, including your own when raised. */
+  raisedHands: ReadonlySet<string>;
+  isHandRaised: boolean;
+  toggleHand: () => void;
   chatMessages: LiveChatMessage[];
   sendChatMessage: (text: string) => void;
   showGuestModal: boolean;
@@ -111,6 +124,9 @@ export function MeetingProvider({ children }: { children: React.ReactNode }) {
   const [isRejoining, setIsRejoining] = useState(false);
   const [showInviteDialog, setShowInviteDialog] = useState(false);
   const [chatMessages, setChatMessages] = useState<LiveChatMessage[]>([]);
+  const [reactions, setReactions] = useState<FloatingReaction[]>([]);
+  const [raisedHands, setRaisedHands] = useState<ReadonlySet<string>>(() => new Set());
+  const [isHandRaised, setIsHandRaised] = useState(false);
   const [scheduledMeetings, setScheduledMeetings] = useState<ScheduledMeeting[]>([]);
   const [meetingError, setMeetingError] = useState<string | null>(null);
   const [showGuestModal, setShowGuestModal] = useState(false);
@@ -142,6 +158,39 @@ export function MeetingProvider({ children }: { children: React.ReactNode }) {
   const userIdRef = useRef(user.id);
   useEffect(() => { userIdRef.current = user.id; }, [user.id]);
   const currentRecordIdRef = useRef<string | null>(null);
+
+  // ── Identity must follow the signed-in account ─────────────────────────────
+  //
+  // The `useState` initialiser above reads `ibconnect_me` from localStorage exactly
+  // once, at mount. AuthContext writes that key *after* it resolves — on a fresh sign-in
+  // the OIDC callback calls `loginWithToken` well after MeetingProvider has mounted, so
+  // the initialiser found nothing and fell through to
+  // `{ id: getOrCreateUserId(), name: 'Guest' }` — and nothing ever re-read it.
+  //
+  // The consequences were all reported as separate bugs:
+  //   * `create_room` sent `user_name: "Guest"`, so everyone who joined by link saw the
+  //     host as "Guest" instead of their account name;
+  //   * it also sent a throwaway `user_id`, so the host occupied the room under an id
+  //     unrelated to their account — which breaks the server's same-user eviction on
+  //     reconnect and the `selfId < peerId` politeness tie-break;
+  //   * `raisedHands` was keyed by `getOrCreateUserId()` while tiles are keyed by
+  //     `user.id`, so your own raised hand never appeared on your own tile.
+  //
+  // Syncing from AuthContext fixes all three at the source. There was already a
+  // `getFreshName()` helper written for this and never called; it is gone now.
+  const { currentUser } = useAuth();
+  useEffect(() => {
+    if (!currentUser) return;
+    setUser((prev) => {
+      if (prev.id === currentUser.id && prev.name === currentUser.displayName && !prev.isGuest) return prev;
+      // Refs are written synchronously as well as through state: a user who signs in and
+      // immediately creates a room would otherwise send the stale closure-captured value,
+      // which is the same race `nameRef` already exists to close for guests.
+      nameRef.current = currentUser.displayName;
+      userIdRef.current = currentUser.id;
+      return { id: currentUser.id, name: currentUser.displayName, isGuest: false };
+    });
+  }, [currentUser]);
 
   const refreshScheduledMeetings = useCallback(async () => {
     try {
@@ -220,7 +269,33 @@ export function MeetingProvider({ children }: { children: React.ReactNode }) {
   const connectSocket = useCallback(async (): Promise<SignalingSocket> => {
     if (socketRef.current?.isOpen) return socketRef.current;
     const s = new SignalingSocket(WS_URL, () => reconnectRef.current());
-    s.on('chat_message', (p: any) => setChatMessages(prev => [...prev, { id: `chat-${Date.now()}-${Math.random()}`, fromId: p.from_id, fromName: p.from_name, text: p.text, time: p.time, isSelf: p.from_id === getOrCreateUserId() }]));
+    s.on('chat_message', (p: any) => setChatMessages(prev => [...prev, { id: `chat-${Date.now()}-${Math.random()}`, fromId: p.from_id, fromName: p.from_name, text: p.text, time: p.time, isSelf: p.from_id === userIdRef.current }]));
+    // Reactions expire on their own timer rather than being cleared by the sender,
+    // so a peer who leaves mid-animation does not strand one on screen forever.
+    s.on('reaction', (p: any) => {
+      if (!isReaction(String(p?.emoji ?? ''))) return;
+      const rx = makeFloatingReaction(p.peer_id, p.peer_name ?? 'Someone', p.emoji);
+      setReactions((prev) => [...prev, rx]);
+      setTimeout(() => setReactions((prev) => prev.filter((r) => r.id !== rx.id)), REACTION_TTL_MS);
+    });
+    s.on('hand_state', (p: any) => {
+      setRaisedHands((prev) => {
+        const next = new Set(prev);
+        if (p?.raised) next.add(p.peer_id); else next.delete(p.peer_id);
+        return next;
+      });
+    });
+    // A hand belongs to a participant, so it has to come down when they leave —
+    // otherwise the roster shows a raised hand for someone who is no longer in
+    // the room and nobody can lower it.
+    s.on('peer_left', (p: any) => {
+      setRaisedHands((prev) => {
+        if (!prev.has(p?.peer_id)) return prev;
+        const next = new Set(prev);
+        next.delete(p.peer_id);
+        return next;
+      });
+    });
     s.on('error', (p: any) => setMeetingError(p.message));
     await s.connect();
     socketRef.current = s; setSocketInstance(s); return s;
@@ -267,15 +342,6 @@ export function MeetingProvider({ children }: { children: React.ReactNode }) {
   }, [webrtc]);
   useEffect(() => { reconnectRef.current = reenterRoom; }, [reenterRoom]);
 
-  const getFreshName = () => {
-    let freshName = user.name;
-    try {
-      const meStr = localStorage.getItem('ibconnect_me');
-      if (meStr) { const meObj = JSON.parse(meStr); if (meObj.displayName) freshName = meObj.displayName; }
-    } catch (e) {}
-    return freshName;
-  };
-
   const createMeeting = useCallback(async (customCode?: string, title?: string): Promise<string> => {
     try {
       setMeetingError(null);
@@ -299,7 +365,7 @@ export function MeetingProvider({ children }: { children: React.ReactNode }) {
           saveMeetingRecord(p.room_id, true, title); resolve(p.room_id);
         });
         const errUnsub = s.on('error', (p: any) => { errUnsub(); unsub(); reject(new Error(p.message)); });
-        s.send('create_room', { room_id: customCode, user_id: user.id, user_name: nameRef.current, meeting_title: title });
+        s.send('create_room', { room_id: customCode, user_id: userIdRef.current, user_name: nameRef.current, meeting_title: title });
       });
     } catch (err: any) { setMeetingError(err.message || 'Failed to create meeting'); throw err; }
   }, [user.id, webrtc, connectSocket, saveMeetingRecord]);
@@ -329,7 +395,7 @@ export function MeetingProvider({ children }: { children: React.ReactNode }) {
           resolve(trimmedCode);
         });
         const errUnsub = s.on('error', (p: any) => { errUnsub(); unsub(); reject(new Error(p.message)); });
-        s.send('join_room', { room_id: trimmedCode, user_id: user.id, user_name: nameRef.current });
+        s.send('join_room', { room_id: trimmedCode, user_id: userIdRef.current, user_name: nameRef.current });
       });
     } catch (err: any) {
       const ownedMeeting = scheduledMeetings.find(m => m.code === trimmedCode);
@@ -355,6 +421,9 @@ export function MeetingProvider({ children }: { children: React.ReactNode }) {
     socketRef.current?.send('leave_room', {}); socketRef.current?.disconnect();
     socketRef.current = null; setSocketInstance(null); webrtc.cleanup();
     setIsInMeeting(false); setIsMinimized(false); setRoomId(null); setIsHost(false); setShowInviteDialog(false); setChatMessages([]);
+    // Leftover hands and reactions would reappear on the next call, attributed to
+    // peers from the room that just ended.
+    setReactions([]); setRaisedHands(new Set()); setIsHandRaised(false);
     setIsRejoining(false);
   }, [webrtc, updateMeetingRecord]);
 
@@ -397,7 +466,7 @@ export function MeetingProvider({ children }: { children: React.ReactNode }) {
     if (socketRef.current?.isOpen && text.trim()) {
       const localMsg: LiveChatMessage = {
         id: `chat-local-${Date.now()}`,
-        fromId: getOrCreateUserId(),
+        fromId: userIdRef.current,
         fromName: user.name,
         text: text.trim(),
         time: new Date().toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' }),
@@ -407,6 +476,31 @@ export function MeetingProvider({ children }: { children: React.ReactNode }) {
       socketRef.current.send('chat_message', { text: text.trim() }); 
     }
   }, [user.name]);
+
+  // Your own reaction is rendered locally as well as broadcast: the server relays to
+  // everyone *except* the sender, so without this you would be the only person in the
+  // room who could not see what you just sent.
+  const sendReaction = useCallback((emoji: string) => {
+    if (!socketRef.current?.isOpen || !isReaction(emoji)) return;
+    socketRef.current.send('reaction', { emoji });
+    const rx = makeFloatingReaction(userIdRef.current, user.name, emoji);
+    setReactions((prev) => [...prev, rx]);
+    setTimeout(() => setReactions((prev) => prev.filter((r) => r.id !== rx.id)), REACTION_TTL_MS);
+  }, [user.name]);
+
+  const toggleHand = useCallback(() => {
+    setIsHandRaised((wasRaised) => {
+      const raised = !wasRaised;
+      socketRef.current?.send('hand_state', { raised });
+      const selfId = userIdRef.current;
+      setRaisedHands((prev) => {
+        const next = new Set(prev);
+        if (raised) next.add(selfId); else next.delete(selfId);
+        return next;
+      });
+      return raised;
+    });
+  }, []);
 
   const setPendingAction = useCallback((code: string | null) => { setPendingJoinCode(code); setShowGuestModal(true); }, []);
   const dismissGuestModal = useCallback(() => { setShowGuestModal(false); setPendingJoinCode(null); }, []);
@@ -419,8 +513,10 @@ export function MeetingProvider({ children }: { children: React.ReactNode }) {
       localStream: webrtc.localStream, peers: webrtc.peers, isMuted: webrtc.isMuted, isVideoOff: webrtc.isVideoOff, isScreenSharing: webrtc.isScreenSharing,
       mediaNotice: webrtc.mediaNotice, dismissMediaNotice: webrtc.dismissMediaNotice,
       screenStream: webrtc.screenStream, screenPeers: webrtc.screenPeers,
-      toggleMic: webrtc.toggleMic, toggleCamera: webrtc.toggleCamera, toggleScreenShare: webrtc.toggleScreenShare,
+      toggleMic: webrtc.toggleMic, setMicMuted: webrtc.setMicMuted, toggleCamera: webrtc.toggleCamera, toggleScreenShare: webrtc.toggleScreenShare,
       switchCamera: webrtc.switchCamera, switchMic: webrtc.switchMic,
+      getPeerConnections: webrtc.getPeerConnections,
+      reactions, sendReaction, raisedHands, isHandRaised, toggleHand,
       chatMessages, sendChatMessage, showGuestModal, pendingJoinCode, setPendingAction, dismissGuestModal, meetingError, clearMeetingError
     }}>
       {children}

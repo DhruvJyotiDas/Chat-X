@@ -3,6 +3,7 @@ import { createPortal } from 'react-dom';
 import { Mic, MicOff, Video, VideoOff, PhoneOff, Maximize2 } from 'lucide-react';
 import { useMeeting } from '../../context/MeetingContext';
 import { PeerInfo } from '../../hooks/useWebRTC';
+import { registerAudioSink } from '../../lib/audioOutput';
 
 const MARGIN = 12;
 
@@ -19,11 +20,15 @@ function PeerAudio({ peer }: { peer: PeerInfo }) {
     const el = ref.current;
     if (!el || !peer.stream) return;
     if (el.srcObject !== peer.stream) el.srcObject = peer.stream;
+    // The floating window mounts its own audio elements, separate from the set in
+    // ActiveMeetingView, so they need routing to the chosen speaker too — otherwise
+    // minimising a call silently moves everyone back to the system default output.
+    const unregister = registerAudioSink(el);
     const tryPlay = () => el.play().catch(() => {});
     tryPlay();
     // A rejected autoplay leaves this silently paused; retry on the next interaction.
     window.addEventListener('pointerdown', tryPlay, { once: true });
-    return () => window.removeEventListener('pointerdown', tryPlay);
+    return () => { window.removeEventListener('pointerdown', tryPlay); unregister(); };
   }, [peer.stream]);
   return <audio ref={ref} autoPlay playsInline className="hidden" />;
 }

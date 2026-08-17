@@ -7,6 +7,10 @@ import { chromium } from 'playwright';
 import crypto from 'crypto';
 import { mkdirSync } from 'fs';
 
+// CLAUDE.md claimed every _verify_ script honoured BASE; these two did not — the dev
+// server port has moved since they were written, so they failed outright.
+const BASE = process.env.BASE ?? 'http://127.0.0.1:3100';
+
 const SHOT_DIR = process.env.SHOT_DIR || './_verify_tiling_shots';
 mkdirSync(SHOT_DIR, { recursive: true });
 
@@ -84,7 +88,7 @@ pageA.on('pageerror', (e) => errorsA.push(e.message));
 pageB.on('pageerror', (e) => errorsB.push(e.message));
 
 console.log('1. Logging in both contexts...');
-await pageA.goto('http://localhost:3000/');
+await pageA.goto(`${BASE}/`);
 await pageA.evaluate(({ token, user }) => {
   localStorage.setItem('ibconnect_jwt', token);
   localStorage.setItem('ibconnect_me', user);
@@ -92,7 +96,7 @@ await pageA.evaluate(({ token, user }) => {
 await pageA.reload();
 await pageA.waitForTimeout(1200);
 
-await pageB.goto('http://localhost:3000/');
+await pageB.goto(`${BASE}/`);
 await pageB.evaluate(({ token, user }) => {
   localStorage.setItem('ibconnect_jwt', token);
   localStorage.setItem('ibconnect_me', user);
