@@ -1287,6 +1287,11 @@ type Room struct {
 
 const emptyRoomGrace = 90 * time.Second
 
+// WebSocket close codes 4000-4999 are reserved for private/application use per RFC
+// 6455 6.4. Sent to a socket evicted by enterRoom (see there for why this matters —
+// without it the client sees code 1006 and reconnects straight into another eviction).
+const evictedCode = 4001
+
 // Signaling keepalive. A call can legitimately sit idle on the wire for minutes
 // (media flows peer-to-peer, not through here), so nothing else would notice a
 // dead socket. Same shape as the chat WS's ping loop.
@@ -1435,6 +1440,17 @@ func enterRoom(client *SigClient, room *Room) []PeerInfo {
 	if prev != nil && prev != client {
 		log.Printf("[Signaling] EVICT %s (%s) from room %s — same user id reconnected (second tab/device or reload)",
 			client.id, client.name, room.id)
+		// A bare Close() sends no close frame, so the evicted browser sees an
+		// uninformative code 1006 ("abnormal") — indistinguishable from a real network
+		// failure. Its reconnect logic then treats it as transient and immediately
+		// reconnects, which evicts THIS connection in turn: two tabs/devices of the
+		// same account can fight over the seat forever, each eviction tearing down and
+		// rebuilding every WebRTC connection in the room, which is why "my video keeps
+		// coming and going" is the symptom this produces for anyone in a call with that
+		// user — not just the two competing tabs. evictedCode lets the client recognise
+		// this specific case and stop reconnecting instead of fighting back.
+		closeMsg := websocket.FormatCloseMessage(evictedCode, "evicted: signed in from another device or tab")
+		_ = prev.conn.WriteControl(websocket.CloseMessage, closeMsg, time.Now().Add(2*time.Second))
 		prev.conn.Close()
 	}
 	client.room = room

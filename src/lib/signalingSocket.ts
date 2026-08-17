@@ -21,7 +21,20 @@ const CLOSE_CODES: Record<number, string> = {
   1012: 'server restarting',
   1013: 'try again later',
   1015: 'TLS failure',
+  4001: 'evicted — signed in from another device or tab',
 };
+
+/**
+ * Sent by `enterRoom` (server/main.go) when a second tab/device connects with the same
+ * user id. Reconnecting into an eviction just gets evicted again — two tabs of the same
+ * account can otherwise fight over the seat forever, each round tearing down and
+ * rebuilding every WebRTC connection in the room, which is what makes it look like
+ * "my video keeps coming and going" to everyone else in the call, not just the two
+ * competing tabs. Before this code existed the close carried no frame at all, so the
+ * loser saw a bare 1006 ("abnormal") — indistinguishable from a real network drop, and
+ * exactly what kept the fight going.
+ */
+const EVICTED_CODE = 4001;
 
 export class SignalingSocket {
   private ws: WebSocket | null = null;
@@ -30,12 +43,14 @@ export class SignalingSocket {
   private intentionalClose = false;
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   private onReconnect?: () => void;
+  private onEvicted?: () => void;
   private attempt = 0;
   private openedAt = 0;
 
-  constructor(url: string, onReconnect?: () => void) {
+  constructor(url: string, onReconnect?: () => void, onEvicted?: () => void) {
     this.url = url;
     this.onReconnect = onReconnect;
+    this.onEvicted = onEvicted;
   }
 
   connect(): Promise<void> {
@@ -75,6 +90,12 @@ export class SignalingSocket {
           intentional: this.intentionalClose,
         });
         if (!settled) { settled = true; reject(new Error('WebSocket closed before opening')); }
+        if (ev.code === EVICTED_CODE) {
+          // Do NOT reconnect — see EVICTED_CODE above. Reconnecting here is exactly
+          // the behaviour that turns one eviction into an endless fight.
+          this.onEvicted?.();
+          return;
+        }
         if (!this.intentionalClose) void this.scheduleReconnect();
       };
 

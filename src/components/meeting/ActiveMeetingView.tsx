@@ -21,6 +21,7 @@ import { watchDevices, resolveSelection, loadDevicePrefs, EMPTY_SNAPSHOT, type D
 import { useConnectionQuality, type PeerLink } from '../../hooks/useConnectionQuality';
 import { useTileOrder } from '../../hooks/useTileOrder';
 import { useHasVideo } from '../../hooks/useHasVideo';
+import { useStalledVideoRecovery } from '../../hooks/useStalledVideoRecovery';
 import { useSilentMic } from '../../hooks/useSilentMic';
 import { useCallShortcuts, SHORTCUT_HINTS } from '../../hooks/useCallShortcuts';
 import { REACTIONS } from '../../lib/reactions';
@@ -405,7 +406,24 @@ function RemoteTile({ peer }: { peer: PeerInfo }) {
   // A peer who turns their camera off still has a stream — it carries their audio —
   // so `!peer.stream` alone never caught it. The <video> kept the last decoded frame
   // painted, which looked exactly like a frozen connection.
-  const hasVideo = useHasVideo(peer.stream);
+  //
+  // `stillConnecting` matters separately: a BRAND NEW connection can show zero video
+  // (or a muted track) for a few seconds while video negotiation finishes, which is
+  // normal and happens on every existing participant's connection to whoever just
+  // joined. Without this, that startup window showed the same "Camera off" label as a
+  // real, deliberate camera stop — wrong wording for someone simply still connecting,
+  // and on a real network that window can flicker through more than once before
+  // settling. See useHasVideo for the full story, including why it still converges to
+  // "Camera off" for someone who genuinely has no camera, just after a short grace.
+  const { hasVideo, stillConnecting } = useHasVideo(peer.stream);
+
+  // `hasVideo` alone cannot catch a link that is 'connected' and still marked live but
+  // has quietly stopped decoding — see useStalledVideoRecovery for why. This is a
+  // separate failure mode from camera-off and needs an active repair, not just a
+  // different overlay.
+  const { restartPeerConnection } = useMeeting();
+  const onStalled = useCallback(() => restartPeerConnection(peer.id), [restartPeerConnection, peer.id]);
+  useStalledVideoRecovery(ref, hasVideo, onStalled);
 
   if (!peer.stream) {
     return (
@@ -439,15 +457,24 @@ function RemoteTile({ peer }: { peer: PeerInfo }) {
           drop the srcObject, so turning the camera back on would have to re-attach and
           re-negotiate autoplay. Keeping it mounted and hidden means the picture returns
           the instant frames do. Deliberately worded and styled apart from "Connecting…"
-          — a camera that is off is a choice, not a fault. */}
+          — a camera that is off is a choice, not a fault — but only once we've actually
+          seen it be on: a track that exists but has never yet decoded a frame (a peer
+          who just joined, still negotiating) gets "Connecting…" instead, same wording as
+          the `!peer.stream` branch above. Someone with NO video track at all — joined
+          camera-off, or genuinely toggled it off — skips straight to "Camera off", same
+          as before this distinction existed. */}
       {!hasVideo && (
         <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 bg-[#202124]">
           <div className="w-14 h-14 md:w-16 md:h-16 rounded-full bg-[#c0c1ff]/10 flex items-center justify-center border border-[#c0c1ff]/20">
             <span className="text-xl md:text-2xl font-bold text-[#c0c1ff]">{peer.name.charAt(0).toUpperCase()}</span>
           </div>
-          <span className="text-[9px] md:text-[10px] text-[#9aa0a6] flex items-center gap-1">
-            <VideoOff className="w-3 h-3" />Camera off
-          </span>
+          {stillConnecting ? (
+            <span className="text-[9px] md:text-[10px] text-[#8ab4f8] animate-pulse">Connecting…</span>
+          ) : (
+            <span className="text-[9px] md:text-[10px] text-[#9aa0a6] flex items-center gap-1">
+              <VideoOff className="w-3 h-3" />Camera off
+            </span>
+          )}
         </div>
       )}
     </>
@@ -881,7 +908,7 @@ const KP_COLORS: Record<string, string> = {
 };
 
 export default function ActiveMeetingView({ onLeaveMeeting, onMinimize }: Props) {
-  const { user, roomId, localStream, peers, isMuted, isVideoOff, isScreenSharing, screenStream, screenPeers, toggleMic, setMicMuted, toggleCamera, toggleScreenShare, switchCamera, switchMic, leaveMeeting, chatMessages, sendChatMessage, showInviteDialog, dismissInviteDialog, mediaNotice, dismissMediaNotice, getPeerConnections, reactions, sendReaction, raisedHands, isHandRaised, toggleHand } = useMeeting();
+  const { user, roomId, localStream, peers, isMuted, isVideoOff, isScreenSharing, screenStream, screenPeers, toggleMic, setMicMuted, toggleCamera, toggleScreenShare, switchCamera, switchMic, leaveMeeting, chatMessages, sendChatMessage, showInviteDialog, dismissInviteDialog, evictedNotice, dismissEvictedNotice, mediaNotice, dismissMediaNotice, getPeerConnections, reactions, sendReaction, raisedHands, isHandRaised, toggleHand } = useMeeting();
 
   // Per-peer link grades, read from getStats(). Nothing in the app used to call
   // getStats() at all, so a degraded call produced no client-side evidence whatsoever.
@@ -1177,6 +1204,25 @@ export default function ActiveMeetingView({ onLeaveMeeting, onMinimize }: Props)
       {peers.map((p) => (
         <div key={`audio-${p.id}`}>{p.stream ? <PeerAudio peer={p} /> : null}</div>
       ))}
+
+      {/* This tab lost its seat to the same account connecting elsewhere (see
+          EVICTED_CODE in signalingSocket.ts) — the socket has deliberately stopped
+          reconnecting, so nothing on this screen will update again. Above mediaNotice
+          (a worse, whole-connection-dead state deserves priority) and the only way to
+          clear it is to actually leave — dismissing without leaving would just hide the
+          message while this tab sits there uselessly with the camera/mic still live. */}
+      {evictedNotice && (
+        <div className="absolute top-3 left-1/2 -translate-x-1/2 z-[10002] max-w-[92vw] sm:max-w-md flex items-start gap-3 bg-[#3c2b28] border border-[#f28b82]/50 text-[#f6d5d2] rounded-xl px-4 py-3 shadow-2xl">
+          <AlertTriangle className="w-4 h-4 text-[#f28b82] shrink-0 mt-0.5" />
+          <p className="text-xs leading-relaxed flex-1">{evictedNotice}</p>
+          <button
+            onClick={() => { dismissEvictedNotice(); leaveMeeting(); }}
+            className="shrink-0 text-xs font-semibold px-2.5 py-1 -mt-0.5 -mr-1 rounded-lg bg-white/10 hover:bg-white/20 transition-colors cursor-pointer"
+          >
+            Leave
+          </button>
+        </div>
+      )}
 
       {/* Non-fatal media problems. Without this a failed camera re-acquire (permission
           revoked mid-call, or another app grabbed the device) left the button looking

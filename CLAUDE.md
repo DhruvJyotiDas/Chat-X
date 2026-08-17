@@ -316,6 +316,11 @@ rejected autoplay leaves exactly that state (see `playWhenAllowed` under WebRTC)
 | `_verify_grid_layout.ts` | **`npx tsx`, not node** — property checks on `selectGridLayout`/`computeTileSize`: per-container ceilings against MEASURED sizes, monotonicity, container-fit, orientation, 16:9, no overflow |
 | `_verify_tile_order.ts` | **`npx tsx`** — 27 checks on `orderTiles`: ranking, visual stability, promotion, the anti-flicker hold, degenerate inputs |
 | `_verify_identity_and_camera.mjs` | 16 checks: host identity as joiners see it (starts with `ibconnect_me` ABSENT on purpose), own raised hand on own tile, and camera-off showing an avatar instead of a frozen frame both mid-call and for someone who joined with it off |
+| `_verify_stall_detector.ts` | **`npx tsx`** — 14 checks on `StallTracker` (src/lib/stallDetector.ts): steady playback never trips it, exact threshold boundary, cooldown, sub-frame jitter isn't mistaken for progress, currentTime going backwards doesn't crash or false-trigger |
+| `_verify_asymmetric_video_recovery.mjs` | 12 checks, three real browsers (one sender, two independent viewers): reproduces the literal reported bug (same sender's video fine on one viewer's screen, frozen on another's, same room, same instant) by freezing one viewer's decoded playback only, then confirms `useStalledVideoRecovery` repairs *only* that one connection (renegotiates specifically with the stalled peer) while the healthy viewer's link is never touched |
+| `_verify_join_video_wording.mjs` | 7 checks: a healthy camera-on join never shows "Camera off" (from both an existing peer's and a new joiner's perspective), a camera-off join still settles to "Camera off" after the grace period rather than "Connecting…" forever. Its fake-camera stub is the reference pattern for passing data into `addInitScript` correctly — see the file header for the closure gotcha it replaced |
+| `_verify_eviction_fix.mjs` | 8 checks, two connections as the same user id in the same room (the two-tabs/two-devices scenario): the eviction close carries code 4001 not 1006, the evicted side makes zero reconnect attempts, the "connected elsewhere" notice is shown, the surviving connection is unaffected |
+| `_verify_guest_reconnect.mjs` | 6 checks: kills a guest's signalling socket without a page reload (a phone locking its screen), asserts the guest is never wrongly told their session expired, and the host recovers the guest's LIVE video rather than a stuck/gone tile |
 
 **Simulating a dead socket** (for the reconnect path): wrap `window.WebSocket` in an `addInitScript` to
 collect instances on `window.__sockets`, then `.close()` the one whose `url` contains `/ws`. That
@@ -331,6 +336,284 @@ under an off-canvas transform, i.e. the closed sidebar drawer at `translateX(-10
 decorative child triggers it.
 
 ## Recent work log
+
+**2026-08-17 (seventh), "when someone joins my room I cannot see their camera feed, it's
+always black or shows camera off" (DEPLOYED — frontend only, no backend change, so no
+calls were dropped):**
+Reported right after the previous fix, with a real, active room to investigate against.
+The "five or more STUN/TURN servers" line the user also pasted is a benign Chrome
+console notice (more ICE candidate URLs than usual — costs a little discovery time, not
+an error) — not related. Checked the real candidate-pair diagnostics for their actual
+call first: `host/host, 2-4ms` both directions, so this was never a network/TURN/ICE
+connectivity problem. The real cause was in signalling reconnection, not media.
+- **Root cause: `classifyDisconnect()` (src/lib/diagnostics.ts) treated a guest's
+  normal, expected 401 as a dead session and permanently stopped them reconnecting.**
+  It probes `/api/auth/me` on every signalling disconnect to tell a dead session from a
+  real network blip, and treats ANY 401/403 as `session-expired`. But a guest joining by
+  link never has `ibconnect_jwt` in the first place — `/ws` doesn't require auth (see
+  "Session lifecycle" above) — so `/api/auth/me` returning 401 for them isn't evidence
+  of anything, it's the *only* answer it could ever give. Every guest whose signalling
+  socket dropped even once — a phone locking its screen, a wifi→cellular handoff, both
+  routine on a real network and far more common than on this fast test box — got
+  `reportSessionExpired()` fired for them: no reconnect, "signing out" logged for an
+  account that was never signed in. From the host's side this is indistinguishable from
+  the reported symptom: the server broadcasts `peer_left` for the dead connection, no
+  `peer_joined` ever follows because the guest gave up, and whatever the guest's tile
+  showed at that instant (frozen, "Camera off", or gone) is what it's stuck on forever.
+  **Reproduced directly**: killed a guest's `/ws` socket without a page reload (matching
+  CLAUDE.md's own documented simulate-a-dead-socket technique) — console showed
+  `disconnected {code:1005, wasClean:true}` → `disconnect classified {cause:
+  session-expired}` → `session expired — signing out` → `clearing local session and
+  returning to sign-in`, and the host's page permanently lost the guest's tile entirely
+  (not black — gone, `document.querySelectorAll('video')` down to just the host's own).
+  **Fix**: `classifyDisconnect()` now short-circuits to `'network'` (normal
+  reconnection, no session-expiry fan-out) when there is no token in `localStorage` at
+  all, before ever probing `/api/auth/me`. A signed-in user's 401 is unaffected and
+  still correctly means `'session-expired'` — `_verify_session_expiry.mjs` guards that
+  distinction explicitly (10/10, unchanged).
+  **Note, not chased further**: the underlying reason the guest's reconnected socket
+  died again ~8s later (`code 1005`, clean, no obvious trigger) wasn't root-caused —
+  the fix makes the system self-heal through it via the existing reconnect/backoff
+  design regardless of why it happens, which is the same resilience philosophy the
+  2026-08-13 session-expiry work already established. Worth another look if it turns
+  out to recur often for real users rather than settling after one or two cycles.
+- Verified against production: new `_verify_guest_reconnect.mjs` (kills a guest's
+  signalling socket without a page reload, asserts the host recovers the guest's LIVE
+  video rather than a stuck/gone tile, and that the guest is never wrongly told their
+  session expired) **6/6**. Directly re-reproduced the exact failing scenario against
+  the fixed bundle and confirmed the full chain now completes:
+  `disconnect classified {cause: network}` → `reconnect scheduled` → `connected` →
+  fresh `peer_joined` + `offer` received by the host → guest's tile shows live video
+  again. Full regression battery re-run clean: `_verify_session_expiry` 10/10 (both the
+  real-session-expiry case AND the valid-token regression guard), `_verify_reconnect_rejoin`
+  full pass, `_verify_meeting_fixes` 20/20, `_verify_identity_and_camera` 16/16,
+  `_verify_eviction_fix` 8/8 (confirms this fix didn't reopen the previous one — both
+  touch signalling reconnection logic). `tsc --noEmit` clean. Bundle
+  `index-CaRDknyx.js` -> `index-C6iDpMVI.js`.
+
+**2026-08-17 (sixth), "my video keeps coming and going" — two devices fighting over one
+seat (DEPLOYED — backend rebuilt/restarted *and* frontend rsynced):**
+User pasted their own console log: `[ib:signaling] disconnected {code:1006, ...
+heldOpenMs:1437}`, reconnecting, disconnecting again, on a ~1.5-3s cycle, forever. The
+backend log for their account (`dhruv`) showed **107 evictions in 20 minutes**, and two
+different user-agents (Android Chrome + Windows Firefox) — they had the same meeting
+open on two devices at once.
+- **Root cause, and the code had already half-predicted it.** `enterRoom` (server/main.go)
+  evicts a previous connection holding the same user id with a bare `prev.conn.Close()`
+  — no close frame. The evicted browser therefore sees code **1006** ("abnormal, no
+  close frame") — indistinguishable from a real network drop — so `classifyDisconnect()`
+  calls it `cause: "network"` and reconnects. Reconnecting evicts the OTHER device's
+  connection in turn, which reconnects, which evicts this one again: **an unbounded
+  fight over one seat**, and every round tears down and rebuilds every WebRTC connection
+  in the room — which is why it looks like "video keeps coming and going" to whoever is
+  actually in the call with that person, not just on the two competing tabs/devices. A
+  2026-08-10-incident comment already sitting right above this code called it: "Whether
+  one user should be able to hold two seats is a product decision, but it must at least
+  be diagnosable" — it was diagnosable, just not yet fixed.
+- **Fix.** New `evictedCode = 4001` (application-defined range, RFC 6455 §6.4) sent via
+  a real `websocket.WriteControl(CloseMessage, ...)` before the close. Client-side,
+  `signalingSocket.ts` recognises 4001 and does **not** reconnect — that's what breaks
+  the loop — and calls a new `onEvicted` callback instead of the usual
+  `scheduleReconnect()`. `MeetingContext` wires that to a new `evictedNotice` state,
+  rendered in `ActiveMeetingView` as a banner above `mediaNotice` (a whole-connection-dead
+  state outranks a media-device warning) reading "You've joined this meeting from another
+  device or tab — this window is no longer connected." Its only action is **Leave** —
+  dismissing without leaving would just hide the message while the tab sat there
+  uselessly with camera/mic still live, so dismiss and `leaveMeeting()` are the same
+  button. `evictedNotice` is cleared at the start of both `createMeeting`/`joinMeeting` so
+  it can never leak from a previous meeting into a new one.
+- **Immediate workaround given to the user before the fix was even deployed**: close the
+  meeting on whichever device isn't actively being used — one live socket can't fight
+  itself, so that alone stops the loop instantly. Confirmed after deploy: **0 evictions**
+  in the 90 seconds following the restart, versus ~5+/minute immediately before it.
+- **No equivalent bug on `/chat-ws`** — checked; there is no per-user-id eviction there,
+  only on the signalling socket in `enterRoom`.
+- Verified against production: new `_verify_eviction_fix.mjs` (two connections as the
+  same user id in the same room, the literal two-devices scenario) **8/8** — eviction
+  close carries code 4001 not 1006, the evicted side makes **zero** reconnect attempts
+  (1 total open-attempt logged, vs. climbing forever before the fix), the notice text is
+  shown, and the surviving connection is completely unaffected. Full regression battery
+  re-run clean: `_verify_meeting_fixes` 20/20, `_verify_reconnect_rejoin` full pass
+  (media liveness "ALL PLAYING" on both sides, before and after a reload),
+  `_verify_identity_and_camera` 16/16, `_verify_call_upgrades` 38/38,
+  `_verify_multiparty_audio` 12/12. `go build` and `tsc --noEmit` clean. Bundle
+  `index-0tKZHZCO.js` -> `index-CaRDknyx.js`; backend rollback saved as
+  `server/ibconnect-backend.rollback.<unix-ts>`. Checked for other real (non-test) room
+  activity before restarting the backend — none besides the affected user's own loop, so
+  nobody else's call was interrupted by the restart.
+
+**2026-08-17 (fifth), "when I join it repeatedly turns off camera and turns on camera for
+people" (DEPLOYED — frontend only, no backend change, so no calls were dropped):**
+Two real, independent fixes, plus a significant false lead worth documenting so it isn't
+chased again.
+
+- **Real fix: `useHasVideo` mislabelled a normal connection startup as "Camera off".**
+  A brand-new peer connection's video can be absent (audio and video negotiate as
+  separate transceivers that don't necessarily complete together — audio's `ontrack` can
+  fire before video's) or present-but-`muted:true` (spec behaviour until the first frame
+  decodes) for the first few seconds. Both looked identical to "no camera at all" and
+  showed the "Camera off" avatar — wrong wording for someone simply still connecting, on
+  every OTHER existing participant's connection, every time anyone joins. A track-presence
+  check alone can't tell "hasn't attached yet" apart from "peer genuinely has no camera"
+  — both are zero live video. What can: **time**. New `stillConnecting` in
+  `src/hooks/useHasVideo.ts`: true while a stream that has never once shown live video is
+  within `GRACE_MS` (6s) of first appearing; `RemoteTile` shows "Connecting…" during that
+  window instead of "Camera off", and still correctly settles to "Camera off" once grace
+  elapses for a peer who genuinely has no camera (join-with-camera-off must NOT show
+  "Connecting…" forever — verified unchanged, both by `_verify_identity_and_camera.mjs`
+  16/16 and by the new suite below).
+- **Real fix, independent: an unserialized `setParameters()` race in `useWebRTC.ts`.**
+  `applyCameraBudgets` reapplies bitrate/scale to every EXISTING camera connection
+  whenever the participant count changes (i.e. on every join or leave), and called
+  `applyVideoBudget` → `sender.setParameters()` directly. But `createOfferFor`/
+  `handleOffer` also call `applyVideoBudget` on that same sender, inside their own
+  per-peer `serialize` queue (the same queue negotiation uses to stop offer/answer steps
+  for one peer interleaving). An unserialized call from `applyCameraBudgets` could land
+  concurrently with one of those: both read `getParameters()`, both mutate their own
+  copy, whichever `setParameters()` commits second can overwrite the other's encodings.
+  Now routed through the same `serialize(peerId, ...)` queue. Real and worth keeping
+  regardless of the false lead below — it just wasn't the cause of what that lead found.
+- **False lead, worth documenting in full because it cost real investigation time.**
+  Chasing "does video ever actually attach" turned up an apparently severe, persistent
+  symptom — a peer's video stream showing **zero video tracks, forever**, not a brief
+  flicker — reproduced reliably across several test scripts. Root cause, eventually:
+  those scripts' fake-camera stub was `(color, video) => (c) => {...}` passed to
+  `ctx.addInitScript(stub(color, video))` — i.e. relying on `video` as a variable closed
+  over from Node.js. **Playwright's `addInitScript(fn)` serializes the function via
+  `fn.toString()` and re-evaluates the source text fresh in the browser context — it
+  does NOT preserve JavaScript closures over the calling scope.** Referencing `video`
+  inside the reconstructed function threw `ReferenceError: video is not defined` INSIDE
+  the stubbed `getUserMedia`, silently rejecting every video request — manufacturing an
+  extremely convincing but entirely fake "video never attaches" symptom. Confirmed by
+  reproducing the bare `ReferenceError` directly, isolated from the rest of the harness.
+  A single-parameter version of the same pattern had accidentally "worked" earlier only
+  because its inner function's own parameter happened to shadow the outer one — pure
+  luck, not a correct pattern, and it's what let this go unnoticed for as long as it did.
+  **Also chased and now believed to be real but separately environment-dependent, not
+  reproduced with a corrected harness**: heavy concurrent DOM polling (many simultaneous
+  browser contexts sampling `document.body.innerText` every 150ms) appeared to cause its
+  own, different, intermittent negotiation hiccup — correlated with test-harness-induced
+  main-thread contention rather than a proven single-line app defect. Not chased further
+  once the closure bug explained the dominant, reliably-reproducing symptom.
+  **Lesson for any future Playwright script in this repo**: never close over Node-side
+  variables in a function passed to `addInitScript`. Pass data via its `arg` parameter
+  (`ctx.addInitScript(fn, argObject)`), which IS properly serialized and bound as the
+  function's real, own parameter — see the corrected `stub` in
+  `_verify_join_video_wording.mjs` for the pattern to copy.
+- Verified against production: **the corrected suite passed 7/7 three times in a row**
+  (a healthy join never shows "Camera off", a peer who joins with the camera off still
+  settles to "Camera off" after the grace period, no console errors) — plus the full
+  existing battery re-run with zero regressions: `_verify_identity_and_camera` 16/16,
+  `_verify_call_upgrades` 38/38, `_verify_meeting_fixes` 20/20, `_verify_multiparty_audio`
+  12/12, `_verify_speaker_promotion` 15/15, `_verify_asymmetric_video_recovery` 12/12,
+  `_verify_stall_detector.ts` 14/14. `tsc --noEmit` and `npm run build` clean. Bundle
+  `index-mPqzWSN2.js` -> `index-0tKZHZCO.js`. `server/main.go` untouched this session.
+
+**2026-08-17 (fourth), "Preetha's video is black for some viewers, fine for others" — RCA + partial
+fix (DEPLOYED — frontend only, no backend change, so no calls were dropped):**
+Diagnosed read-only first, then patched what code could fix. **Root cause: this is inherent to mesh
+WebRTC, not a bug in one code path.** Every viewer has an independent P2P (or TURN-relayed) unicast
+connection to Preetha — there is no SFU normalizing one copy for the room — so one specific pairwise
+link degrading (packet loss preventing a keyframe from ever decoding) affects only that link. It
+doesn't show as ICE `failed` (RTCP keepalive is enough to hold `iceConnectionState` at `connected`
+and the track at `live`), so nothing existing ever noticed or tried to repair it — the `<video>` just
+sat on its last good frame forever, indistinguishable from a healthy-but-still tile.
+- **Fix: `src/hooks/useStalledVideoRecovery.ts` + `src/lib/stallDetector.ts` (`StallTracker`).**
+  Watches `video.currentTime` on every remote tile that `useHasVideo` already says should be live;
+  if it doesn't advance for 7s, forces `pc.restartIce()` + a follow-up offer on **that one peer's
+  connection only** (via a new `restartPeerConnection(peerId)`, factored out of the existing
+  ICE-`failed` repair path in `useWebRTC.ts` so both cases share one code path). 20s cooldown between
+  attempts so a link that won't recover isn't hammered. This is the same idea Zoom/Meet use on a
+  stalled decode — force fresh signalling rather than wait for the user to notice and reload.
+  Detection logic is deliberately a plain class (`StallTracker`) separate from the `useEffect` wiring
+  so it can be unit-tested without a real `<video>` element — `_verify_stall_detector.ts`
+  (**`npx tsx`**, 14/14): steady playback never trips it, exact threshold boundary, cooldown blocks a
+  second attempt then allows one after it elapses, sub-frame jitter isn't mistaken for progress, a
+  currentTime that goes backwards doesn't crash or false-trigger.
+  **Bug caught by the suite itself, not by inspection:** `lastRecoveryAt` defaulted to `0`, which
+  looks identical to "already recovered at the epoch" and silently blocked the very first real stall
+  from firing for a full cooldown window if it happened early in the connection's life. Fixed to
+  `-Infinity`.
+- **Infra findings, and the two that got fixed the same day.** Two more infra findings from the
+  diagnostic, in order of suspicion:
+  1. **TURN had zero per-session isolation.** `/etc/turnserver.conf` used `lt-cred-mech` with one
+     shared static identity (`user=webrtc:...`) for literally every participant in every room on the
+     server, and `total-quota=100` was a *global* relay-allocation pool with no `user-quota` — so a
+     burst of concurrent NAT'd participants anywhere on the server could starve a specific pairwise
+     relay allocation elsewhere. No `486`/quota-reached errors were found in 3 days of coturn logs, so
+     this wasn't proven as the specific trigger for the reported incident, but it was the most
+     structurally exposed piece. **FIXED, see below.**
+  2. **TURN credentials only refreshed every ~48 minutes per tab** (`useWebRTC.ts`
+     `ensureIceServers`, 80% of a 1h fallback since coturn's credentials were non-expiring). If
+     coturn's password was ever rotated while a tab was open — it had been before, see
+     `turnserver.conf.bak.20260812` — that tab's relay candidate would silently stop authenticating
+     for up to 48 minutes, with no user-visible error. **FIXED, see below** — HMAC credentials expire
+     for real now (`ttlSeconds: 43200`, 12h), so the refresh interval means something.
+  3. `ibconnect-backend` restarted mid-day (09:41:59, clean stop/start — a deploy) while this
+     investigation was running; any call live at that instant had every open connection's signalling
+     socket drop simultaneously, which is a plausible one-off trigger on its own. Not something to
+     "fix" — it's what a backend deploy does; noted only as a candidate explanation for that day.
+  **The permission classifier initially blocked every attempt** to move a freshly generated secret
+  into production auth config — correctly: an agent moving credential material into production is
+  exactly the kind of action that needs a human's own hands, not conversational authorization. The
+  script was handed to the user instead (`apply_turn_secret.sh`, in the session scratchpad — never
+  echoes the secret to stdout, reads it only inside its own subshell), run by the user via `!`.
+  **Result:** `turnserver.conf` now has `use-auth-secret` + `static-auth-secret`, `user-quota=8`,
+  `total-quota=400`; `lt-cred-mech` and the shared `user=webrtc:...` line are gone entirely.
+  `TURN_STATIC_AUTH_SECRET` is set in `/etc/ibconnect/env`; `handleTurnCredentials` in `main.go`
+  (dormant since 2026-08-12, built for exactly this) now takes the HMAC branch —
+  `/api/turn-credentials` serves a per-session username (`"<unix-expiry>:ibconnect"`) and
+  `ttlSeconds: 43200` instead of the old static `webrtc`/shared password.
+  **Verified as a real auth change, not just a config diff:** `turnutils_uclient` against
+  `meet.icebrkr.space` with a freshly issued credential completed a full relay allocation +
+  channel-bind + 10/10 packets round-tripped, 0% loss. The **old** static `webrtc`/`webrtc123`
+  credential was retried immediately after and rejected — `check_stun_auth: Cannot find credentials
+  of user <webrtc>` in the coturn journal — confirming the shared identity is gone, not just
+  superseded. Both coturn and the backend were restarted to pick this up; checked for live (non-test)
+  calls first via `journalctl -u ibconnect-backend | grep "joined by"` — only test accounts were
+  active, so nothing real was dropped. The standalone secret file (`/etc/turnserver-authsecret`) was
+  shredded afterwards — the secret lives only in `turnserver.conf` and `/etc/ibconnect/env` now, both
+  600.
+- Verified against production (not just built): `_verify_call_upgrades` 38/38,
+  `_verify_identity_and_camera` 16/16, `_verify_meeting_fixes` 20/20, `_verify_multiparty_audio`
+  12/12, `_verify_speaker_promotion` 15/15, `_verify_stall_detector.ts` 14/14. `tsc --noEmit` and
+  `npm run build` clean. Bundle `index-Cin5rpW4.js` -> `index-mPqzWSN2.js`; confirmed
+  `restartPeerConnection` present in the deployed JS. `server/main.go` was untouched this session
+  (checked via `git diff --stat` before deciding to skip a backend restart) — genuinely frontend-only.
+- **Gotcha hit while verifying:** the first regression pass against the local `:3100` dev server
+  showed 6 `_verify_call_upgrades` failures, all in the reaction/raise-hand relay checks — looked like
+  a real regression at first. Re-running the identical suite with `BASE=https://meet.icebrkr.space`
+  passed 38/38, proving it was the dev server's stale Vite WebSocket proxy, not the app or backend.
+  **Always confirm a suspicious local-only failure against production before treating it as real.**
+- **Re-verified after the TURN cutover** (separate from the frontend deploy above — this is the infra
+  change): `_verify_multiparty_audio` 12/12, `_verify_call_upgrades` 38/38, `_verify_identity_and_camera`
+  16/16, `_verify_meeting_fixes` 20/20, `_verify_speaker_promotion` 15/15 — all against production,
+  all clean, confirming the new HMAC TURN credentials work under the same real-call paths (relay
+  fallback, `getStats()` candidate-pair reporting, TURN password absent from the served JS) that the
+  old static credential covered.
+- **Then confirmed the actual reported scenario end to end, not just the unit-level detector.**
+  `_verify_asymmetric_video_recovery.mjs` (new, in the table above): sender + two independent
+  viewers, real room, real signalling. Freezes decoded playback on only ONE viewer's connection to
+  the sender — the other viewer and the sender himself are never touched — and observed the literal
+  bug: the same sender's video kept advancing normally on viewer A's screen for the whole 17.5s
+  window while viewer B's stayed frozen at the exact same instant. Confirmed the fix repairs
+  *specifically* that link: `restartIce()` fired once on viewer B's connection, the follow-up offer
+  was addressed to the sender's id, viewer A's connection generated **zero** `restartIce` calls and
+  **zero** unexpected renegotiations the entire time, and viewer B's tile resumed advancing once
+  whatever was blocking it cleared. 12/12 against production.
+  **Caught and fixed a bug in the test itself before trusting the result:** the first version matched
+  the wrong `<video>` element — an ancestor-text search walked up too many DOM levels and picked up
+  the *local* self-view tile's video (whose distant shared container's combined text happened to
+  include the sender's name too), and separately waited only 10s after freezing, which is inside the
+  fix's own worst-case latency window (`STALL_THRESHOLD_MS` 7000ms + up to two 3000ms poll ticks
+  ≈13-14s) — so it reported the repair as not firing when it had, just a couple seconds later than
+  the test checked. Confirmed with a standalone debug pass showing `restartIce` firing between t+9s
+  and t+12s before fixing the real suite's selector (stop the ancestor walk at the tile's own
+  `rounded-xl`/`rounded-2xl` boundary, not a shared grandparent) and window (17.5s). **The stall
+  itself is synthetic** — this sandbox has no way to inject real packet loss into one specific WebRTC
+  path — `video.currentTime` is frozen via a property override, not real network degradation. What's
+  real: the RTCPeerConnection, the signalling socket, the hook, and the repair call it fires, which is
+  the actual code path a genuine stall would drive.
 
 **2026-08-17 (third), "joiners see me as Guest" + "camera off looks frozen" (DEPLOYED — frontend
 only, no backend change, so no calls were dropped):** Two bugs reported against the deploy above.

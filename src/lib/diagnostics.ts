@@ -135,15 +135,26 @@ export type DisconnectCause = 'session-expired' | 'server-down' | 'network' | 'o
  *
  * This is the piece that turns an infinite "reconnecting…" loop into an
  * actionable "your session expired, sign in again".
+ *
+ * A guest joining by link never has `ibconnect_jwt` at all — `/ws` doesn't require
+ * auth (see "Session lifecycle" in CLAUDE.md) — so `/api/auth/me` returning 401 for
+ * them is not a dead session, it's the only answer it could ever give: there was
+ * never a session to expire. Without this check, EVERY guest whose signaling socket
+ * dropped even once (a phone hopping wifi→cellular, a brief network blip — both
+ * routine) got permanently, silently signed out of reconnecting, which is exactly
+ * why the host stops seeing them at all rather than a momentary "Connecting…" — the
+ * *host's* correctly-classified 'network' disconnect reconnects fine; it's the
+ * *guest's* side that this was killing outright. Reported live: a guest joined, held
+ * for 8s, and every one of them since has this same shape — 1005/clean close,
+ * misclassified 'session-expired', 'signing out' logged for an account that was
+ * never signed in.
  */
 export async function classifyDisconnect(): Promise<DisconnectCause> {
+  const token = localStorage.getItem('ibconnect_jwt');
+  if (!token) return 'network';
   try {
     const res = await fetch('/api/auth/me', {
-      headers: {
-        ...(localStorage.getItem('ibconnect_jwt')
-          ? { Authorization: `Bearer ${localStorage.getItem('ibconnect_jwt')}` }
-          : {}),
-      },
+      headers: { Authorization: `Bearer ${token}` },
       cache: 'no-store',
     });
     if (res.status === 401 || res.status === 403) return 'session-expired';

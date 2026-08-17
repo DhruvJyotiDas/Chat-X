@@ -23,6 +23,10 @@ interface MeetingContextType {
   isHost: boolean;
   showInviteDialog: boolean;
   dismissInviteDialog: () => void;
+  /** Set when this tab has been evicted by the same account connecting elsewhere —
+   *  see EVICTED_CODE in signalingSocket.ts. The socket will not reconnect on its own. */
+  evictedNotice: string | null;
+  dismissEvictedNotice: () => void;
   createMeeting: (customCode?: string, title?: string) => Promise<string>;
   joinMeeting: (code: string, title?: string, allowRecreate?: boolean, prefs?: MediaPrefs) => Promise<string>;
   /** Non-fatal media problem to show the user (camera blocked, device busy…). */
@@ -51,6 +55,9 @@ interface MeetingContextType {
   switchMic: (deviceId: string) => Promise<void>;
   /** Live camera peer connections, for getStats() polling. Stable identity. */
   getPeerConnections: () => ReadonlyMap<string, RTCPeerConnection>;
+  /** Forces fresh ICE + a follow-up offer on one peer's camera connection. Used to
+   *  recover a link that is 'connected' but has quietly stopped decoding frames. */
+  restartPeerConnection: (peerId: string) => void;
   /** Reactions currently floating on screen; each expires on its own timer. */
   reactions: FloatingReaction[];
   sendReaction: (emoji: string) => void;
@@ -123,6 +130,7 @@ export function MeetingProvider({ children }: { children: React.ReactNode }) {
   const [isHost, setIsHost] = useState(false);
   const [isRejoining, setIsRejoining] = useState(false);
   const [showInviteDialog, setShowInviteDialog] = useState(false);
+  const [evictedNotice, setEvictedNotice] = useState<string | null>(null);
   const [chatMessages, setChatMessages] = useState<LiveChatMessage[]>([]);
   const [reactions, setReactions] = useState<FloatingReaction[]>([]);
   const [raisedHands, setRaisedHands] = useState<ReadonlySet<string>>(() => new Set());
@@ -268,7 +276,14 @@ export function MeetingProvider({ children }: { children: React.ReactNode }) {
 
   const connectSocket = useCallback(async (): Promise<SignalingSocket> => {
     if (socketRef.current?.isOpen) return socketRef.current;
-    const s = new SignalingSocket(WS_URL, () => reconnectRef.current());
+    const s = new SignalingSocket(WS_URL, () => reconnectRef.current(), () => {
+      // This tab lost its seat to another tab/device signed in as the same account —
+      // see EVICTED_CODE in signalingSocket.ts. The socket has deliberately stopped
+      // reconnecting (doing so would just get evicted again), so this tab's view of
+      // the call is now frozen. Surface that plainly rather than leaving a call screen
+      // that silently stops updating with no explanation.
+      setEvictedNotice("You've joined this meeting from another device or tab — this window is no longer connected.");
+    });
     s.on('chat_message', (p: any) => setChatMessages(prev => [...prev, { id: `chat-${Date.now()}-${Math.random()}`, fromId: p.from_id, fromName: p.from_name, text: p.text, time: p.time, isSelf: p.from_id === userIdRef.current }]));
     // Reactions expire on their own timer rather than being cleared by the sender,
     // so a peer who leaves mid-animation does not strand one on screen forever.
@@ -345,6 +360,7 @@ export function MeetingProvider({ children }: { children: React.ReactNode }) {
   const createMeeting = useCallback(async (customCode?: string, title?: string): Promise<string> => {
     try {
       setMeetingError(null);
+      setEvictedNotice(null);
       // Drop any peers/messages left over from a previous room on this tab —
       // otherwise the last call's participants linger as blank tiles in the new one.
       webrtc.resetPeers();
@@ -375,6 +391,7 @@ export function MeetingProvider({ children }: { children: React.ReactNode }) {
     if (!trimmedCode) throw new Error('No code');
     try {
       setMeetingError(null);
+      setEvictedNotice(null);
       if (trimmedCode.startsWith('SCHED-') && !user.isGuest) {
         try { await api.validateRoomCode(trimmedCode); }
         catch (e) { throw new Error('Meeting code is invalid, deleted, or has not started yet.'); }
@@ -461,6 +478,7 @@ export function MeetingProvider({ children }: { children: React.ReactNode }) {
   }, [isInMeeting, webrtc.cleanup]);
 
   const dismissInviteDialog = useCallback(() => setShowInviteDialog(false), []);
+  const dismissEvictedNotice = useCallback(() => setEvictedNotice(null), []);
 
   const sendChatMessage = useCallback((text: string) => { 
     if (socketRef.current?.isOpen && text.trim()) {
@@ -508,7 +526,7 @@ export function MeetingProvider({ children }: { children: React.ReactNode }) {
 
   return (
     <MeetingContext.Provider value={{
-      user, setUserName, isInMeeting, isMinimized, minimizeMeeting, expandMeeting, roomId, isHost, showInviteDialog, dismissInviteDialog, createMeeting, joinMeeting, rejoinMeeting, isRejoining, leaveMeeting,
+      user, setUserName, isInMeeting, isMinimized, minimizeMeeting, expandMeeting, roomId, isHost, showInviteDialog, dismissInviteDialog, evictedNotice, dismissEvictedNotice, createMeeting, joinMeeting, rejoinMeeting, isRejoining, leaveMeeting,
       scheduledMeetings, refreshScheduledMeetings, scheduleMeeting, deleteScheduledMeeting,
       localStream: webrtc.localStream, peers: webrtc.peers, isMuted: webrtc.isMuted, isVideoOff: webrtc.isVideoOff, isScreenSharing: webrtc.isScreenSharing,
       mediaNotice: webrtc.mediaNotice, dismissMediaNotice: webrtc.dismissMediaNotice,
@@ -516,6 +534,7 @@ export function MeetingProvider({ children }: { children: React.ReactNode }) {
       toggleMic: webrtc.toggleMic, setMicMuted: webrtc.setMicMuted, toggleCamera: webrtc.toggleCamera, toggleScreenShare: webrtc.toggleScreenShare,
       switchCamera: webrtc.switchCamera, switchMic: webrtc.switchMic,
       getPeerConnections: webrtc.getPeerConnections,
+      restartPeerConnection: webrtc.restartPeerConnection,
       reactions, sendReaction, raisedHands, isHandRaised, toggleHand,
       chatMessages, sendChatMessage, showGuestModal, pendingJoinCode, setPendingAction, dismissGuestModal, meetingError, clearMeetingError
     }}>

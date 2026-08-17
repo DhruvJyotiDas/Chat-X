@@ -248,12 +248,26 @@ export function useWebRTC(socket: SignalingSocket | null, selfId = '') {
   // on *every* existing connection, not just the new one: one more participant
   // means everyone's share shrinks, and the person who joined last is not the one
   // who saturates the link.
+  // Routed through `serialize` (the same per-peer queue negotiation uses, declared
+  // above) rather than firing directly. `createOfferFor`/`handleOffer` also call
+  // `applyVideoBudget` on this same sender, inside their own serialized sequence for
+  // that peer — an unserialized call here could interleave with one of those: both
+  // read the sender's parameters, both mutate their own copy, and whichever
+  // `setParameters()` lands second commits stale encodings over the other's. Measured
+  // effect of that race: the receiver's video track drops to 0 tracks entirely and
+  // stays that way — not a bitrate glitch, the whole picture goes black — because a
+  // `peers.length` change (i.e. someone joining or leaving) fires this on every
+  // existing connection at once, which is exactly when negotiation is also active on
+  // those same connections. Queuing behind `serialize` makes this call wait for any
+  // in-flight negotiation step on that peer instead of racing it.
   const applyCameraBudgets = useCallback(() => {
     const count = pcsRef.current.size;
-    pcsRef.current.forEach((pc) => {
-      void applyVideoBudget(pc, count, [CAMERA_BUDGET_BPS, CAMERA_MIN_BPS, CAMERA_MAX_BPS], true);
+    pcsRef.current.forEach((pc, peerId) => {
+      void serialize(peerId, () => applyVideoBudget(
+        pc, count, [CAMERA_BUDGET_BPS, CAMERA_MIN_BPS, CAMERA_MAX_BPS], true,
+      ));
     });
-  }, []);
+  }, [serialize]);
   useEffect(() => { applyCameraBudgets(); }, [peers.length, applyCameraBudgets]);
 
   // Watchdog timers keyed the same way as the ICE queues (`cam:id` / `in:id` / `out:id`).
@@ -266,6 +280,20 @@ export function useWebRTC(socket: SignalingSocket | null, selfId = '') {
   const clearIceCleanupTimer = useCallback((key: string) => {
     const t = iceCleanupTimersRef.current.get(key);
     if (t) { clearTimeout(t); iceCleanupTimersRef.current.delete(key); }
+  }, []);
+
+  // Shared repair path for a camera peer connection: fresh ICE credentials plus the
+  // follow-up offer that actually sends them (restartIce() alone only marks the
+  // connection as wanting new credentials — nothing is transmitted without this).
+  // Used both when ICE itself reports 'failed' and, below, when a connection reports
+  // 'connected' the whole time but has stopped delivering decodable frames — a mesh
+  // link can go quietly one-sided (enough RTP for keepalive, not enough to decode)
+  // without ICE ever noticing, since ICE only checks connectivity, not media flow.
+  const restartCameraPeerConnection = useCallback((peerId: string) => {
+    const pc = pcsRef.current.get(peerId);
+    if (!pc) return;
+    pc.restartIce();
+    void createOfferForRef.current?.(peerId);
   }, []);
 
   // outgoing (we're sharing our screen to a peer) / incoming (a peer is sharing to us)
@@ -455,12 +483,7 @@ export function useWebRTC(socket: SignalingSocket | null, selfId = '') {
         return;
       }
       if (state !== 'failed') return;
-      // restartIce() only marks the connection as wanting fresh ICE credentials —
-      // it does not itself renegotiate. Without a follow-up offer nothing is ever
-      // sent, so the call was a no-op and the connection simply waited out the 8s
-      // timer and got deleted. Emitting the offer is what actually attempts repair.
-      pc.restartIce();
-      void createOfferForRef.current?.(peerId);
+      restartCameraPeerConnection(peerId);
       if (iceCleanupTimersRef.current.has(`cam:${peerId}`)) return;
       const timer = setTimeout(() => {
         iceCleanupTimersRef.current.delete(`cam:${peerId}`);
@@ -475,7 +498,7 @@ export function useWebRTC(socket: SignalingSocket | null, selfId = '') {
     };
 
     return pc;
-  }, [attachTracksToConnection, clearIceCleanupTimer]);
+  }, [attachTracksToConnection, clearIceCleanupTimer, restartCameraPeerConnection]);
 
   const createOfferFor = useCallback((peerId: string) => serialize(peerId, async () => {
     await ensureIceServers();
@@ -1016,6 +1039,7 @@ export function useWebRTC(socket: SignalingSocket | null, selfId = '') {
     switchCamera,
     switchMic,
     getPeerConnections,
+    restartPeerConnection: restartCameraPeerConnection,
     cleanup,
     resetPeers,
     registerPeerName,
