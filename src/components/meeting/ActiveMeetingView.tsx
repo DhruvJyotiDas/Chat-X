@@ -17,6 +17,7 @@ import { usePagination, type Pagination } from '../../hooks/usePagination';
 import MeetingInviteDialog from './MeetingInviteDialog';
 import { TRANSCRIPTION_ENABLED } from '../../lib/features';
 import { registerAudioSink, isSpeakerSelectionSupported, setPreferredSpeaker } from '../../lib/audioOutput';
+import { isScreenShareSupported } from '../../lib/screenShare';
 import { watchDevices, resolveSelection, loadDevicePrefs, EMPTY_SNAPSHOT, type DeviceSnapshot } from '../../lib/devicePrefs';
 import { useConnectionQuality, type PeerLink } from '../../hooks/useConnectionQuality';
 import { useTileOrder } from '../../hooks/useTileOrder';
@@ -979,6 +980,7 @@ export default function ActiveMeetingView({ onLeaveMeeting, onMinimize }: Props)
   const shownSpeaker = resolveSelection(selectedSpeaker, devices.outputDevices);
 
   const speakerSelectable = useMemo(isSpeakerSelectionSupported, []);
+  const screenShareSupported = useMemo(isScreenShareSupported, []);
 
   const transcriptEndRef = useRef<HTMLDivElement>(null);
   const transcriptEndDesktopRef = useRef<HTMLDivElement>(null);
@@ -1014,11 +1016,14 @@ export default function ActiveMeetingView({ onLeaveMeeting, onMinimize }: Props)
       key: string; label: string; Icon: React.FC<{ className?: string }>;
       onClick: () => void; active?: boolean; badge?: boolean;
     }[] = [
-      {
+      // Hidden rather than shown-and-broken where getDisplayMedia doesn't exist —
+      // mainly iOS Safari, which has never exposed screen capture to web content, and
+      // unreliably elsewhere on mobile. See src/lib/screenShare.ts.
+      ...(screenShareSupported ? [{
         key: 'screen', label: isScreenSharing ? 'Stop sharing' : 'Share screen',
         Icon: isScreenSharing ? ScreenShareOff : ScreenShare,
         onClick: () => { void toggleScreenShare(); }, active: isScreenSharing,
-      },
+      }] : []),
       {
         key: 'hand', label: isHandRaised ? 'Lower hand' : 'Raise hand', Icon: Hand,
         onClick: toggleHand, active: isHandRaised,
@@ -1054,7 +1059,7 @@ export default function ActiveMeetingView({ onLeaveMeeting, onMinimize }: Props)
       onClick: () => { setSettingsOpen((v) => !v); setReactionBarOpen(false); }, active: settingsOpen,
     });
     return actions;
-  }, [isScreenSharing, toggleScreenShare, isHandRaised, toggleHand, reactionBarOpen,
+  }, [screenShareSupported, isScreenSharing, toggleScreenShare, isHandRaised, toggleHand, reactionBarOpen,
       rightOpen, rightTab, chatMessages.length, onMinimize, settingsOpen]);
 
   const copyCode = useCallback(() => {

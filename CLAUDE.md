@@ -321,6 +321,7 @@ rejected autoplay leaves exactly that state (see `playWhenAllowed` under WebRTC)
 | `_verify_join_video_wording.mjs` | 7 checks: a healthy camera-on join never shows "Camera off" (from both an existing peer's and a new joiner's perspective), a camera-off join still settles to "Camera off" after the grace period rather than "Connecting…" forever. Its fake-camera stub is the reference pattern for passing data into `addInitScript` correctly — see the file header for the closure gotcha it replaced |
 | `_verify_eviction_fix.mjs` | 8 checks, two connections as the same user id in the same room (the two-tabs/two-devices scenario): the eviction close carries code 4001 not 1006, the evicted side makes zero reconnect attempts, the "connected elsewhere" notice is shown, the surviving connection is unaffected |
 | `_verify_guest_reconnect.mjs` | 6 checks: kills a guest's signalling socket without a page reload (a phone locking its screen), asserts the guest is never wrongly told their session expired, and the host recovers the guest's LIVE video rather than a stuck/gone tile |
+| `_verify_screenshare_mobile.mjs` | 6 checks: simulates a browser without `getDisplayMedia` (the iOS Safari case) by deleting it from `MediaDevices.prototype`, confirms "Share screen" is absent from the DOM entirely (not just hidden), and confirms a normal desktop-class browser still offers and can use it |
 
 **Simulating a dead socket** (for the reconnect path): wrap `window.WebSocket` in an `addInitScript` to
 collect instances on `window.__sockets`, then `.close()` the one whose `url` contains `/ws`. That
@@ -336,6 +337,43 @@ under an off-canvas transform, i.e. the closed sidebar drawer at `translateX(-10
 decorative child triggers it.
 
 ## Recent work log
+
+**2026-08-17 (eighth), mobile screen share "doesn't work" (DEPLOYED — frontend only, no
+backend change, so no calls were dropped):**
+Root cause is a real platform limitation, not a bug to work around: **iOS Safari has
+never shipped `getDisplayMedia` for web content** — Apple only exposes screen capture to
+native apps via ReplayKit — and most other mobile browsers either lack it too or support
+it too inconsistently to rely on. The bug was that the app didn't know this: "Share
+screen" was shown unconditionally and called `getDisplayMedia` directly. On a phone
+without it, the call throws a bare `TypeError` ("getDisplayMedia is not a function") —
+not a `DOMException`, so there's no `.name` to branch on — which the catch block only
+ever sent to `console.warn`, invisible on a phone. Tapping the button did, from the
+user's perspective, nothing at all — indistinguishable from a broken app.
+- **Fix, same pattern as the speaker picker.** New `isScreenShareSupported()`
+  (`src/lib/screenShare.ts`) feature-detects `navigator.mediaDevices.getDisplayMedia`,
+  mirroring `isSpeakerSelectionSupported` for `setSinkId`
+  (2026-08-17 call-surface-ports entry) — same conclusion both times: **hide the
+  control where the capability doesn't exist, don't leave it present and silently
+  inert.** `secondaryActions` in `ActiveMeetingView.tsx` only includes the `screen`
+  entry when supported, which covers both the desktop inline strip and the mobile
+  "More" sheet since both render from the same data (that's the whole point of the
+  `secondaryActions` design from the 2026-08-17 call-surface-ports entry). Belt-and-
+  braces: `toggleScreenShare` (`useWebRTC.ts`) also gained its own guard and now
+  surfaces failures via the existing `mediaNotice` banner instead of `console.warn`
+  only, in case anything ever calls it despite the hidden button.
+- Verified against production: new `_verify_screenshare_mobile.mjs` (6/6) — simulates
+  the iOS Safari case by deleting `getDisplayMedia` from `MediaDevices.prototype`
+  (**not** the `navigator.mediaDevices` instance — the method lives on the prototype,
+  so deleting the instance property is a silent no-op that leaves it fully visible;
+  cost real time to notice), confirms "Share screen" is absent from the DOM entirely
+  (not just visually hidden) in that case, and confirms a normal desktop-class browser
+  still offers and can use it as a regression guard. Existing screen-share coverage
+  (`_verify_meeting_fixes` 20/20, `_verify_call_upgrades` 38/38) stayed clean — both
+  run in desktop-class headless Chromium, which does have the capability, so the
+  button's continued presence there was never in question.
+  `_verify_call_upgrades_mobile.mjs` has a pre-existing hardcoded `BASE` (local dev
+  pair only, not production) — a known limitation unrelated to this change, not
+  re-run here.
 
 **2026-08-17 (seventh), "when someone joins my room I cannot see their camera feed, it's
 always black or shows camera off" (DEPLOYED — frontend only, no backend change, so no

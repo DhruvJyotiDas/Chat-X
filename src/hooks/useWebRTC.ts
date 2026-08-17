@@ -895,6 +895,15 @@ export function useWebRTC(socket: SignalingSocket | null, selfId = '') {
       stopScreenShare();
       return;
     }
+    // Belt-and-braces: the button is hidden via isScreenShareSupported() when this
+    // API doesn't exist (mainly iOS Safari, and unreliably elsewhere on mobile — see
+    // src/lib/screenShare.ts), but guard here too rather than let a bare TypeError
+    // ("getDisplayMedia is not a function") reach the catch below with no useful name
+    // to branch on.
+    if (typeof navigator.mediaDevices?.getDisplayMedia !== 'function') {
+      setMediaNotice("Screen sharing isn't available on this device or browser.");
+      return;
+    }
     try {
       const stream = await navigator.mediaDevices.getDisplayMedia({ video: { frameRate: 30 }, audio: false });
       screenStreamRef.current = stream;
@@ -911,8 +920,13 @@ export function useWebRTC(socket: SignalingSocket | null, selfId = '') {
       if (track) track.onended = () => stopScreenShare();
     } catch (err) {
       // A user dismissing the picker throws NotAllowedError — not an error worth surfacing.
+      // Anything else used to go to console.warn only, which is invisible on a phone —
+      // exactly where this is most likely to fail. Surface it the same way every other
+      // media failure is (mediaNotice), so tapping the button visibly does SOMETHING
+      // even when that something is "this isn't going to work, here's why."
       if ((err as { name?: string })?.name !== 'NotAllowedError') {
         console.warn('[webrtc] screen share failed to start:', err);
+        setMediaNotice("Couldn't start screen sharing on this device or browser.");
       }
     }
   }, [isScreenSharing, createScreenOfferFor, stopScreenShare]);
