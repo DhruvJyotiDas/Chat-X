@@ -14,17 +14,17 @@ after checking there's no live call in progress (`journalctl -u
 ibconnect-backend`), since that restart drops whatever mesh calls are active
 at the moment it runs.
 
-## Before Stage 1: firewall
+## Firewall
 
-`ufw` is inactive on this host, so there's nothing to open locally — but
-LiveKit's own media path (unlike `/livekit/`'s signaling WS, which nginx
-proxies over 443) is **not** proxyable through nginx: clients need to reach
-it directly. That means **UDP 7882 and TCP 7881 must be reachable from the
-internet** on whatever actually firewalls this host — almost certainly a
-cloud-provider security group, which isn't visible or changeable from inside
-this VM. This is the one item in this whole setup that has to happen outside
-what I can do here — please open those two ports before Stage 1, or LiveKit
-will start but no client will be able to publish/subscribe media through it.
+No new ports needed. LiveKit's own media path (unlike `/livekit/`'s
+signaling WS, which nginx proxies over 443) isn't proxyable through nginx —
+clients reach it directly — but this host's actual firewall already has
+20000-60000 open both tcp/udp (confirmed 2026-08-28: `22/tcp`, `80/tcp`,
+`443/tcp+udp`, `3478/tcp+udp`, `5349/tcp+udp`, `20000-60000/tcp+udp`), the
+same range coturn's relay allocator already uses. LiveKit's `rtc.tcp_port`/
+`rtc.udp_port` (20001/20000 in the template) sit inside that range on
+purpose — see the template's own comment for why this doesn't collide with
+coturn.
 
 ## Stage 1 — bring up LiveKit (does not touch the live mesh backend)
 

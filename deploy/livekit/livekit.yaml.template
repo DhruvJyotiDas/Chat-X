@@ -9,15 +9,17 @@ bind_addresses:
   # same shape as /ws and /chat-ws already going through nginx to 8080.
   - "127.0.0.1"
 rtc:
-  tcp_port: 7881
-  # Single-port UDP mux rather than a wide port_range — simpler firewall
-  # surface for a single-node deployment, and this host has no NAT to work
-  # around (its nginx vhost already serves meet.icebrkr.space off a direct
-  # public IP, confirmed against the same assumption coturn already makes).
-  # Deliberately outside coturn's own 20000-60000 relay range
-  # (/etc/turnserver.conf min-port/max-port) so the two servers can never
-  # collide on a port.
-  udp_port: 7882
+  # 20000/20001 chosen DELIBERATELY INSIDE coturn's own relay range
+  # (/etc/turnserver.conf min-port=20000/max-port=60000) rather than outside
+  # it — this host's firewall already has that whole range open both
+  # tcp/udp for coturn, so LiveKit needs no new port opened at all. coturn's
+  # allocator picks ports dynamically from that range and simply skips any
+  # already in use; LiveKit binds these two once at startup and holds them
+  # for the service's lifetime, so there's no runtime race, just one port
+  # permanently removed from coturn's pool of ~40000 — negligible at this
+  # host's scale.
+  tcp_port: 20001
+  udp_port: 20000
   use_external_ip: true
 keys:
   ${LIVEKIT_API_KEY}: ${LIVEKIT_API_SECRET}
