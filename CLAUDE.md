@@ -443,6 +443,61 @@ decorative child triggers it.
 
 ## Recent work log
 
+**2026-08-28, same migration — merged to `main`, LiveKit actually standing
+in production now (Stage 1 only — mesh calls untouched, Stage 2 cutover not
+yet run):**
+- `livekit-migration` merged into `main` (fast-forward, `08e4951`). This
+  repo IS `ibconnect-backend.service`'s `WorkingDirectory`, and
+  `server/ibconnect-backend` is a tracked binary — merging replaced it on
+  disk immediately. **Real, ongoing risk from this point on**: the running
+  process is unaffected (already in memory, unchanged), but if it crashed
+  and auto-restarted (`Restart=on-failure`) before Stage 2 ships a matching
+  frontend, it would come up as the new binary with no mesh signaling
+  handlers at all, while the still-served old frontend only speaks mesh —
+  a real outage, not a graceful degradation. Not resolved by anything below;
+  resolved only by finishing Stage 2 or explicitly reverting `main`.
+- **Port plan changed from the original draft**: the actual firewall on this
+  host already has `20000-60000` open both tcp/udp (for coturn's relay
+  range) plus the usual `22/80/443/3478/5349` — told directly rather than
+  guessed. LiveKit's `rtc.tcp_port`/`udp_port` moved to `20001`/`20000`,
+  inside that already-open range, needing **zero new firewall change** —
+  `deploy/livekit/livekit.yaml.template` and its README updated accordingly
+  (see the template's own comment for why this doesn't collide with
+  coturn's dynamic allocator).
+- **Real gap caught during setup, not assumed away**: `livekit.service` runs
+  `User=ubuntu`, but `EnvironmentFile=` and `--config <path>` are read by
+  two different privilege levels — systemd/PID1 (root) reads
+  `EnvironmentFile=` before dropping to the target user, but the
+  `livekit-server` process itself, running as `ubuntu`, has to read its own
+  `--config` file directly. A `root:root 600` `/etc/ibconnect/livekit.yaml`
+  (matching `/etc/ibconnect/env`'s convention) failed with "permission
+  denied" for exactly this reason — fixed by chowning it to `ubuntu:ubuntu`,
+  keeping `600` (still only readable by the one user that needs it, just the
+  right one).
+- **LiveKit's own startup log flagged a real production gap**: "UDP receive
+  buffer is too small for a production set-up" (`212992`, suggested
+  `5000000`) — fixed persistently via `/etc/sysctl.d/60-livekit.conf`
+  (`net.core.rmem_max`/`wmem_max=5000000`), confirmed gone on the next
+  restart, not just applied and assumed to have worked.
+- **Verified end-to-end for real, not just "service is active"**: LiveKit's
+  own STUN self-check found its external IP as `163.128.34.19` — cross-
+  checked against DNS (`meet.icebrkr.space` resolves there) and the host's
+  actual bound interface (matches) before trusting it, since nginx's
+  `server_name` directive separately lists a second, stale IP
+  (`163.128.34.27`) that could have looked like a mismatch but isn't one.
+  `https://meet.icebrkr.space/livekit/` returns LiveKit's own `OK` body —
+  confirmed genuinely different from the SPA's `index.html` fallback (an
+  earlier check of this same URL, before the nginx block existed, had
+  returned a misleading 200 from the catch-all route — caught and not
+  repeated here).
+- **Checked for live calls before touching anything call-adjacent**: no
+  `Room ... created/joined` log line in the prior 2 hours, one idle chat-ws
+  connection (a tab left open, not a call) — safe window, confirmed rather
+  than assumed.
+- Stage 2 (rebuild + restart `ibconnect-backend`, redeploy the frontend
+  bundle) deliberately NOT run in this pass — see the standing risk noted
+  above for why this shouldn't sit unresolved too long.
+
 **2026-08-28, same migration — asked to close every remaining gap: the /ws
 divergence fix, a TURN/ICE fallback for LiveKit, cross-browser coverage, and
 production LiveKit server infra prepared (not yet stood up), all still not
