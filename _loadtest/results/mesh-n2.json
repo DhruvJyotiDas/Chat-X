@@ -1,0 +1,61 @@
+{
+  "mode": "mesh",
+  "n": 2,
+  "roomCode": "9TS3-ALUK",
+  "timestamp": "2026-08-27T18:55:54.309Z",
+  "hardware": {
+    "cpuCount": 4,
+    "softwareEncodeOnly": true
+  },
+  "settle": {
+    "settled": true,
+    "inboundVideoStreams": 2,
+    "expectedInboundVideoStreams": 2,
+    "connectedFraction": 1,
+    "timeoutMs": 21000
+  },
+  "windowSeconds": 30.238,
+  "perClient": [
+    {
+      "index": 0,
+      "uploadKbps": 1011.5394117647058,
+      "downloadKbps": 1047.7402941176472,
+      "cpuCores": 1.1151531185924997,
+      "pcCount": 1,
+      "errors": []
+    },
+    {
+      "index": 1,
+      "uploadKbps": 1047.701775670012,
+      "downloadKbps": 1011.5022241829344,
+      "cpuCores": 1.1416098948343143,
+      "pcCount": 1,
+      "errors": []
+    }
+  ],
+  "aggregate": {
+    "avgUploadKbps": 1029.620593717359,
+    "avgDownloadKbps": 1029.6212591502908,
+    "avgCpuCores": 1.1283815067134069
+  },
+  "server": {
+    "backendCpuCores": 0.000330709703022687,
+    "livekitCpuCores": null,
+    "livekitRssMb": null
+  },
+  "hostSaturation": {
+    "systemCpuFraction": 0.602997227997228,
+    "cpuCount": 4,
+    "saturated": false
+  },
+  "watchability": {
+    "totalStreams": 2,
+    "degradedStreams": 0,
+    "degradedStreamFraction": 0,
+    "iceFailureFraction": 0
+  },
+  "verdict": "OK",
+  "gatingReason": null,
+  "secondaryReasons": [],
+  "errors": []
+}

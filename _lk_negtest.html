@@ -1,0 +1,20 @@
+<!doctype html>
+<html><body>
+<script type="module">
+  import { Room } from 'livekit-client';
+  window.__tryConnect = async (url, token) => {
+    const room = new Room();
+    try {
+      await Promise.race([
+        room.connect(url, token),
+        new Promise((_, rej) => setTimeout(() => rej(new Error('timeout')), 6000)),
+      ]);
+      await room.disconnect();
+      return { connected: true };
+    } catch (err) {
+      return { connected: false, error: String(err && err.message ? err.message : err) };
+    }
+  };
+  window.__lkReady = true;
+</script>
+</body></html>

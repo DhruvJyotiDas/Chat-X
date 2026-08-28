@@ -1,0 +1,16 @@
+# Insert inside the existing `server { ... listen 443 ssl ... }` block in
+# /etc/nginx/sites-available/ibconnect, alongside the other location blocks
+# (/ws, /chat-ws, /asr) — same vhost, no new subdomain/cert needed.
+#
+# Trailing slash on both the location and proxy_pass matters: it's what
+# strips the /livekit prefix, so a client hitting
+# wss://meet.icebrkr.space/livekit/rtc/... reaches livekit-server's own
+# /rtc/... path on 7880 unprefixed.
+location /livekit/ {
+    proxy_pass http://127.0.0.1:7880/;
+    proxy_http_version 1.1;
+    proxy_set_header Upgrade $http_upgrade;
+    proxy_set_header Connection "upgrade";
+    proxy_set_header Host $host;
+    proxy_read_timeout 3600s;
+}

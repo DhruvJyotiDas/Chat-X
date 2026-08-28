@@ -1,0 +1,13 @@
+[Unit]
+Description=LiveKit SFU server (mesh->SFU migration)
+After=network.target
+
+[Service]
+Type=simple
+User=ubuntu
+ExecStart=/usr/local/bin/livekit-server --config /etc/ibconnect/livekit.yaml
+Restart=on-failure
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target

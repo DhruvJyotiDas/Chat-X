@@ -1,0 +1,77 @@
+{
+  "mode": "livekit",
+  "n": 4,
+  "roomCode": "RTG3-F5JF",
+  "timestamp": "2026-08-28T15:59:22.990Z",
+  "hardware": {
+    "cpuCount": 4,
+    "softwareEncodeOnly": true
+  },
+  "settle": {
+    "settled": true,
+    "inboundVideoStreams": 12,
+    "expectedInboundVideoStreams": 12,
+    "connectedFraction": 1,
+    "timeoutMs": 27000
+  },
+  "windowSeconds": 30.521,
+  "perClient": [
+    {
+      "index": 0,
+      "uploadKbps": 713.461931901213,
+      "downloadKbps": 1760.2306006137658,
+      "cpuCores": 0.8407326103338686,
+      "pcCount": 1,
+      "errors": []
+    },
+    {
+      "index": 1,
+      "uploadKbps": 715.9855469177708,
+      "downloadKbps": 1763.4500529216393,
+      "cpuCores": 0.8512171947183907,
+      "pcCount": 1,
+      "errors": []
+    },
+    {
+      "index": 2,
+      "uploadKbps": 709.4240210403273,
+      "downloadKbps": 1764.7773232028053,
+      "cpuCores": 0.8443366862160478,
+      "pcCount": 1,
+      "errors": []
+    },
+    {
+      "index": 3,
+      "uploadKbps": 703.4020520684996,
+      "downloadKbps": 1767.6415817723737,
+      "cpuCores": 0.8351626748795912,
+      "pcCount": 1,
+      "errors": []
+    }
+  ],
+  "aggregate": {
+    "avgUploadKbps": 710.5683879819526,
+    "avgDownloadKbps": 1764.0248896276462,
+    "avgCpuCores": 0.8428622915369746
+  },
+  "server": {
+    "backendCpuCores": 0,
+    "livekitCpuCores": 0.11467514170571082,
+    "livekitRssMb": 118
+  },
+  "hostSaturation": {
+    "systemCpuFraction": 0.9030514675313877,
+    "cpuCount": 4,
+    "saturated": true
+  },
+  "watchability": {
+    "totalStreams": 12,
+    "degradedStreams": 0,
+    "degradedStreamFraction": 0,
+    "iceFailureFraction": 0
+  },
+  "verdict": "OK",
+  "gatingReason": null,
+  "secondaryReasons": [],
+  "errors": []
+}

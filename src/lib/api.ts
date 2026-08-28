@@ -80,6 +80,28 @@ export const api = {
 
   validateRoomCode: (code: string) =>
     request<{ valid: boolean }>('GET', `/meetings/validate/${code}`),
+
+  // ── LiveKit (media transport) ────────────────────────────────────────────
+  // Called only AFTER the /ws create_room/join_room round trip has already
+  // succeeded — the backend's authorization for this is "is this identity
+  // currently a member of this room" (server/livekit.go), not a fresh
+  // check of its own. request()'s existing Authorization-header-if-present
+  // behavior is exactly the split the backend expects: a signed-in caller's
+  // identity comes from that token server-side, a guest's from the body.
+  getLiveKitToken: (roomId: string, userId: string, userName: string) =>
+    request<{ token: string; url: string }>('POST', '/livekit/token', {
+      room_id: roomId, user_id: userId, user_name: userName,
+    }),
+
+  // Same coturn credentials connectionTest.ts already independently fetches
+  // for the pre-join diagnostic — coturn was never made obsolete by the
+  // LiveKit migration (see CLAUDE.md), it's just a second, unrelated
+  // consumer now: useWebRTC.ts passes these into LiveKit's room.connect() as
+  // an ICE fallback for participants whose network can't reach the SFU's
+  // direct UDP path, the same restrictive-NAT case coturn already existed
+  // for under mesh.
+  getTurnCredentials: () =>
+    request<{ iceServers: RTCIceServer[]; ttlSeconds: number }>('GET', '/turn-credentials'),
 };
 
 // ── Types ────────────────────────────────────────────────────────────────────

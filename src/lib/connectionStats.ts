@@ -143,6 +143,18 @@ export async function readPeerStats(pc: RTCPeerConnection): Promise<PeerStats | 
 
 export type LinkQuality = 'good' | 'fair' | 'poor' | 'unknown';
 
+/** One peer's link, as shown by a quality badge. `stats` is mesh-era detail
+ *  (candidate types, rtt, relay status) — under LiveKit (see useWebRTC.ts)
+ *  quality comes from the SFU's own participant.connectionQuality instead of
+ *  client-side getStats() grading, and there is no clean per-peer "was this
+ *  one relayed" signal to fill `stats` with, so it stays null there. Kept as
+ *  one shared shape so the four render call sites in ActiveMeetingView.tsx
+ *  don't need to know which transport produced the data. */
+export interface PeerLink {
+  quality: LinkQuality;
+  stats: PeerStats | null;
+}
+
 /**
  * Grade a link from RTT and loss.
  *

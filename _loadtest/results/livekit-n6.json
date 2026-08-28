@@ -1,0 +1,93 @@
+{
+  "mode": "livekit",
+  "n": 6,
+  "roomCode": "AGZC-XG75",
+  "timestamp": "2026-08-28T16:00:41.910Z",
+  "hardware": {
+    "cpuCount": 4,
+    "softwareEncodeOnly": true
+  },
+  "settle": {
+    "settled": true,
+    "inboundVideoStreams": 30,
+    "expectedInboundVideoStreams": 30,
+    "connectedFraction": 1,
+    "timeoutMs": 33000
+  },
+  "windowSeconds": 30.213,
+  "perClient": [
+    {
+      "index": 0,
+      "uploadKbps": 641.6859215373514,
+      "downloadKbps": 2675.756180927424,
+      "cpuCores": 0.6156290338595969,
+      "pcCount": 1,
+      "errors": []
+    },
+    {
+      "index": 1,
+      "uploadKbps": 643.1924981245311,
+      "downloadKbps": 2635.9231807951987,
+      "cpuCores": 0.6282064012180189,
+      "pcCount": 1,
+      "errors": []
+    },
+    {
+      "index": 2,
+      "uploadKbps": 636.4263217953595,
+      "downloadKbps": 2677.786534804108,
+      "cpuCores": 0.6265514844603318,
+      "pcCount": 1,
+      "errors": []
+    },
+    {
+      "index": 3,
+      "uploadKbps": 688.9397837222539,
+      "downloadKbps": 2656.02489091254,
+      "cpuCores": 0.6242346009995698,
+      "pcCount": 1,
+      "errors": []
+    },
+    {
+      "index": 4,
+      "uploadKbps": 684.9603283173735,
+      "downloadKbps": 2641.8638090895274,
+      "cpuCores": 0.6066924833680868,
+      "pcCount": 1,
+      "errors": []
+    },
+    {
+      "index": 5,
+      "uploadKbps": 677.8157774737803,
+      "downloadKbps": 2779.62851497188,
+      "cpuCores": 0.6169529672657466,
+      "pcCount": 1,
+      "errors": []
+    }
+  ],
+  "aggregate": {
+    "avgUploadKbps": 662.170105161775,
+    "avgDownloadKbps": 2677.8305185834465,
+    "avgCpuCores": 0.6197111618618918
+  },
+  "server": {
+    "backendCpuCores": 0.0003309833515374253,
+    "livekitCpuCores": 0.12047793995962004,
+    "livekitRssMb": 141
+  },
+  "hostSaturation": {
+    "systemCpuFraction": 0.9998342724560823,
+    "cpuCount": 4,
+    "saturated": true
+  },
+  "watchability": {
+    "totalStreams": 30,
+    "degradedStreams": 30,
+    "degradedStreamFraction": 1,
+    "iceFailureFraction": 0
+  },
+  "verdict": "DEGRADED/UNUSABLE",
+  "gatingReason": "100.0% of video streams show sustained freezing/drops (>15% threshold) [stream-degradation]",
+  "secondaryReasons": [],
+  "errors": []
+}

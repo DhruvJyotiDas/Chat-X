@@ -1,0 +1,53 @@
+{
+  "mode": "livekit",
+  "n": 1,
+  "roomCode": "YAKQ-JZJP",
+  "timestamp": "2026-08-28T15:57:24.780Z",
+  "hardware": {
+    "cpuCount": 4,
+    "softwareEncodeOnly": true
+  },
+  "settle": {
+    "settled": true,
+    "inboundVideoStreams": 0,
+    "expectedInboundVideoStreams": 0,
+    "connectedFraction": 1,
+    "timeoutMs": 18000
+  },
+  "windowSeconds": 15.114,
+  "perClient": [
+    {
+      "index": 0,
+      "uploadKbps": 702.7335984095428,
+      "downloadKbps": 0,
+      "cpuCores": 1.4278152706100302,
+      "pcCount": 1,
+      "errors": []
+    }
+  ],
+  "aggregate": {
+    "avgUploadKbps": 702.7335984095428,
+    "avgDownloadKbps": 0,
+    "avgCpuCores": 1.4278152706100302
+  },
+  "server": {
+    "backendCpuCores": 0.0006616382162233696,
+    "livekitCpuCores": 0.03903665475717877,
+    "livekitRssMb": 82
+  },
+  "hostSaturation": {
+    "systemCpuFraction": 0.4278324712164192,
+    "cpuCount": 4,
+    "saturated": false
+  },
+  "watchability": {
+    "totalStreams": 0,
+    "degradedStreams": 0,
+    "degradedStreamFraction": 0,
+    "iceFailureFraction": 0
+  },
+  "verdict": "OK",
+  "gatingReason": null,
+  "secondaryReasons": [],
+  "errors": []
+}

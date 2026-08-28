@@ -1,0 +1,109 @@
+{
+  "mode": "livekit",
+  "n": 8,
+  "roomCode": "S4CU-E7JR",
+  "timestamp": "2026-08-28T16:03:30.306Z",
+  "hardware": {
+    "cpuCount": 4,
+    "softwareEncodeOnly": true
+  },
+  "settle": {
+    "settled": true,
+    "inboundVideoStreams": 49,
+    "expectedInboundVideoStreams": 56,
+    "connectedFraction": 1,
+    "timeoutMs": 39000
+  },
+  "windowSeconds": 30.156,
+  "perClient": [
+    {
+      "index": 0,
+      "uploadKbps": 521.0954047119197,
+      "downloadKbps": 1696.5887567063214,
+      "cpuCores": 0.47851173895742144,
+      "pcCount": 1,
+      "errors": []
+    },
+    {
+      "index": 1,
+      "uploadKbps": 460.09583416384294,
+      "downloadKbps": 1901.694877416783,
+      "cpuCores": 0.48348587345801824,
+      "pcCount": 1,
+      "errors": []
+    },
+    {
+      "index": 2,
+      "uploadKbps": 418.2312124945356,
+      "downloadKbps": 1833.1454913960974,
+      "cpuCores": 0.4685634699562277,
+      "pcCount": 1,
+      "errors": []
+    },
+    {
+      "index": 3,
+      "uploadKbps": 426.88432761173135,
+      "downloadKbps": 1870.6130516544636,
+      "cpuCores": 0.47121634168987925,
+      "pcCount": 1,
+      "errors": []
+    },
+    {
+      "index": 4,
+      "uploadKbps": 409.26425855513304,
+      "downloadKbps": 1908.2877059569073,
+      "cpuCores": 0.4649157713224565,
+      "pcCount": 1,
+      "errors": []
+    },
+    {
+      "index": 5,
+      "uploadKbps": 501.98762508593694,
+      "downloadKbps": 1735.792529218547,
+      "cpuCores": 0.46425255338904364,
+      "pcCount": 1,
+      "errors": []
+    },
+    {
+      "index": 6,
+      "uploadKbps": 435.73181303448007,
+      "downloadKbps": 1914.827755867078,
+      "cpuCores": 0.4778485210240084,
+      "pcCount": 1,
+      "errors": []
+    },
+    {
+      "index": 7,
+      "uploadKbps": 455.62559874361995,
+      "downloadKbps": 1808.223949744798,
+      "cpuCores": 0.46358933545563086,
+      "pcCount": 1,
+      "errors": []
+    }
+  ],
+  "aggregate": {
+    "avgUploadKbps": 453.61450930014996,
+    "avgDownloadKbps": 1833.6467647451243,
+    "avgCpuCores": 0.4715479506565857
+  },
+  "server": {
+    "backendCpuCores": 0,
+    "livekitCpuCores": 0.1250165804483353,
+    "livekitRssMb": 178
+  },
+  "hostSaturation": {
+    "systemCpuFraction": 0.9998347517144509,
+    "cpuCount": 4,
+    "saturated": true
+  },
+  "watchability": {
+    "totalStreams": 56,
+    "degradedStreams": 49,
+    "degradedStreamFraction": 0.875,
+    "iceFailureFraction": 0
+  },
+  "verdict": "DEGRADED/UNUSABLE",
+  "gatingReason": "87.5% of video streams show sustained freezing/drops (>15% threshold) [stream-degradation]",
+  "secondaryReasons": [],
+  "errors": []
+}

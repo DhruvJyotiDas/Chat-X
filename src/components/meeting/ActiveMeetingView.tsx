@@ -5,28 +5,32 @@ import {
   PhoneOff, MessageSquare, Send, X, Users, Copy, Check,
   MoreVertical, Volume2, Lightbulb, Tag, Hash, HelpCircle,
   Activity, Zap, Mic2, ChevronDown, Link, ChevronLeft, ChevronRight,
-  Pin, PinOff, Minimize2, ArrowLeft, AlertTriangle, Hand, Smile,
+  Pin, PinOff, Minimize2, ArrowLeft, AlertTriangle, Hand, Smile, Captions,
 } from 'lucide-react';
 import { useMeeting } from '../../context/MeetingContext';
 import { PeerInfo } from '../../hooks/useWebRTC';
-import { useSpeechTranscription } from '../../hooks/useSpeechTranscription';
+import { useLiveCaptions } from '../../hooks/useLiveCaptions';
+import { isLiveCaptionsSupported } from '../../lib/liveCaptions';
+import {
+  resolveCaptionText, CAPTION_LANGUAGES, CAPTION_SIZES, loadCaptionSize, saveCaptionSize,
+  type TranscriptLine, type KeyPoint, type CaptionSize,
+} from '../../lib/captions';
+import CaptionBar from './CaptionBar';
 import { useAuth } from '../../context/AuthContext';
 import { useGridLayout, computeTileSize } from '../../hooks/useGridLayout';
 import { useAudioLevels } from '../../hooks/useAudioLevels';
 import { usePagination, type Pagination } from '../../hooks/usePagination';
 import MeetingInviteDialog from './MeetingInviteDialog';
-import { TRANSCRIPTION_ENABLED } from '../../lib/features';
 import { registerAudioSink, isSpeakerSelectionSupported, setPreferredSpeaker } from '../../lib/audioOutput';
 import { isScreenShareSupported } from '../../lib/screenShare';
 import { watchDevices, resolveSelection, loadDevicePrefs, EMPTY_SNAPSHOT, type DeviceSnapshot } from '../../lib/devicePrefs';
-import { useConnectionQuality, type PeerLink } from '../../hooks/useConnectionQuality';
+import type { PeerLink, LinkQuality } from '../../lib/connectionStats';
 import { useTileOrder } from '../../hooks/useTileOrder';
 import { useHasVideo } from '../../hooks/useHasVideo';
 import { useStalledVideoRecovery } from '../../hooks/useStalledVideoRecovery';
 import { useSilentMic } from '../../hooks/useSilentMic';
 import { useCallShortcuts, SHORTCUT_HINTS } from '../../hooks/useCallShortcuts';
 import { REACTIONS } from '../../lib/reactions';
-import type { LinkQuality } from '../../lib/connectionStats';
 
 export type BgMode = 'none' | 'blur' | 'blur-heavy' | 'color-dark' | 'color-space';
 
@@ -766,35 +770,38 @@ function SettingsPanel({
 function RightPanel({
   tab, onTabChange, chatMessages, onSend, peers, userName, isMuted, onClose,
   links, raisedHands, isHandRaised,
-  transcribing, speechSupported, startTranscription, stopTranscription, transcriptLines, keyPoints, transcriptEndRef
+  transcribing, captionsSupported, captionsUnavailable, transcriptLines, keyPoints, transcriptEndRef,
+  myCaptionLang, onCaptionLangChange, captionSize, onCaptionSizeChange, onStartCaptions, onStopCaptions,
 }: {
-  tab: 'chat' | 'people' | 'transcript'; onTabChange: (t: 'chat' | 'people' | 'transcript') => void;
+  tab: 'chat' | 'people' | 'captions'; onTabChange: (t: 'chat' | 'people' | 'captions') => void;
   chatMessages: { id: string; fromId: string; fromName: string; text: string; time: string; isSelf: boolean }[];
   onSend: (text: string) => void; peers: PeerInfo[]; userName: string; isMuted: boolean; onClose: () => void;
   links: ReadonlyMap<string, PeerLink>; raisedHands: ReadonlySet<string>; isHandRaised: boolean;
-  transcribing: boolean; speechSupported: boolean; startTranscription: () => void; stopTranscription: () => void;
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  transcriptLines: any[]; keyPoints: any[]; transcriptEndRef: React.RefObject<HTMLDivElement>;
+  transcribing: boolean; captionsSupported: boolean; captionsUnavailable: string | null;
+  transcriptLines: TranscriptLine[]; keyPoints: KeyPoint[]; transcriptEndRef: React.RefObject<HTMLDivElement>;
+  myCaptionLang: string | null; onCaptionLangChange: (lang: string | null) => void;
+  captionSize: CaptionSize; onCaptionSizeChange: (size: CaptionSize) => void;
+  onStartCaptions: () => void; onStopCaptions: () => void;
 }) {
   const [input, setInput] = useState('');
   const chatEndRef = useRef<HTMLDivElement>(null);
   useEffect(() => { if (tab === 'chat') chatEndRef.current?.scrollIntoView({ behavior: 'smooth' }); }, [chatMessages, tab]);
-  useEffect(() => { if (tab === 'transcript') transcriptEndRef.current?.scrollIntoView({ behavior: 'smooth' }); }, [transcriptLines, tab, transcriptEndRef]);
+  useEffect(() => { if (tab === 'captions') transcriptEndRef.current?.scrollIntoView({ behavior: 'smooth' }); }, [transcriptLines, tab, transcriptEndRef]);
 
   const send = () => { if (!input.trim()) return; onSend(input.trim()); setInput(''); };
 
   return (
     <div className="w-full h-full flex flex-col bg-[#202124] overflow-hidden">
       <div className="flex items-center border-b border-[#3c4043] px-1 pt-1 md:px-2 md:pt-2 bg-[#1a1b1e] shrink-0">
-        {(TRANSCRIPTION_ENABLED ? (['chat', 'people', 'transcript'] as const) : (['chat', 'people'] as const)).map(t => (
+        {(captionsSupported ? (['chat', 'people', 'captions'] as const) : (['chat', 'people'] as const)).map(t => (
           <button
             key={t} onClick={() => onTabChange(t)}
-            className={`flex-1 py-2.5 text-[10px] md:text-xs font-semibold border-b-2 transition-colors ${t === 'transcript' ? 'lg:hidden ' : ''} ${tab === t ? 'border-[#8ab4f8] text-[#8ab4f8]' : 'border-transparent text-[#9aa0a6] hover:text-[#e8eaed]'}`}
+            className={`flex-1 py-2.5 text-[10px] md:text-xs font-semibold border-b-2 transition-colors ${tab === t ? 'border-[#8ab4f8] text-[#8ab4f8]' : 'border-transparent text-[#9aa0a6] hover:text-[#e8eaed]'}`}
           >
             <div className="flex items-center justify-center gap-1 md:gap-1.5">
               {t === 'chat' && <><MessageSquare className="w-3.5 h-3.5" /><span className="hidden sm:inline">Chat</span></>}
               {t === 'people' && <><Users className="w-3.5 h-3.5" /><span className="hidden sm:inline">People</span></>}
-              {t === 'transcript' && <><Activity className="w-3.5 h-3.5" /><span className="hidden sm:inline">Transcript</span></>}
+              {t === 'captions' && <><Captions className="w-3.5 h-3.5" /><span className="hidden sm:inline">Live Captions</span></>}
             </div>
           </button>
         ))}
@@ -869,26 +876,95 @@ function RightPanel({
         </div>
       )}
 
-      {TRANSCRIPTION_ENABLED && tab === 'transcript' && (
+      {captionsSupported && tab === 'captions' && (
         <div className="flex-1 flex flex-col overflow-hidden min-h-0 bg-[#202124]">
-          <div className="p-3 border-b border-[#3c4043] flex justify-between items-center shrink-0">
-            <span className="text-[10px] text-[#9aa0a6] font-bold uppercase tracking-wider">Intelligence</span>
-            <button
-              onClick={transcribing ? stopTranscription : startTranscription}
-              className={`flex items-center gap-1 px-2 py-1 rounded border text-[9px] font-bold ${transcribing ? 'bg-[#f28b82]/10 text-[#f28b82] border-[#f28b82]/30' : 'bg-[#8ab4f8]/10 text-[#8ab4f8] border-[#8ab4f8]/30'}`}
-            >
-              <Mic2 className="w-3 h-3" /> {transcribing ? 'Stop' : 'Transcribe'}
-            </button>
+          {/* Settings: on/off, language, size — everything captions-related lives
+              here now, next to Chat/People, instead of scattered across a
+              separate always-open desktop sidebar and a floating picker on the
+              on-screen caption bar itself. */}
+          <div className="p-3 border-b border-[#3c4043] flex flex-col gap-2.5 shrink-0">
+            <div className="flex items-center justify-between">
+              <span className="text-[10px] text-[#9aa0a6] font-bold uppercase tracking-wider">Live Captions</span>
+              <button
+                onClick={() => (transcribing ? onStopCaptions() : onStartCaptions())}
+                className={`px-2.5 py-1 rounded-full text-[9px] font-bold cursor-pointer transition-colors ${
+                  transcribing ? 'bg-[#8ab4f8]/20 text-[#8ab4f8]' : 'bg-[#3c4043] text-[#9aa0a6] hover:text-[#e8eaed]'
+                }`}
+              >
+                {transcribing ? 'On' : 'Off'}
+              </button>
+            </div>
+
+            <label className="flex flex-col gap-1">
+              <span className="text-[9px] text-[#9aa0a6] font-semibold">Caption language</span>
+              <select
+                value={myCaptionLang ?? ''} onChange={(e) => onCaptionLangChange(e.target.value || null)}
+                className="bg-[#3c4043] text-[#e8eaed] text-[10px] rounded-lg px-2 py-1.5 border border-[#5f6368]/30 cursor-pointer"
+                title="Translate captions into"
+              >
+                <option value="">Original language</option>
+                {CAPTION_LANGUAGES.map((l) => <option key={l.code} value={l.code}>{l.label}</option>)}
+              </select>
+            </label>
+
+            <div className="flex flex-col gap-1">
+              <span className="text-[9px] text-[#9aa0a6] font-semibold">Caption size</span>
+              <div className="flex gap-1 bg-[#3c4043] rounded-lg p-0.5">
+                {CAPTION_SIZES.map((s) => (
+                  <button
+                    key={s.value}
+                    onClick={() => onCaptionSizeChange(s.value)}
+                    className={`flex-1 py-1 rounded-md text-[9px] font-bold cursor-pointer transition-colors ${
+                      captionSize === s.value ? 'bg-[#8ab4f8] text-[#202124]' : 'text-[#9aa0a6] hover:text-[#e8eaed]'
+                    }`}
+                  >
+                    {s.label}
+                  </button>
+                ))}
+              </div>
+            </div>
           </div>
+
+          {captionsUnavailable && (
+            <p className="text-[10px] text-[#f28b82] px-3 pt-2 shrink-0">
+              {captionsUnavailable === 'not_configured' ? "Captions aren't set up yet."
+                : captionsUnavailable === 'loading' ? 'Captions are starting up — try again shortly.'
+                : 'Captions are temporarily unavailable.'}
+            </p>
+          )}
+
+          {keyPoints.length > 0 && (
+            <div className="border-b border-[#3c4043] p-3 shrink-0">
+              <p className="text-[9px] font-bold uppercase tracking-wider text-[#9aa0a6] mb-2 flex items-center gap-1">
+                <Lightbulb className="w-3 h-3 text-[#fdd663]" />Key Points
+              </p>
+              <div className="space-y-1.5 max-h-32 overflow-y-auto scrollbar-hide">
+                {keyPoints.slice(-8).map((kp) => {
+                  const Icon = KP_ICONS[kp.type] ?? Tag;
+                  const cc = KP_COLORS[kp.type] ?? '';
+                  return (
+                    <div key={kp.id} className={`flex items-start gap-1.5 px-2 py-1.5 rounded-lg border text-[10px] ${cc}`}>
+                      <Icon className="w-3 h-3 mt-0.5 shrink-0" />
+                      <span className="leading-relaxed font-medium">{kp.text}</span>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+
           <div className="flex-1 overflow-y-auto p-3 space-y-2 scrollbar-hide">
+            {!transcribing && transcriptLines.length === 0 && <p className="text-[10px] text-[#9aa0a6]">Turn on captions above to start.</p>}
             {transcribing && transcriptLines.length === 0 && <p className="text-[10px] text-[#9aa0a6] animate-pulse">Listening for speech…</p>}
             {transcriptLines.map((line) => (
-              <div key={line.id} className={`flex flex-col gap-0.5 ${line.isFinal ? '' : 'opacity-70'}`}>
+              <div key={line.id} className="flex flex-col gap-0.5">
                 <div className="flex items-center gap-1.5">
                   <span className="text-[9px] font-bold text-[#8ab4f8]">{line.speaker}</span>
                   <span className="text-[9px] text-[#5f6368]">{line.timestamp}</span>
                 </div>
-                <p className="text-[11px] text-[#e8eaed] leading-relaxed bg-[#3c4043]/40 rounded-lg px-2 py-1.5 border border-[#5f6368]/20">{line.text}</p>
+                <p className="text-[11px] text-[#e8eaed] leading-relaxed bg-[#3c4043]/40 rounded-lg px-2 py-1.5 border border-[#5f6368]/20">
+                  {resolveCaptionText(line, myCaptionLang)}
+                </p>
               </div>
             ))}
             <div ref={transcriptEndRef} />
@@ -909,11 +985,13 @@ const KP_COLORS: Record<string, string> = {
 };
 
 export default function ActiveMeetingView({ onLeaveMeeting, onMinimize }: Props) {
-  const { user, roomId, localStream, peers, isMuted, isVideoOff, isScreenSharing, screenStream, screenPeers, toggleMic, setMicMuted, toggleCamera, toggleScreenShare, switchCamera, switchMic, leaveMeeting, chatMessages, sendChatMessage, showInviteDialog, dismissInviteDialog, evictedNotice, dismissEvictedNotice, mediaNotice, dismissMediaNotice, getPeerConnections, reactions, sendReaction, raisedHands, isHandRaised, toggleHand } = useMeeting();
+  const { user, roomId, localStream, peers, isMuted, isVideoOff, isScreenSharing, screenStream, screenPeers, toggleMic, setMicMuted, toggleCamera, toggleScreenShare, switchCamera, switchMic, leaveMeeting, chatMessages, sendChatMessage, showInviteDialog, dismissInviteDialog, evictedNotice, dismissEvictedNotice, mediaNotice, dismissMediaNotice, linkQuality, reactions, sendReaction, raisedHands, isHandRaised, toggleHand, liveCaptions, captionLog, captionKeyPoints, myCaptionLang, setCaptionLang } = useMeeting();
 
-  // Per-peer link grades, read from getStats(). Nothing in the app used to call
-  // getStats() at all, so a degraded call produced no client-side evidence whatsoever.
-  const links = useConnectionQuality(getPeerConnections, peers.length > 0);
+  // Per-peer link grades — LiveKit's own SFU-computed participant.connectionQuality,
+  // pushed via events (see useWebRTC.ts), not polled here. `links` keeps its
+  // original name since every render call site below already expects a
+  // ReadonlyMap<string, PeerLink> and doesn't need to know where it came from.
+  const links = linkQuality;
 
   // Only watch for a dead microphone while the user believes it is live — a muted
   // track is legitimately silent and warning about it would be nonsense.
@@ -943,12 +1021,19 @@ export default function ActiveMeetingView({ onLeaveMeeting, onMinimize }: Props)
   const { currentUser } = useAuth();
   const displayName = currentUser?.displayName ?? user.name;
 
-  const { isActive: transcribing, isSupported: speechSupported, lines: transcriptLines, keyPoints, start: startTranscription, stop: stopTranscription } = useSpeechTranscription(displayName, peers);
+  const { isActive: transcribing, unavailableReason: captionsUnavailable, start: startTranscription, stop: stopTranscription } = useLiveCaptions(roomId, user.id, displayName);
+  const transcriptLines = captionLog;
+  const keyPoints = captionKeyPoints;
+
+  // Personal display preference, not room state — persisted the same way
+  // device choices are (captions.ts mirrors devicePrefs.ts's pattern).
+  const [captionSize, setCaptionSizeState] = useState<CaptionSize>(loadCaptionSize);
+  const setCaptionSize = useCallback((size: CaptionSize) => { setCaptionSizeState(size); saveCaptionSize(size); }, []);
 
   const [bgMode, setBgMode] = useState<BgMode>('none');
-  const [rightTab, setRightTab] = useState<'chat' | 'people' | 'transcript'>('people');
+  const [rightTab, setRightTab] = useState<'chat' | 'people' | 'captions'>('people');
   // Meet-style default: the stage starts full-width with no panel open, same as joining
-  // a real Meet call — People/Chat/Transcript are opt-in via the toolbar, not on by default.
+  // a real Meet call — People/Chat/Live Captions are opt-in via the toolbar, not on by default.
   // (Previously defaulted open on any viewport >768px, which stole ~300px+ from the grid
   // on every desktop call and was part of why 2-3 person layouts looked cramped/stacked.)
   const [rightOpen, setRightOpen] = useState(false);
@@ -981,13 +1066,9 @@ export default function ActiveMeetingView({ onLeaveMeeting, onMinimize }: Props)
 
   const speakerSelectable = useMemo(isSpeakerSelectionSupported, []);
   const screenShareSupported = useMemo(isScreenShareSupported, []);
+  const captionsSupported = useMemo(isLiveCaptionsSupported, []);
 
   const transcriptEndRef = useRef<HTMLDivElement>(null);
-  const transcriptEndDesktopRef = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    transcriptEndDesktopRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [transcriptLines]);
 
   const handleLeave = useCallback(() => {
     stopTranscription(); leaveMeeting();
@@ -1024,6 +1105,17 @@ export default function ActiveMeetingView({ onLeaveMeeting, onMinimize }: Props)
         Icon: isScreenSharing ? ScreenShareOff : ScreenShare,
         onClick: () => { void toggleScreenShare(); }, active: isScreenSharing,
       }] : []),
+      // The toolbar toggle starts/stops streaming this participant's mic to
+      // the captions relay — the on-screen bar (CaptionBar) shows itself
+      // whenever `transcribing` is true, no separate flag to keep in sync.
+      // The Live Captions side panel is a pure view of the resulting log
+      // (captionLog, via context) plus its settings, and has no separate
+      // start/stop of its own beyond the toggle mirrored there too.
+      ...(captionsSupported ? [{
+        key: 'captions', label: transcribing ? 'Turn off captions' : 'Turn on captions', Icon: Captions,
+        onClick: () => { if (transcribing) stopTranscription(); else void startTranscription(); },
+        active: transcribing,
+      }] : []),
       {
         key: 'hand', label: isHandRaised ? 'Lower hand' : 'Raise hand', Icon: Hand,
         onClick: toggleHand, active: isHandRaised,
@@ -1044,11 +1136,11 @@ export default function ActiveMeetingView({ onLeaveMeeting, onMinimize }: Props)
         active: rightOpen && rightTab === 'people',
       },
     ];
-    if (TRANSCRIPTION_ENABLED) {
+    if (captionsSupported) {
       actions.push({
-        key: 'transcript', label: 'Transcript', Icon: Activity,
-        onClick: () => { setRightTab('transcript'); setRightOpen((v) => !v); },
-        active: rightOpen && rightTab === 'transcript',
+        key: 'captions-panel', label: 'Live Captions', Icon: Activity,
+        onClick: () => { setRightTab('captions'); setRightOpen((v) => !v); },
+        active: rightOpen && rightTab === 'captions',
       });
     }
     if (onMinimize) {
@@ -1059,7 +1151,8 @@ export default function ActiveMeetingView({ onLeaveMeeting, onMinimize }: Props)
       onClick: () => { setSettingsOpen((v) => !v); setReactionBarOpen(false); }, active: settingsOpen,
     });
     return actions;
-  }, [screenShareSupported, isScreenSharing, toggleScreenShare, isHandRaised, toggleHand, reactionBarOpen,
+  }, [screenShareSupported, isScreenSharing, toggleScreenShare, captionsSupported, transcribing,
+      startTranscription, stopTranscription, isHandRaised, toggleHand, reactionBarOpen,
       rightOpen, rightTab, chatMessages.length, onMinimize, settingsOpen]);
 
   const copyCode = useCallback(() => {
@@ -1274,81 +1367,14 @@ export default function ActiveMeetingView({ onLeaveMeeting, onMinimize }: Props)
         <MeetingInviteDialog onClose={dismissInviteDialog} onAddPeople={handleAddPeople} />
       )}
 
-      {/* ── Left Sidebar (Desktop Transcripts) ───────────────────────────────────
-           Off with the transcription feature (src/lib/features.ts): the panel is a
-           transcript panel first and foremost, and leaving a near-empty 288px column
-           in place would only squeeze the video grid (see the tiling notes in CLAUDE.md).
-           The room code / copy-link controls it also carried move to the floating badge
-           over the stage, which becomes visible at all widths when this is hidden. */}
-      {TRANSCRIPTION_ENABLED && (
-      <section className="hidden lg:flex w-72 shrink-0 flex-col border-r border-[#3c4043] bg-[#202124] h-full">
-        <div className="px-4 py-3 border-b border-[#3c4043] flex items-center justify-between shrink-0">
-          <span className="text-xs font-semibold text-[#e8eaed] flex items-center gap-1.5">
-            <Activity className="w-3.5 h-3.5 text-[#8ab4f8]" />Live Transcript
-            <span className="text-[9px] text-[#9aa0a6] font-normal">• Hindi2Hinglish ASR</span>
-          </span>
-          <button
-            onClick={transcribing ? stopTranscription : startTranscription}
-            className={`flex items-center gap-1 px-2 py-1 rounded-lg text-[10px] font-bold cursor-pointer transition-all ${transcribing ? 'bg-[#f28b82]/15 text-[#f28b82] border border-[#f28b82]/30' : 'bg-[#8ab4f8]/10 text-[#8ab4f8] border border-[#8ab4f8]/30 hover:bg-[#8ab4f8]/20'}`}
-          >
-            <Mic2 className="w-3 h-3" /> {transcribing ? 'Stop' : (speechSupported ? 'Transcribe' : 'No mic')}
-          </button>
-        </div>
-
-        {roomId && (
-          <div className="mx-3 mt-3 bg-[#3c4043] rounded-xl p-3 flex flex-col gap-2 border border-[#5f6368]/30 shadow-inner">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-[9px] text-[#9aa0a6] uppercase font-bold tracking-wider">Room Code</p>
-                <p className="font-mono font-bold text-[#8ab4f8] text-sm">{roomId}</p>
-              </div>
-              <button onClick={copyCode} className="flex items-center gap-1 bg-[#4a4d51] text-[#e8eaed] hover:bg-[#5f6368] px-2 py-1 rounded-lg text-[10px] font-bold cursor-pointer transition-colors">
-                {codeCopied ? <Check className="w-3 h-3 text-[#81c995]" /> : <Copy className="w-3 h-3" />}
-                {codeCopied ? 'Copied' : 'Code'}
-              </button>
-            </div>
-            <button onClick={copyLink} className="flex items-center gap-1.5 text-[10px] text-[#9aa0a6] hover:text-[#8ab4f8] cursor-pointer font-semibold transition-colors mt-1">
-              <Link className="w-3 h-3" /> {linkCopied ? '✓ Link copied!' : 'Copy join link'}
-            </button>
-          </div>
-        )}
-
-        <div className="flex-1 overflow-y-auto p-3 space-y-2 scrollbar-hide min-h-0">
-          {transcribing && transcriptLines.length === 0 && <p className="text-[11px] text-[#9aa0a6] text-center mt-4 animate-pulse">Listening…</p>}
-          {!transcribing && transcriptLines.length === 0 && <p className="text-[11px] text-[#5f6368] text-center mt-4">Click Transcribe to begin</p>}
-          {transcriptLines.map((line) => (
-            <div key={line.id} className={`flex flex-col gap-0.5 ${line.isFinal ? '' : 'opacity-70'}`}>
-              <div className="flex items-center gap-1.5">
-                <span className="text-[9px] font-bold text-[#8ab4f8]">{line.speaker}</span>
-                <span className="text-[9px] text-[#5f6368]">{line.timestamp}</span>
-              </div>
-              <p className="text-[11px] text-[#e8eaed] leading-relaxed bg-[#3c4043]/40 rounded-lg px-2.5 py-2">{line.text}</p>
-            </div>
-          ))}
-          <div ref={transcriptEndDesktopRef} />
-        </div>
-
-        {keyPoints.length > 0 && (
-          <div className="border-t border-[#3c4043] p-3 bg-[#1a1b1e]">
-            <p className="text-[9px] font-bold uppercase tracking-wider text-[#9aa0a6] mb-2 flex items-center gap-1">
-              <Lightbulb className="w-3 h-3 text-[#fdd663]" />Key Points
-            </p>
-            <div className="space-y-1.5 max-h-40 overflow-y-auto scrollbar-hide">
-              {keyPoints.slice(-8).map((kp) => {
-                const Icon = KP_ICONS[kp.type] ?? Tag;
-                const cc   = KP_COLORS[kp.type] ?? '';
-                return (
-                  <div key={kp.id} className={`flex items-start gap-1.5 px-2 py-1.5 rounded-lg border text-[10px] ${cc}`}>
-                    <Icon className="w-3 h-3 mt-0.5 shrink-0" />
-                    <span className="leading-relaxed font-medium">{kp.text}</span>
-                  </div>
-                );
-              })}
-            </div>
-          </div>
-        )}
-      </section>
-      )}
+      {/* Live Captions used to have its own always-open desktop-only left
+           sidebar here (gated on the same captionsSupported feature check,
+           duplicating the room-code widget and a second copy of this exact
+           settings+log UI). It's been folded into the Live Captions tab in
+           the right panel instead, next to Chat/People, so captions settings
+           live in exactly one place regardless of viewport width — see
+           RightPanel below. Room code / copy-link controls live solely in
+           the floating badge over the stage now. */}
 
       {/* ── Center/Right Wrapper ──────────────────────────────────────────────── */}
       <section className="flex-1 flex flex-col md:flex-row min-w-0 min-h-0 relative h-full">
@@ -1370,24 +1396,20 @@ export default function ActiveMeetingView({ onLeaveMeeting, onMinimize }: Props)
               <span className="whitespace-nowrap">IB Connect</span>
             </button>
           )}
-          <div className={`bg-[#202124]/80 backdrop-blur-md px-3 py-1.5 rounded-lg border border-[#3c4043] flex items-center gap-2 shadow-sm min-w-0 ${TRANSCRIPTION_ENABLED ? 'lg:hidden' : ''}`}>
+          <div className="bg-[#202124]/80 backdrop-blur-md px-3 py-1.5 rounded-lg border border-[#3c4043] flex items-center gap-2 shadow-sm min-w-0">
             <span className="text-[9px] md:text-[10px] text-[#9aa0a6] font-semibold truncate">Code: <span className="text-[#8ab4f8] font-mono ml-1">{roomId}</span></span>
-            {!TRANSCRIPTION_ENABLED && (
-              <>
-                <button
-                  onClick={copyCode} title="Copy room code" aria-label="Copy room code"
-                  className="w-7 h-7 shrink-0 flex items-center justify-center rounded-md bg-[#3c4043] text-[#e8eaed] hover:bg-[#4a4d51] active:scale-90 cursor-pointer transition-all"
-                >
-                  {codeCopied ? <Check className="w-3.5 h-3.5 text-[#81c995]" /> : <Copy className="w-3.5 h-3.5" />}
-                </button>
-                <button
-                  onClick={copyLink} title="Copy join link" aria-label="Copy join link"
-                  className="w-7 h-7 shrink-0 flex items-center justify-center rounded-md bg-[#3c4043] text-[#e8eaed] hover:bg-[#4a4d51] active:scale-90 cursor-pointer transition-all"
-                >
-                  {linkCopied ? <Check className="w-3.5 h-3.5 text-[#81c995]" /> : <Link className="w-3.5 h-3.5" />}
-                </button>
-              </>
-            )}
+            <button
+              onClick={copyCode} title="Copy room code" aria-label="Copy room code"
+              className="w-7 h-7 shrink-0 flex items-center justify-center rounded-md bg-[#3c4043] text-[#e8eaed] hover:bg-[#4a4d51] active:scale-90 cursor-pointer transition-all"
+            >
+              {codeCopied ? <Check className="w-3.5 h-3.5 text-[#81c995]" /> : <Copy className="w-3.5 h-3.5" />}
+            </button>
+            <button
+              onClick={copyLink} title="Copy join link" aria-label="Copy join link"
+              className="w-7 h-7 shrink-0 flex items-center justify-center rounded-md bg-[#3c4043] text-[#e8eaed] hover:bg-[#4a4d51] active:scale-90 cursor-pointer transition-all"
+            >
+              {linkCopied ? <Check className="w-3.5 h-3.5 text-[#81c995]" /> : <Link className="w-3.5 h-3.5" />}
+            </button>
           </div>
           </div>
 
@@ -1542,6 +1564,10 @@ export default function ActiveMeetingView({ onLeaveMeeting, onMinimize }: Props)
             <ReactionBar onPick={sendReaction} onClose={() => setReactionBarOpen(false)} />
           )}
 
+          {transcribing && (
+            <CaptionBar liveCaptions={liveCaptions} myLang={myCaptionLang} size={captionSize} />
+          )}
+
           {/* FLOATING CONTROLS */}
           <div className="absolute bottom-3 md:bottom-6 left-1/2 -translate-x-1/2 flex items-center gap-1.5 md:gap-2 bg-[#202124]/90 backdrop-blur-xl border border-[#5f6368]/40 rounded-2xl p-1.5 md:p-2 shadow-2xl z-20 w-[max-content] max-w-[95vw] overflow-x-auto scrollbar-hide">
             <CtrlBtn onClick={toggleMic} danger={isMuted} title={isMuted ? 'Unmute' : 'Mute'}>
@@ -1641,10 +1667,12 @@ export default function ActiveMeetingView({ onLeaveMeeting, onMinimize }: Props)
               peers={peers} userName={displayName} isMuted={isMuted}
               onClose={() => setRightOpen(false)}
               links={links} raisedHands={raisedHands} isHandRaised={isHandRaised}
-              transcribing={transcribing} speechSupported={speechSupported}
-              startTranscription={startTranscription} stopTranscription={stopTranscription}
+              transcribing={transcribing} captionsSupported={captionsSupported} captionsUnavailable={captionsUnavailable}
               transcriptLines={transcriptLines} keyPoints={keyPoints}
               transcriptEndRef={transcriptEndRef}
+              myCaptionLang={myCaptionLang} onCaptionLangChange={setCaptionLang}
+              captionSize={captionSize} onCaptionSizeChange={setCaptionSize}
+              onStartCaptions={() => void startTranscription()} onStopCaptions={stopTranscription}
             />
           </div>
         )}

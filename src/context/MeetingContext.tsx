@@ -4,6 +4,8 @@ import { useAuth } from './AuthContext';
 import { useWebRTC, PeerInfo, MediaPrefs } from '../hooks/useWebRTC';
 import { api } from '../lib/api';
 import { makeFloatingReaction, isReaction, REACTION_TTL_MS, type FloatingReaction } from '../lib/reactions';
+import { extractKeyPoints, type CaptionEvent, type KeyPoint, type TranscriptLine } from '../lib/captions';
+import type { PeerLink } from '../lib/connectionStats';
 
 export interface AppUser { id: string; name: string; isGuest: boolean; }
 export interface LiveChatMessage { id: string; fromId: string; fromName: string; text: string; time: string; isSelf: boolean; }
@@ -53,8 +55,9 @@ interface MeetingContextType {
   toggleScreenShare: () => Promise<void>;
   switchCamera: (deviceId: string) => Promise<void>;
   switchMic: (deviceId: string) => Promise<void>;
-  /** Live camera peer connections, for getStats() polling. Stable identity. */
-  getPeerConnections: () => ReadonlyMap<string, RTCPeerConnection>;
+  /** Per-peer connection quality, pushed by LiveKit's own SFU-computed
+   *  participant.connectionQuality — see useWebRTC.ts. */
+  linkQuality: ReadonlyMap<string, PeerLink>;
   /** Forces fresh ICE + a follow-up offer on one peer's camera connection. Used to
    *  recover a link that is 'connected' but has quietly stopped decoding frames. */
   restartPeerConnection: (peerId: string) => void;
@@ -67,6 +70,17 @@ interface MeetingContextType {
   toggleHand: () => void;
   chatMessages: LiveChatMessage[];
   sendChatMessage: (text: string) => void;
+  /** Latest live-caption event per currently-speaking participant (partial or
+   *  final), for the on-screen caption bar. */
+  liveCaptions: ReadonlyMap<string, CaptionEvent>;
+  /** Finalized captions only, oldest first, for the Transcript side panel. */
+  captionLog: TranscriptLine[];
+  captionKeyPoints: KeyPoint[];
+  /** This viewer's own chosen caption/translation language, or null for
+   *  "show the original language, no translation". */
+  myCaptionLang: string | null;
+  setCaptionLang: (lang: string | null) => void;
+  clearCaptionLog: () => void;
   showGuestModal: boolean;
   pendingJoinCode: string | null;
   setPendingAction: (code: string | null) => void;
@@ -135,6 +149,10 @@ export function MeetingProvider({ children }: { children: React.ReactNode }) {
   const [reactions, setReactions] = useState<FloatingReaction[]>([]);
   const [raisedHands, setRaisedHands] = useState<ReadonlySet<string>>(() => new Set());
   const [isHandRaised, setIsHandRaised] = useState(false);
+  const [liveCaptions, setLiveCaptions] = useState<ReadonlyMap<string, CaptionEvent>>(() => new Map());
+  const [captionLog, setCaptionLog] = useState<TranscriptLine[]>([]);
+  const [captionKeyPoints, setCaptionKeyPoints] = useState<KeyPoint[]>([]);
+  const [myCaptionLang, setMyCaptionLang] = useState<string | null>(null);
   const [scheduledMeetings, setScheduledMeetings] = useState<ScheduledMeeting[]>([]);
   const [meetingError, setMeetingError] = useState<string | null>(null);
   const [showGuestModal, setShowGuestModal] = useState(false);
@@ -250,10 +268,9 @@ export function MeetingProvider({ children }: { children: React.ReactNode }) {
     currentRecordIdRef.current = null;
   }, []);
 
-  // user.id decides which side of each pair yields on an offer collision
-  // (perfect negotiation) — both peers must agree, so it has to be the same id
-  // the signaling server knows us by.
-  const webrtc = useWebRTC(socketInstance, user.id);
+  // Media transport is LiveKit now — this hook no longer needs the signaling
+  // socket or a perfect-negotiation tie-break id (see useWebRTC.ts's header).
+  const webrtc = useWebRTC();
 
   const setUserName = useCallback((name: string, isGuest = true) => {
     const trimmed = name.trim() || 'Guest';
@@ -310,6 +327,39 @@ export function MeetingProvider({ children }: { children: React.ReactNode }) {
         next.delete(p.peer_id);
         return next;
       });
+      setLiveCaptions((prev) => {
+        if (!prev.has(p?.peer_id)) return prev;
+        const next = new Map(prev);
+        next.delete(p.peer_id);
+        return next;
+      });
+    });
+    // Sent by the /asr relay via room.broadcastAll (server/transcription_relay.go),
+    // which does NOT exclude the sender — a speaker sees their own captions
+    // too, in whatever language THEY have selected, through this exact same
+    // path as everyone else. No special-casing needed here for "is this me".
+    s.on('caption', (p: any) => {
+      const evt: CaptionEvent = {
+        peerId: p.peer_id, peerName: p.peer_name ?? 'Someone',
+        text: p.text ?? '', lang: p.lang ?? 'en', isFinal: !!p.is_final,
+        confidence: p.confidence, translations: p.translations ?? undefined,
+        receivedAt: Date.now(),
+      };
+      setLiveCaptions((prev) => {
+        const next = new Map(prev);
+        next.set(evt.peerId, evt);
+        return next;
+      });
+      if (evt.isFinal && evt.text) {
+        const line: TranscriptLine = {
+          id: `cap-${Date.now()}-${Math.random()}`, text: evt.text, isFinal: true,
+          timestamp: new Date().toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' }),
+          speaker: evt.peerName, lang: evt.lang, translations: evt.translations,
+        };
+        setCaptionLog((prev) => [...prev, line].slice(-50));
+        const kps = extractKeyPoints(evt.text);
+        if (kps.length) setCaptionKeyPoints((prev) => [...prev, ...kps].slice(-20));
+      }
     });
     s.on('error', (p: any) => setMeetingError(p.message));
     await s.connect();
@@ -338,22 +388,31 @@ export function MeetingProvider({ children }: { children: React.ReactNode }) {
     const s = socketRef.current;
     if (!active || !s?.isOpen) return;
 
-    // Every RTCPeerConnection we hold points at a peer who already tore their side
-    // down when the server told them we left, so start clean and redial.
-    webrtc.resetPeers();
     const payload = { room_id: active.code, user_id: userIdRef.current, user_name: nameRef.current };
-    let peers: any[];
     try {
-      peers = await requestRoomEntry(s, 'join_room', payload);
+      await requestRoomEntry(s, 'join_room', payload);
     } catch (err) {
       // Room reaped while we were gone. Reopen it if it's ours, same rule the
       // post-reload redial uses; otherwise say so rather than fake a live call.
       if (!active.isHost) { setMeetingError('Lost connection to the meeting. Rejoin to continue.'); return; }
-      try { peers = await requestRoomEntry(s, 'create_room', payload); }
+      try { await requestRoomEntry(s, 'create_room', payload); }
       catch { setMeetingError('Lost connection to the meeting. Rejoin to continue.'); return; }
     }
-    webrtc.addPeers(peers.map((p: any) => ({ id: p.id, name: p.name })));
-    peers.forEach((p: any) => webrtc.createOfferFor(p.id));
+
+    // This redial is recovering the /ws SIGNALING socket, which is a
+    // completely separate connection from LiveKit's — a /ws drop does not
+    // mean the LiveKit room dropped too. Only reconnect it if it's actually
+    // not connected (LiveKit's own reconnection gave up, most likely because
+    // the access token's short TTL lapsed during a long outage); otherwise
+    // leave a still-healthy media connection alone.
+    if (!webrtc.isMediaConnected()) {
+      try {
+        const { token, url } = await api.getLiveKitToken(active.code, userIdRef.current, nameRef.current);
+        await webrtc.connect(url, token);
+      } catch (err) {
+        setMeetingError('Lost connection to the meeting. Rejoin to continue.');
+      }
+    }
   }, [webrtc]);
   useEffect(() => { reconnectRef.current = reenterRoom; }, [reenterRoom]);
 
@@ -365,17 +424,11 @@ export function MeetingProvider({ children }: { children: React.ReactNode }) {
       // otherwise the last call's participants linger as blank tiles in the new one.
       webrtc.resetPeers();
       setChatMessages([]);
-      await webrtc.initMedia();
       const s = await connectSocket();
-      return await new Promise<string>((resolve, reject) => {
+      const roomId = await new Promise<string>((resolve, reject) => {
         const unsub = s.on('room_created', (p: any) => {
           unsub(); setRoomId(p.room_id); setIsHost(true); setIsInMeeting(true); setIsMinimized(false);
           activeRoomRef.current = { code: p.room_id, isHost: true };
-          // The server now reuses an existing room for a known code instead of
-          // clobbering it, so a "create" can legitimately land in an occupied room
-          // (host reloading into their own grace-period room, mainly).
-          webrtc.addPeers((p.peers ?? []).map((peer: any) => ({ id: peer.id, name: peer.name })));
-          (p.peers ?? []).forEach((peer: any) => webrtc.createOfferFor(peer.id));
           setShowInviteDialog((p.peers ?? []).length === 0);
           persistActiveMeeting(p.room_id, true, title);
           saveMeetingRecord(p.room_id, true, title); resolve(p.room_id);
@@ -383,6 +436,13 @@ export function MeetingProvider({ children }: { children: React.ReactNode }) {
         const errUnsub = s.on('error', (p: any) => { errUnsub(); unsub(); reject(new Error(p.message)); });
         s.send('create_room', { room_id: customCode, user_id: userIdRef.current, user_name: nameRef.current, meeting_title: title });
       });
+      // Media (LiveKit) is connected AFTER /ws admission, not before — the
+      // token endpoint's authorization IS current /ws room membership
+      // (server/livekit.go), so there is no confirmed room to ask for a
+      // token for until this point.
+      const { token, url } = await api.getLiveKitToken(roomId, userIdRef.current, nameRef.current);
+      await webrtc.connect(url, token);
+      return roomId;
     } catch (err: any) { setMeetingError(err.message || 'Failed to create meeting'); throw err; }
   }, [user.id, webrtc, connectSocket, saveMeetingRecord]);
 
@@ -398,22 +458,26 @@ export function MeetingProvider({ children }: { children: React.ReactNode }) {
       }
       webrtc.resetPeers();
       setChatMessages([]);
-      await webrtc.initMedia(prefs);
       const s = await connectSocket();
-      return await new Promise<string>((resolve, reject) => {
+      await new Promise<void>((resolve, reject) => {
         const unsub = s.on('room_joined', (p: any) => {
           unsub(); setRoomId(p.room_id); setIsHost(false); setIsInMeeting(true); setIsMinimized(false);
           activeRoomRef.current = { code: trimmedCode, isHost: false };
           const resolvedTitle = knownTitle || scheduledMeetings.find(m => m.code === trimmedCode)?.title;
           persistActiveMeeting(trimmedCode, false, resolvedTitle);
           saveMeetingRecord(trimmedCode, false, resolvedTitle);
-          webrtc.addPeers((p.peers ?? []).map((peer: any) => ({ id: peer.id, name: peer.name })));
-          (p.peers ?? []).forEach((peer: any) => webrtc.createOfferFor(peer.id));
-          resolve(trimmedCode);
+          resolve();
         });
         const errUnsub = s.on('error', (p: any) => { errUnsub(); unsub(); reject(new Error(p.message)); });
         s.send('join_room', { room_id: trimmedCode, user_id: userIdRef.current, user_name: nameRef.current });
       });
+      // Same ordering as createMeeting — see its comment. `prefs` (the
+      // lobby's mute/camera-off choice) is applied here, at LiveKit connect
+      // time, exactly like the old initMedia(prefs) applied it at
+      // getUserMedia time.
+      const { token, url } = await api.getLiveKitToken(trimmedCode, userIdRef.current, nameRef.current);
+      await webrtc.connect(url, token, prefs);
+      return trimmedCode;
     } catch (err: any) {
       const ownedMeeting = scheduledMeetings.find(m => m.code === trimmedCode);
       if (err.message.includes('Room not found') && ownedMeeting) {
@@ -441,6 +505,7 @@ export function MeetingProvider({ children }: { children: React.ReactNode }) {
     // Leftover hands and reactions would reappear on the next call, attributed to
     // peers from the room that just ended.
     setReactions([]); setRaisedHands(new Set()); setIsHandRaised(false);
+    setLiveCaptions(new Map()); setCaptionLog([]); setCaptionKeyPoints([]); setMyCaptionLang(null);
     setIsRejoining(false);
   }, [webrtc, updateMeetingRecord]);
 
@@ -520,6 +585,16 @@ export function MeetingProvider({ children }: { children: React.ReactNode }) {
     });
   }, []);
 
+  // Not broadcast to anyone but stored server-side (Room.clients[you].captionLang
+  // in server/main.go) — it's what the /asr relay reads to decide which
+  // languages a final transcript needs translating into, purely a viewer-side
+  // preference with no bearing on what you sound like to others.
+  const setCaptionLang = useCallback((lang: string | null) => {
+    setMyCaptionLang(lang);
+    socketRef.current?.send('caption_lang', { lang: lang ?? '' });
+  }, []);
+  const clearCaptionLog = useCallback(() => { setCaptionLog([]); setCaptionKeyPoints([]); }, []);
+
   const setPendingAction = useCallback((code: string | null) => { setPendingJoinCode(code); setShowGuestModal(true); }, []);
   const dismissGuestModal = useCallback(() => { setShowGuestModal(false); setPendingJoinCode(null); }, []);
   const clearMeetingError = useCallback(() => setMeetingError(null), []);
@@ -533,10 +608,11 @@ export function MeetingProvider({ children }: { children: React.ReactNode }) {
       screenStream: webrtc.screenStream, screenPeers: webrtc.screenPeers,
       toggleMic: webrtc.toggleMic, setMicMuted: webrtc.setMicMuted, toggleCamera: webrtc.toggleCamera, toggleScreenShare: webrtc.toggleScreenShare,
       switchCamera: webrtc.switchCamera, switchMic: webrtc.switchMic,
-      getPeerConnections: webrtc.getPeerConnections,
+      linkQuality: webrtc.linkQuality,
       restartPeerConnection: webrtc.restartPeerConnection,
       reactions, sendReaction, raisedHands, isHandRaised, toggleHand,
-      chatMessages, sendChatMessage, showGuestModal, pendingJoinCode, setPendingAction, dismissGuestModal, meetingError, clearMeetingError
+      chatMessages, sendChatMessage, showGuestModal, pendingJoinCode, setPendingAction, dismissGuestModal, meetingError, clearMeetingError,
+      liveCaptions, captionLog, captionKeyPoints, myCaptionLang, setCaptionLang, clearCaptionLog
     }}>
       {children}
     </MeetingContext.Provider>

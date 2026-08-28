@@ -15,13 +15,11 @@ import (
 	"log"
 	"math/big"
 	"net/http"
-	"net/http/httputil"
 	"net/url"
 	"os"
 	"strconv"
 	"strings"
 	"sync"
-	"sync/atomic"
 	"time"
 
 	"github.com/go-sql-driver/mysql"
@@ -1170,14 +1168,7 @@ type JoinRoomPayload struct {
 	UserID   string `json:"user_id"`
 	UserName string `json:"user_name"`
 }
-type SignalPayload struct {
-	To        string          `json:"to"`
-	SDP       json.RawMessage `json:"sdp,omitempty"`
-	Candidate json.RawMessage `json:"candidate,omitempty"`
-	Kind      string          `json:"kind,omitempty"`
-}
 type ChatPayload struct{ Text string `json:"text"` }
-type ScreenSharePayload struct{ Sharing bool `json:"sharing"` }
 type ReactionPayload struct{ Emoji string `json:"emoji"` }
 
 // Kept in sync with REACTIONS in src/lib/reactions.ts. Anything not listed here is
@@ -1189,6 +1180,7 @@ var allowedReactions = map[string]bool{
 }
 
 type HandPayload struct{ Raised bool `json:"raised"` }
+type CaptionLangPayload struct{ Lang string `json:"lang"` }
 type PeerInfo struct {
 	ID   string `json:"id"`
 	Name string `json:"name"`
@@ -1199,6 +1191,14 @@ type SigClient struct {
 	name string
 	conn *websocket.Conn
 	room *Room
+
+	// Which language, if any, this client wants live captions translated
+	// into. Read by transcription_relay.go's activeCaptionLangs (a snapshot
+	// across every client in a room) and written by the "caption_lang" case
+	// below — both cross-goroutine, so guarded by room.mu like the rest of
+	// Room's mutable state rather than SigClient's own fields, which are
+	// otherwise set once at join and not concurrently mutated.
+	captionLang string
 
 	// Outbound queue. Writes used to happen synchronously inside broadcast(),
 	// while it held the room's read lock — so one client whose TCP send buffer
@@ -1267,15 +1267,6 @@ type Room struct {
 	clients map[string]*SigClient
 	mu      sync.RWMutex
 
-	// Signalling volume counters, reported in aggregate by sigReporter below.
-	// The relay path deliberately does NOT log per message: at 22 participants a
-	// single join fans out ~21 offers and hundreds of ICE candidates, so
-	// per-message logging would bury the journal. Aggregates answer the question
-	// that actually matters after an incident — "how much renegotiation was this
-	// room doing?" — which was unanswerable for the 2026-08-10 call.
-	sigOffers     atomic.Uint64
-	sigAnswers    atomic.Uint64
-	sigCandidates atomic.Uint64
 	// reap is a pending "delete this empty room" timer, guarded by roomsMu (not
 	// room.mu) because firing it mutates the global rooms map. An empty room is
 	// kept alive for emptyRoomGrace rather than deleted on the spot so that a
@@ -1304,6 +1295,42 @@ const (
 	sigSendBuffer = 256
 )
 
+// wsLeaveGraceInterval bounds the /ws-vs-LiveKit membership divergence
+// documented in CLAUDE.md's 2026-08-27 known-limitation entry: killing only a
+// client's /ws socket (LiveKit connection untouched — a network blip, a
+// backgrounded tab, a brief wifi handoff) used to call leaveRoom() the
+// instant the read loop errored out, which for the ~1s until
+// SignalingSocket's own reconnect logic healed it, made isRoomMember() (the
+// gate /api/livekit/token and /asr both check) wrongly say this very-much-
+// still-on-the-call participant wasn't in the room.
+//
+// This is deliberately NOT the LiveKit-disconnect-webhook or reconciliation
+// approach CLAUDE.md sketched as the backlog fix — that direction turned out
+// to be the wrong tool for this specific bug. The measured divergence is
+// /ws's roster lagging BEHIND live reality (still on the call, briefly
+// unrecognised), not /ws being stale about someone who actually left; a
+// LiveKit-driven eviction would only ever help the opposite case, and if
+// wired to fire on every transient LiveKit hiccup it would newly risk
+// evicting someone who never actually left. What actually fixes the measured
+// case is not being trigger-happy about a bare /ws disconnect: delay
+// leaveRoom() by a short grace window instead of running it inline in the
+// deferred cleanup below. enterRoom() already overwrites
+// room.clients[client.id] the instant a reconnect's join_room/create_room
+// lands (server/main.go, enterRoom), and leaveRoom() already only vacates
+// "if the room still points at *this* connection" — so a delayed leaveRoom
+// for a client that has since reconnected finds someone else's entry in its
+// place and correctly no-ops, with no new bookkeeping needed to "cancel" it.
+// A genuine departure (tab closed, network gone for good) just waits out the
+// same window before anyone sees peer_left / a lowered hand / cleared
+// captions for them — an imperceptible cost for the rare real case, against
+// closing a real spurious-403 window for the common transient one.
+//
+// 3s is chosen with margin over the measured ~1s self-heal: backoffDelay's
+// first reconnect attempt alone is ~0.7-1.3s (1000ms base * 0.7-1.3 jitter,
+// diagnostics.ts), before the actual reconnect handshake and rejoin
+// round-trip even start.
+const wsLeaveGraceInterval = 3 * time.Second
+
 // maxRoomSize caps participants per room. DEFAULT IS 0 = UNLIMITED, deliberately:
 // this codebase is mesh WebRTC, which realistically supports 6-8 people, but
 // turning a cap on silently would start rejecting users from calls that
@@ -1330,34 +1357,11 @@ func roomIsFull(room *Room, clientID string) bool {
 	return len(room.clients) >= maxRoomSize
 }
 
-// sigReporter periodically logs per-room signalling volume, then resets the
-// counters. This is the only record of renegotiation activity: without it there
-// is no way to distinguish "a room that is quietly working" from "a room in a
-// renegotiation storm", which is precisely the gap that made the 2026-08-10
-// fan-out estimate unverifiable.
-func sigReporter() {
-	const every = 30 * time.Second
-	for range time.Tick(every) {
-		roomsMu.RLock()
-		snapshot := make([]*Room, 0, len(rooms))
-		for _, r := range rooms {
-			snapshot = append(snapshot, r)
-		}
-		roomsMu.RUnlock()
-		for _, r := range snapshot {
-			o := r.sigOffers.Swap(0)
-			a := r.sigAnswers.Swap(0)
-			c := r.sigCandidates.Swap(0)
-			if o == 0 && a == 0 && c == 0 {
-				continue
-			}
-			r.mu.RLock()
-			n := len(r.clients)
-			r.mu.RUnlock()
-			log.Printf("[Signaling] room %s 30s: participants=%d offers=%d answers=%d candidates=%d", r.id, n, o, a, c)
-		}
-	}
-}
+// sigReporter (offer/answer/ICE-candidate volume logging) was removed here as
+// part of the mesh->LiveKit migration (2026-08-27) — it measured mesh
+// renegotiation traffic that no longer flows through this socket at all.
+// LiveKit's own server has its own telemetry for SFU-side traffic; this was
+// never that, so nothing replaces it here.
 
 func (room *Room) broadcast(senderID, t string, payload any) {
 	// Snapshot the recipients, then release the lock before touching any socket.
@@ -1369,6 +1373,21 @@ func (room *Room) broadcast(senderID, t string, payload any) {
 		if id != senderID {
 			targets = append(targets, c)
 		}
+	}
+	room.mu.RUnlock()
+	for _, c := range targets {
+		c.sendMsg(t, payload)
+	}
+}
+
+// broadcastAll is broadcast without excluding the sender — used for captions,
+// which need to reach the speaker too (in whatever language THEY have
+// selected, which may differ from the language they're speaking).
+func (room *Room) broadcastAll(t string, payload any) {
+	room.mu.RLock()
+	targets := make([]*SigClient, 0, len(room.clients))
+	for _, c := range room.clients {
+		targets = append(targets, c)
 	}
 	room.mu.RUnlock()
 	for _, c := range targets {
@@ -1623,8 +1642,9 @@ func handleSignaling(w http.ResponseWriter, r *http.Request) {
 	})
 	defer func() {
 		client.kill()
+		// Delayed, not inline — see wsLeaveGraceInterval above for why.
 		if client.room != nil {
-			leaveRoom(client)
+			time.AfterFunc(wsLeaveGraceInterval, func() { leaveRoom(client) })
 		}
 		log.Printf("Signaling client disconnected: %s (%s) after %s, room=%s",
 			client.id, client.name, time.Since(connectedAt).Round(time.Second), roomLabel(client))
@@ -1723,33 +1743,17 @@ func handleSignaling(w http.ResponseWriter, r *http.Request) {
 			log.Printf("Room %s joined by %s (%s), now %d participant(s)", room.id, client.id, client.name, len(peers)+1)
 			client.sendMsg("room_joined", map[string]any{"room_id": room.id, "peers": peers})
 			room.broadcast(client.id, "peer_joined", map[string]string{"peer_id": client.id, "peer_name": client.name})
-		case "offer", "answer", "ice_candidate":
-			var p SignalPayload
-			json.Unmarshal(msg.Payload, &p) //nolint
-			if client.room == nil {
-				continue
-			}
-			switch msg.Type {
-			case "offer":
-				client.room.sigOffers.Add(1)
-			case "answer":
-				client.room.sigAnswers.Add(1)
-			default:
-				client.room.sigCandidates.Add(1)
-			}
-			client.room.mu.RLock()
-			target, found := client.room.clients[p.To]
-			client.room.mu.RUnlock()
-			if found {
-				// from_name matters on `offer`: the receiver may be creating that
-				// peer's tile right here (an offer can land before, or instead of,
-				// the peer_joined that would have named them) and without a name it
-				// falls back to a generic "Guest (…)" label for a known participant.
-				target.sendMsg(msg.Type, map[string]any{
-					"from": client.id, "from_name": client.name,
-					"sdp": p.SDP, "candidate": p.Candidate, "kind": p.Kind,
-				})
-			}
+		// "offer"/"answer"/"ice_candidate" (mesh SDP/ICE relay) and
+		// "screen_share_state" (mesh screen-share track presence) were removed
+		// here as part of the mesh->LiveKit SFU migration (2026-08-27) — camera/
+		// mic media now goes through LiveKit, not through this socket, so there
+		// is nothing left to relay. See CLAUDE.md's migration work log:
+		// screen sharing rode this exact same relay (kind:"screen" on these same
+		// message types) and has NO replacement transport yet — it is
+		// deliberately, visibly non-functional until it's rebuilt as a second
+		// published LiveKit track, not silently broken. SignalPayload and
+		// ScreenSharePayload (the structs these two cases used) were removed
+		// with them.
 		case "leave_room":
 			leaveRoom(client) // no-ops when client.room is nil, and clears it itself
 		case "chat_message":
@@ -1759,14 +1763,6 @@ func handleSignaling(w http.ResponseWriter, r *http.Request) {
 				client.room.broadcast(client.id, "chat_message", map[string]string{
 					"from_id": client.id, "from_name": client.name,
 					"text": p.Text, "time": time.Now().Format("3:04 PM"),
-				})
-			}
-		case "screen_share_state":
-			var p ScreenSharePayload
-			json.Unmarshal(msg.Payload, &p) //nolint
-			if client.room != nil {
-				client.room.broadcast(client.id, "screen_share_state", map[string]any{
-					"peer_id": client.id, "sharing": p.Sharing,
 				})
 			}
 		// Reactions are transient by design: they animate for two seconds and are
@@ -1792,6 +1788,19 @@ func handleSignaling(w http.ResponseWriter, r *http.Request) {
 				client.room.broadcast(client.id, "hand_state", map[string]any{
 					"peer_id": client.id, "peer_name": client.name, "raised": p.Raised,
 				})
+			}
+		// A viewer's caption-language pick. State, not an event, like
+		// hand_state — it stays in effect until changed. Read by
+		// transcription_relay.go's activeCaptionLangs to decide which
+		// languages a final transcript needs translating into; empty means
+		// "no captions" / "show original language only".
+		case "caption_lang":
+			var p CaptionLangPayload
+			json.Unmarshal(msg.Payload, &p) //nolint
+			if client.room != nil {
+				client.room.mu.Lock()
+				client.captionLang = p.Lang
+				client.room.mu.Unlock()
 			}
 		}
 	}
@@ -1868,6 +1877,7 @@ func main() {
 		if r.Method == "PUT" { handleUpdateMe(w, r) } else { handleMe(w, r) }
 	})
 	mux.HandleFunc("/api/turn-credentials", handleTurnCredentials)
+	mux.HandleFunc("/api/livekit/token", handleLiveKitToken)
 	mux.HandleFunc("/api/client-events", handleClientEvents)
 	mux.HandleFunc("/api/interview/", handleInterviewRoutes)
 	mux.HandleFunc("/api/users", handleUsers)
@@ -1904,13 +1914,12 @@ func main() {
 		}
 	})
 
-	// Proxy /asr → ws://localhost:8765 (NeMo ASR server)
-	asrTarget, _ := url.Parse("http://localhost:8765")
-	asrProxy := httputil.NewSingleHostReverseProxy(asrTarget)
-	mux.HandleFunc("/asr", func(w http.ResponseWriter, r *http.Request) {
-		r.URL.Path = "/"
-		asrProxy.ServeHTTP(w, r)
-	})
+	// Live-captions relay → the GPU VM (gpu/ASR_CONTRACT.md via asr_gpu.go).
+	// Used to reverse-proxy straight to a local Python process on :8765; that
+	// process (server/transcription_server.py) is retired — this now goes
+	// through handleASRRelay, which is the only thing that knows the GPU
+	// VM's address, same as the interview feature.
+	mux.HandleFunc("/asr", handleASRRelay)
 
 	// Defaults to the port the systemd unit expects; overridable so a throwaway
 	// instance can be run alongside it for testing without restarting production.
@@ -1918,7 +1927,6 @@ func main() {
 	if port == "" {
 		port = "8080"
 	}
-	go sigReporter()
 
 	// Bind to loopback, not 0.0.0.0. nginx proxies to 127.0.0.1:8080 and terminates
 	// TLS, but the listener was on every interface, so the API and WebSocket were

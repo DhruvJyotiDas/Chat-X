@@ -1,0 +1,28 @@
+# Rendered to /etc/ibconnect/livekit.yaml at deploy time (see README.md in
+# this directory) — this template only ever holds placeholders. The real
+# key/secret live in /etc/ibconnect/env, same convention as every other
+# secret in this codebase; never commit the rendered file.
+port: 7880
+bind_addresses:
+  # nginx terminates TLS on meet.icebrkr.space and reverse-proxies /livekit/
+  # to this port — 7880 itself is never exposed directly to the internet,
+  # same shape as /ws and /chat-ws already going through nginx to 8080.
+  - "127.0.0.1"
+rtc:
+  tcp_port: 7881
+  # Single-port UDP mux rather than a wide port_range — simpler firewall
+  # surface for a single-node deployment, and this host has no NAT to work
+  # around (its nginx vhost already serves meet.icebrkr.space off a direct
+  # public IP, confirmed against the same assumption coturn already makes).
+  # Deliberately outside coturn's own 20000-60000 relay range
+  # (/etc/turnserver.conf min-port/max-port) so the two servers can never
+  # collide on a port.
+  udp_port: 7882
+  use_external_ip: true
+keys:
+  ${LIVEKIT_API_KEY}: ${LIVEKIT_API_SECRET}
+room:
+  auto_create: true
+  empty_timeout: 300
+logging:
+  level: info

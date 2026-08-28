@@ -1,0 +1,93 @@
+{
+  "mode": "mesh",
+  "n": 6,
+  "roomCode": "DV67-TXQX",
+  "timestamp": "2026-08-27T18:58:18.194Z",
+  "hardware": {
+    "cpuCount": 4,
+    "softwareEncodeOnly": true
+  },
+  "settle": {
+    "settled": true,
+    "inboundVideoStreams": 29,
+    "expectedInboundVideoStreams": 30,
+    "connectedFraction": 1,
+    "timeoutMs": 33000
+  },
+  "windowSeconds": 32.287,
+  "perClient": [
+    {
+      "index": 0,
+      "uploadKbps": 1129.691350255227,
+      "downloadKbps": 1119.6990420250334,
+      "cpuCores": 0.6343110230123581,
+      "pcCount": 5,
+      "errors": []
+    },
+    {
+      "index": 1,
+      "uploadKbps": 1029.2346167432004,
+      "downloadKbps": 1159.6255740021195,
+      "cpuCores": 0.657540186452752,
+      "pcCount": 5,
+      "errors": []
+    },
+    {
+      "index": 2,
+      "uploadKbps": 986.9666550643926,
+      "downloadKbps": 1222.4072398190046,
+      "cpuCores": 0.6494874097934152,
+      "pcCount": 5,
+      "errors": []
+    },
+    {
+      "index": 3,
+      "uploadKbps": 1100.3494158754809,
+      "downloadKbps": 1147.6395722302616,
+      "cpuCores": 0.6584693529903676,
+      "pcCount": 5,
+      "errors": []
+    },
+    {
+      "index": 4,
+      "uploadKbps": 1061.4268742750694,
+      "downloadKbps": 952.8559277354047,
+      "cpuCores": 0.6374082448044104,
+      "pcCount": 5,
+      "errors": []
+    },
+    {
+      "index": 5,
+      "uploadKbps": 1133.8906743286864,
+      "downloadKbps": 842.8746763151361,
+      "cpuCores": 0.6312138012203055,
+      "pcCount": 5,
+      "errors": []
+    }
+  ],
+  "aggregate": {
+    "avgUploadKbps": 1073.5932644236761,
+    "avgDownloadKbps": 1074.1836720211597,
+    "avgCpuCores": 0.6447383363789349
+  },
+  "server": {
+    "backendCpuCores": 0.0006194443584105064,
+    "livekitCpuCores": null,
+    "livekitRssMb": null
+  },
+  "hostSaturation": {
+    "systemCpuFraction": 0.9998444064104559,
+    "cpuCount": 4,
+    "saturated": true
+  },
+  "watchability": {
+    "totalStreams": 30,
+    "degradedStreams": 30,
+    "degradedStreamFraction": 1,
+    "iceFailureFraction": 0
+  },
+  "verdict": "DEGRADED/UNUSABLE",
+  "gatingReason": "100.0% of video streams show sustained freezing/drops (>15% threshold) [stream-degradation]",
+  "secondaryReasons": [],
+  "errors": []
+}

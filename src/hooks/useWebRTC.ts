@@ -1,64 +1,48 @@
-import { useState, useEffect, useRef, useCallback } from 'react';
-import { SignalingSocket } from '../lib/signalingSocket';
-import { describeMediaError, describeFatalMediaError } from '../lib/mediaErrors';
-import { loadDevicePrefs, deviceConstraint, saveCameraId, saveMicId } from '../lib/devicePrefs';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import {
+  Room, RoomEvent, RemoteParticipant, RemoteTrack, RemoteTrackPublication,
+  LocalTrackPublication, ConnectionState, ConnectionQuality, Participant, Track,
+} from 'livekit-client';
+import { describeMediaError } from '../lib/mediaErrors';
+import { api } from '../lib/api';
+import type { PeerLink, LinkQuality } from '../lib/connectionStats';
 
-// ─── ICE configuration ───────────────────────────────────────────────────────
+// ─── Mesh -> LiveKit SFU migration, Stage 3 (2026-08-27) ─────────────────────
 //
-// The TURN username and password used to be literals in this file, which means
-// they shipped in the built JS bundle — an open relay for anyone who opened
-// devtools. They now come from GET /api/turn-credentials, which can hand out
-// short-lived HMAC credentials (see handleTurnCredentials in server/main.go).
+// This file used to build and negotiate one RTCPeerConnection per remote
+// participant by hand (perfect-negotiation glare handling, manual ICE queues,
+// a second parallel connection scheme for screen share — see git history /
+// CLAUDE.md's migration work log if any of that reasoning is ever needed
+// again). All of that is deleted outright, not "replaced conceptually" — a
+// LiveKit Room object owns exactly one transport to the SFU internally, so
+// there is no second party to glare against and nothing here to arbitrate.
 //
-// The fallback below is STUN-only ON PURPOSE. If the credential fetch fails we
-// would rather lose relayed calls (peers behind symmetric NAT) than re-embed a
-// permanent shared secret to guard against a backend outage. Direct P2P still
-// works on the fallback, which covers most connections.
-const FALLBACK_ICE: RTCConfiguration = {
-  iceServers: [
-    { urls: 'stun:stun.l.google.com:19302' },
-    { urls: 'stun:stun1.l.google.com:19302' },
-  ],
-};
+// Screen sharing (gap #1 from the Stage 3 pass) is fixed as of 2026-08-28:
+// it is now a second published track (Track.Source.ScreenShare) on the SAME
+// Room/LocalParticipant camera already uses, not a second connection scheme —
+// exactly what the Stage 2 plan called for. LiveKit's own SDK already
+// unpublishes and fires LocalTrackUnpublished when the browser's native
+// "Stop sharing" control ends the capture, so there's no manual
+// `track.onended` wiring needed the way the old mesh code required.
+//
+// Quality badges (gap #2) are also fixed as of 2026-08-28: `linkQuality`
+// comes from LiveKit's own participant.connectionQuality (computed
+// server-side by the SFU, pushed via RoomEvent.ConnectionQualityChanged) —
+// no client-side getStats() polling needed, unlike the deleted
+// useConnectionQuality.ts this replaces. One real loss of resolution: no
+// per-peer "relayed via TURN" fact survives this, since that was always a
+// property of one mesh peer connection and there is no equivalent once every
+// participant shares one SFU connection — see PeerLink's own comment.
+//
+// Stall-recovery (gap #3) is fixed as of 2026-08-28 too: restartPeerConnection
+// no longer touches a connection (LiveKit has no per-peer one) — it
+// unsubscribes and resubscribes that one participant's video track, the
+// per-track equivalent of the old per-connection ICE restart, scoped the
+// same way the original did (never touching a link everyone else already
+// sees fine, per useStalledVideoRecovery.ts's own header).
+//
+// All three Stage-3 gaps are closed as of this pass.
 
-let iceConfig: RTCConfiguration = FALLBACK_ICE;
-let iceExpiresAt = 0;
-let icePending: Promise<RTCConfiguration> | null = null;
-
-// Resolves the ICE configuration, refetching when the credentials are near
-// expiry. Every site that constructs an RTCPeerConnection awaits this first, so
-// a connection is never built with credentials that are about to lapse.
-async function ensureIceServers(): Promise<RTCConfiguration> {
-  if (Date.now() < iceExpiresAt) return iceConfig;
-  if (icePending) return icePending;
-
-  icePending = (async () => {
-    try {
-      const res = await fetch('/api/turn-credentials');
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      const body = await res.json() as { iceServers?: RTCIceServer[]; ttlSeconds?: number };
-      if (!body.iceServers?.length) throw new Error('no iceServers in response');
-      iceConfig = { iceServers: body.iceServers };
-      // ttlSeconds of 0 means static credentials that never expire; refresh
-      // those hourly anyway so a switch to HMAC is picked up without a reload.
-      const ttl = body.ttlSeconds && body.ttlSeconds > 0 ? body.ttlSeconds : 3600;
-      // Renew at 80% of the lifetime so a long call never runs to the edge.
-      iceExpiresAt = Date.now() + ttl * 800;
-    } catch (err) {
-      console.warn('[webrtc] TURN credential fetch failed — falling back to STUN only. '
-        + 'Calls needing a relay will not connect.', err);
-      iceConfig = FALLBACK_ICE;
-      iceExpiresAt = Date.now() + 30_000; // retry soon
-    } finally {
-      icePending = null;
-    }
-    return iceConfig;
-  })();
-
-  return icePending;
-}
-
-/** Mic/camera state chosen in the lobby, applied while acquiring rather than after. */
 export interface MediaPrefs {
   muted?: boolean;
   videoOff?: boolean;
@@ -75,964 +59,412 @@ const getFallbackName = (id: string) => {
   return `Guest (${cleanId.slice(0, 4).toUpperCase()})`;
 };
 
-// ─── Upstream budget ─────────────────────────────────────────────────────────
-//
-// Mesh means every participant uploads a SEPARATE encoded copy of their camera to
-// every other participant — there is no server fanning one stream out. Chrome will
-// happily try to send each of those at its default ~1-2.5 Mbps, so upstream demand
-// grows linearly with the room while the uplink does not: 10 peers is already ~15
-// Mbps of video, which most connections cannot sustain. When the uplink saturates,
-// Opus packets are dropped alongside video frames, which is why the first
-// symptom of over-subscription is people becoming inaudible rather than blurry.
-//
-// So: divide a fixed budget across the peers actually present, and drop encode
-// resolution as the room grows (tiles are physically smaller in a big call anyway,
-// so there is nothing to gain from sending full resolution to each).
-const CAMERA_BUDGET_BPS = 3_000_000;
-const CAMERA_MIN_BPS = 60_000;
-const CAMERA_MAX_BPS = 1_200_000;
-const SCREEN_BUDGET_BPS = 4_000_000;
-const SCREEN_MIN_BPS = 150_000;
-const SCREEN_MAX_BPS = 2_000_000;
-
-// How many peer connections to negotiate at once when fanning out. Opening 30+
-// simultaneously spikes CPU and floods the TURN server with allocation requests at
-// exactly the moment existing connections need bandwidth to stay alive.
-const FANOUT_CONCURRENCY = 4;
-
-function budgetFor(peerCount: number, total: number, min: number, max: number): number {
-  return Math.max(min, Math.min(max, Math.round(total / Math.max(1, peerCount))));
+/** Every subscribed track (audio + video) for one participant, combined into
+ *  the same single-MediaStream-per-peer shape the UI already expects
+ *  (tile <video>, useAudioLevels, etc.) — LiveKit gives tracks individually,
+ *  this is the seam that keeps that an internal detail. */
+function buildParticipantStream(participant: RemoteParticipant): MediaStream | null {
+  const tracks: MediaStreamTrack[] = [];
+  participant.videoTrackPublications.forEach((pub) => {
+    // Excludes ScreenShare the same way rebuildLocalStream does for the local
+    // side — a remote peer's screen share is its own tile (screenPeers), not
+    // part of their camera tile's stream.
+    if (pub.track && pub.source !== Track.Source.ScreenShare) tracks.push(pub.track.mediaStreamTrack);
+  });
+  participant.audioTrackPublications.forEach((pub) => {
+    if (pub.track) tracks.push(pub.track.mediaStreamTrack);
+  });
+  return tracks.length ? new MediaStream(tracks) : null;
 }
 
-function scaleFor(peerCount: number): number {
-  if (peerCount <= 2) return 1;
-  if (peerCount <= 6) return 2;
-  if (peerCount <= 12) return 3;
-  return 4;
+function peerInfoFor(participant: RemoteParticipant): PeerInfo {
+  return {
+    id: participant.identity,
+    name: participant.name?.trim() || getFallbackName(participant.identity),
+    stream: buildParticipantStream(participant),
+  };
 }
 
-async function applyVideoBudget(
-  pc: RTCPeerConnection, peerCount: number, budget: [number, number, number], scale: boolean,
-) {
-  const sender = pc.getSenders().find((s) => s.track?.kind === 'video');
-  if (!sender) return;
-  const params = sender.getParameters();
-  if (!params.encodings || params.encodings.length === 0) params.encodings = [{}];
-  params.encodings[0].maxBitrate = budgetFor(peerCount, budget[0], budget[1], budget[2]);
-  if (scale) params.encodings[0].scaleResolutionDownBy = scaleFor(peerCount);
-  try {
-    await sender.setParameters(params);
-  } catch (err) {
-    // Non-fatal: an un-capped sender still works, it just uses more uplink.
-    console.warn('[webrtc] could not apply bitrate cap:', err);
+// LiveKit's SFU computes this server-side and pushes it — no client-side
+// getStats() polling needed, unlike the mesh-era useConnectionQuality.ts this
+// replaces. One real loss of resolution: LiveKit has a single degraded tier
+// (Poor) where the old mesh grading had two (fair/poor); Poor is mapped to
+// our more severe 'poor' rather than guessing at an intermediate 'fair' that
+// the SFU never actually signals. `stats` is always null here — there is no
+// clean per-peer "was this one relayed" fact once every participant's media
+// goes through one shared SFU connection, so it's left honestly absent
+// rather than filled with a guessed value (see PeerLink's own comment).
+function mapConnectionQuality(q: ConnectionQuality): LinkQuality {
+  switch (q) {
+    case ConnectionQuality.Excellent:
+    case ConnectionQuality.Good:
+      return 'good';
+    case ConnectionQuality.Poor:
+    case ConnectionQuality.Lost:
+      return 'poor';
+    default:
+      return 'unknown';
   }
 }
 
-// Runs `task` over `items` with at most `limit` in flight.
-async function pooled<T>(items: T[], limit: number, task: (item: T) => Promise<void>) {
-  const queue = [...items];
-  const workers = Array.from({ length: Math.min(limit, queue.length) }, async () => {
-    for (let next = queue.shift(); next !== undefined; next = queue.shift()) {
-      await task(next);
-    }
-  });
-  await Promise.all(workers);
-}
-
-// Negotiation bookkeeping for one peer, per the WebRTC spec's "perfect negotiation"
-// pattern.
-//
-// A note on what unarbitrated glare actually does, because the intuitive answer is
-// wrong: since Chrome 80 / Firefox 75 / Safari 15, `setRemoteDescription(offer)`
-// while in `have-local-offer` does NOT throw — it performs an *implicit rollback*.
-// So two peers offering simultaneously does not raise InvalidStateError. What
-// happens instead is quieter and worse: both sides roll back, both answer, and both
-// end up in `stable` holding MISMATCHED descriptions (A has B's offer + A's answer;
-// B has A's offer + B's answer). Each then receives the other's answer in `stable`
-// and silently discards it. ICE may still connect, so nothing reports a failure and
-// no watchdog fires — the connection is simply wrong.
-//
-// Electing exactly one side to yield is what prevents that divergence. It is not a
-// rare race here: `renegotiateCamera` fans an offer out to every peer whenever
-// anyone toggles their camera, while joiners are simultaneously offering inward.
-interface NegotiationState {
-  makingOffer: boolean;
-  ignoreOffer: boolean;
-  isSettingRemoteAnswerPending: boolean;
-}
-
-// Connection failures used to disappear into `catch (err) {}` — seven of them — so a
-// call that half-worked produced no evidence at all. These are rare, genuinely
-// abnormal events, so logging every one is cheap and is the only way a report like
-// "the other side can't hear me" is ever diagnosable from a console log.
-function logRTC(scope: string, peerId: string, err: unknown) {
-  console.warn(`[webrtc] ${scope} failed for peer ${peerId}:`, err);
-}
-
-export function useWebRTC(socket: SignalingSocket | null, selfId = '') {
-  const socketRef = useRef<SignalingSocket | null>(null);
-  useEffect(() => { socketRef.current = socket; }, [socket]);
-
-  // Kept in a ref so the long-lived signaling callbacks below always compare
-  // against the current id rather than one captured at mount.
-  const selfIdRef = useRef(selfId);
-  useEffect(() => { selfIdRef.current = selfId; }, [selfId]);
-
-  // Per-peer promise chain. Every negotiation step is a multi-await sequence
-  // (setRemoteDescription -> drain ICE -> setLocalDescription -> send), and two
-  // messages arriving for the same peer during those awaits used to run
-  // concurrently and interleave their state transitions. The perfect-negotiation
-  // flags alone do not prevent that — they are read and written across awaits —
-  // so operations for a given peer are queued and run strictly one at a time.
-  const opChainRef = useRef<Map<string, Promise<unknown>>>(new Map());
-  const serialize = useCallback(<T,>(peerId: string, fn: () => Promise<T>): Promise<T> => {
-    const prev = opChainRef.current.get(peerId) ?? Promise.resolve();
-    const next = prev.then(fn, fn);
-    // Store a settled-swallowing tail so one rejection cannot poison the chain.
-    opChainRef.current.set(peerId, next.then(() => {}, () => {}));
-    return next;
-  }, []);
-
-  // Lets the ICE watchdog trigger a renegotiation without a circular dependency
-  // on createOfferFor, which is declared further down.
-  const createOfferForRef = useRef<((peerId: string) => Promise<void>) | null>(null);
-
-  const negRef = useRef<Map<string, NegotiationState>>(new Map());
-  const negFor = useCallback((peerId: string): NegotiationState => {
-    let s = negRef.current.get(peerId);
-    if (!s) {
-      s = { makingOffer: false, ignoreOffer: false, isSettingRemoteAnswerPending: false };
-      negRef.current.set(peerId, s);
-    }
-    return s;
-  }, []);
-
-  // Exactly one side of each pair must yield when offers collide. Comparing the two
-  // ids gives both sides the same answer with opposite results and needs no extra
-  // signaling round-trip.
-  const isPolite = useCallback((peerId: string) => selfIdRef.current < peerId, []);
+export function useWebRTC() {
+  const roomRef = useRef<Room | null>(null);
 
   const [localStream, setLocalStream] = useState<MediaStream | null>(null);
   const [peers, setPeers] = useState<PeerInfo[]>([]);
   const [isMuted, setIsMuted] = useState(false);
   const [isVideoOff, setIsVideoOff] = useState(false);
-  // switchMic replaces the audio track, and a fresh track always arrives enabled.
-  // It needs to know the current mute state without being re-created on every toggle.
-  const isMutedRef = useRef(isMuted);
-  useEffect(() => { isMutedRef.current = isMuted; }, [isMuted]);
-
-  // Non-fatal media problems that the user has to be told about but which do not
-  // stop the call: the camera was blocked so we joined with audio only, or
-  // turning the camera back on failed. These used to go to console.error only,
-  // so the camera button simply appeared dead and the user kept tapping it.
   const [mediaNotice, setMediaNotice] = useState<string | null>(null);
   const dismissMediaNotice = useCallback(() => setMediaNotice(null), []);
 
-  // Screen sharing runs over its own dedicated peer connections, entirely
-  // separate from the camera connections below, so starting/stopping a share
-  // never touches (or interrupts) the camera track that's already flowing.
   const [isScreenSharing, setIsScreenSharing] = useState(false);
   const [screenStream, setScreenStream] = useState<MediaStream | null>(null);
   const [screenPeers, setScreenPeers] = useState<PeerInfo[]>([]);
+  const [linkQuality, setLinkQuality] = useState<ReadonlyMap<string, PeerLink>>(new Map());
 
-  const pcsRef = useRef<Map<string, RTCPeerConnection>>(new Map());
-  const cameraStreamRef = useRef<MediaStream | null>(null);
-  const screenStreamRef = useRef<MediaStream | null>(null);
-
-  const peerNamesRef = useRef<Map<string, string>>(new Map());
-  const iceQueueRef = useRef<Map<string, RTCIceCandidateInit[]>>(new Map());
-  const peersRef = useRef<PeerInfo[]>([]);
-  useEffect(() => { peersRef.current = peers; }, [peers]);
-
-  // Re-divide the upstream budget whenever the room size changes. This has to run
-  // on *every* existing connection, not just the new one: one more participant
-  // means everyone's share shrinks, and the person who joined last is not the one
-  // who saturates the link.
-  // Routed through `serialize` (the same per-peer queue negotiation uses, declared
-  // above) rather than firing directly. `createOfferFor`/`handleOffer` also call
-  // `applyVideoBudget` on this same sender, inside their own serialized sequence for
-  // that peer — an unserialized call here could interleave with one of those: both
-  // read the sender's parameters, both mutate their own copy, and whichever
-  // `setParameters()` lands second commits stale encodings over the other's. Measured
-  // effect of that race: the receiver's video track drops to 0 tracks entirely and
-  // stays that way — not a bitrate glitch, the whole picture goes black — because a
-  // `peers.length` change (i.e. someone joining or leaving) fires this on every
-  // existing connection at once, which is exactly when negotiation is also active on
-  // those same connections. Queuing behind `serialize` makes this call wait for any
-  // in-flight negotiation step on that peer instead of racing it.
-  const applyCameraBudgets = useCallback(() => {
-    const count = pcsRef.current.size;
-    pcsRef.current.forEach((pc, peerId) => {
-      void serialize(peerId, () => applyVideoBudget(
-        pc, count, [CAMERA_BUDGET_BPS, CAMERA_MIN_BPS, CAMERA_MAX_BPS], true,
-      ));
-    });
-  }, [serialize]);
-  useEffect(() => { applyCameraBudgets(); }, [peers.length, applyCameraBudgets]);
-
-  // Watchdog timers keyed the same way as the ICE queues (`cam:id` / `in:id` / `out:id`).
-  // A peer that vanishes uncleanly (laptop closed, network dies, browser force-quit) never
-  // sends the app-level "I'm leaving"/"I stopped sharing" message, so without this a remote
-  // tile just freezes on its last frame forever. ICE itself still notices — connectivity
-  // checks fail independently of our signaling socket — so once a connection has been
-  // 'failed' for a few seconds with no recovery, we tear it down ourselves.
-  const iceCleanupTimersRef = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map());
-  const clearIceCleanupTimer = useCallback((key: string) => {
-    const t = iceCleanupTimersRef.current.get(key);
-    if (t) { clearTimeout(t); iceCleanupTimersRef.current.delete(key); }
-  }, []);
-
-  // Shared repair path for a camera peer connection: fresh ICE credentials plus the
-  // follow-up offer that actually sends them (restartIce() alone only marks the
-  // connection as wanting new credentials — nothing is transmitted without this).
-  // Used both when ICE itself reports 'failed' and, below, when a connection reports
-  // 'connected' the whole time but has stopped delivering decodable frames — a mesh
-  // link can go quietly one-sided (enough RTP for keepalive, not enough to decode)
-  // without ICE ever noticing, since ICE only checks connectivity, not media flow.
-  const restartCameraPeerConnection = useCallback((peerId: string) => {
-    const pc = pcsRef.current.get(peerId);
-    if (!pc) return;
-    pc.restartIce();
-    void createOfferForRef.current?.(peerId);
-  }, []);
-
-  // outgoing (we're sharing our screen to a peer) / incoming (a peer is sharing to us)
-  const outScreenPcsRef = useRef<Map<string, RTCPeerConnection>>(new Map());
-  const inScreenPcsRef = useRef<Map<string, RTCPeerConnection>>(new Map());
-  const screenIceQueueRef = useRef<Map<string, RTCIceCandidateInit[]>>(new Map());
-
-  // ─── NAME REGISTRY FIX ──────────────────────────────────────────────────
-  const registerPeerName = useCallback((peerId: string, peerName: string) => {
-    if (!peerName || !peerName.trim()) return;
-    peerNamesRef.current.set(peerId, peerName);
-    setPeers((prev) => {
-      const existing = prev.find((p) => p.id === peerId);
-      if (existing && existing.name !== peerName) {
-        return prev.map((p) => (p.id === peerId ? { ...p, name: peerName } : p));
-      }
-      return prev;
-    });
-  }, []);
-
-  // Seeds tiles for people who were already in the room when we arrived, straight
-  // from the server's peer list. registerPeerName deliberately only *renames* an
-  // existing tile, so without this a peer stayed completely invisible until their
-  // media arrived — and if the connection never came up (or their signaling socket
-  // had silently died) they never appeared at all, while we appeared to them. A
-  // placeholder tile renders the "Connecting…" state instead, like Meet does.
-  const addPeers = useCallback((incoming: { id: string; name?: string }[]) => {
-    incoming.forEach(({ id, name }) => {
-      if (name?.trim()) peerNamesRef.current.set(id, name);
-    });
-    setPeers((prev) => {
-      const next = [...prev];
-      incoming.forEach(({ id, name }) => {
-        const resolved = name?.trim() ? name : peerNamesRef.current.get(id) || getFallbackName(id);
-        const at = next.findIndex((p) => p.id === id);
-        if (at === -1) next.push({ id, name: resolved, stream: null });
-        else next[at] = { ...next[at], name: resolved };
-      });
+  const setQualityFor = useCallback((identity: string, quality: ConnectionQuality) => {
+    setLinkQuality((prev) => {
+      const next = new Map(prev);
+      next.set(identity, { quality: mapConnectionQuality(quality), stats: null });
       return next;
     });
   }, []);
 
-  // A peer we already hold a connection to has just (re-)entered the room, which
-  // means the connection we have is to a socket that no longer exists — their page
-  // reloaded, or their signaling socket dropped and came back. Reusing that dead
-  // RTCPeerConnection would leave both sides staring at a frozen tile, so drop it
-  // and wait for the offer the arriving side always sends.
-  const discardPeerConnection = useCallback((peerId: string) => {
-    const pc = pcsRef.current.get(peerId);
-    if (pc) { pc.close(); pcsRef.current.delete(peerId); }
-    iceQueueRef.current.delete(peerId);
-    negRef.current.delete(peerId);
-    opChainRef.current.delete(peerId);
-    clearIceCleanupTimer(`cam:${peerId}`);
-    const outPc = outScreenPcsRef.current.get(peerId);
-    if (outPc) { outPc.close(); outScreenPcsRef.current.delete(peerId); }
-    screenIceQueueRef.current.delete(`out:${peerId}`);
-    clearIceCleanupTimer(`out:${peerId}`);
-  }, [clearIceCleanupTimer]);
-
-  const initMedia = useCallback(async (prefs: MediaPrefs = {}): Promise<MediaStream | null> => {
-    if (cameraStreamRef.current) {
-      setLocalStream(cameraStreamRef.current);
-      return cameraStreamRef.current;
-    }
-    if (!navigator.mediaDevices?.getUserMedia) {
-      throw new Error('Camera and microphone access is not available. The site must be opened over HTTPS — use https:// in the address bar.');
-    }
-
-    // Joining with the camera already off (the lobby's choice) skips the camera
-    // request entirely: no permission prompt for hardware we are not going to
-    // use, and no acquire-then-immediately-stop cycle. This used to be done by
-    // calling toggleCamera() *after* joining, which grabbed the camera, released
-    // it, and then renegotiated with every peer — an avoidable offer round-trip
-    // per participant at the exact moment a call is coming up.
-    const wantVideo = !prefs.videoOff;
-
-    let stream: MediaStream | null = null;
-    let videoFailure: unknown = null;
-
-    // Reuse the devices this browser chose last time. `deviceConstraint` returns an
-    // `ideal` constraint rather than `exact` on purpose — a saved id that no longer
-    // resolves must degrade to the default device, not reject the whole request and
-    // tell the user their camera is unavailable.
-    const saved = loadDevicePrefs();
-    const videoConstraint = deviceConstraint(saved.cameraId);
-    const audioConstraint = deviceConstraint(saved.micId);
-
-    if (wantVideo) {
-      try {
-        stream = await navigator.mediaDevices.getUserMedia({ video: videoConstraint, audio: audioConstraint });
-      } catch (err) {
-        videoFailure = err;
-      }
-    }
-
-    if (!stream) {
-      // Retry audio-only even when the combined request was DENIED. Browsers let
-      // a user block the camera while leaving the microphone allowed, and that
-      // combination rejects the combined call with NotAllowedError — so bailing
-      // out here (as this used to) locked out everyone who had deliberately
-      // blocked their camera but still wanted to join by voice. If the denial
-      // really covered both, this retry rejects immediately from the cached
-      // decision without showing a second prompt, so it costs nothing.
-      try {
-        stream = await navigator.mediaDevices.getUserMedia({ audio: audioConstraint });
-        setIsVideoOff(true);
-        if (videoFailure) setMediaNotice(describeMediaError(videoFailure, 'camera'));
-      } catch (audioErr) {
-        throw new Error(describeFatalMediaError(videoFailure, audioErr));
-      }
-    }
-
-    // Apply the lobby's mic choice to the real stream. The track stays live and
-    // merely disabled, so unmuting later needs no new permission or hardware.
-    if (prefs.muted) {
-      stream.getAudioTracks().forEach((t) => { t.enabled = false; });
-      setIsMuted(true);
-    }
-    if (!wantVideo) setIsVideoOff(true);
-
-    cameraStreamRef.current = stream;
-    setLocalStream(stream);
-    return stream;
+  // Camera+mic only — explicitly excludes Track.Source.ScreenShare, which is
+  // now a second publication on this same localParticipant. Without this
+  // filter, starting a screen share would silently splice its video track
+  // into the CAMERA preview's MediaStream (localStream), the exact bug this
+  // filter exists to prevent.
+  const rebuildLocalStream = useCallback(() => {
+    const room = roomRef.current;
+    if (!room) { setLocalStream(null); return; }
+    const tracks: MediaStreamTrack[] = [];
+    room.localParticipant.videoTrackPublications.forEach((pub) => {
+      if (pub.track && pub.source !== Track.Source.ScreenShare) tracks.push(pub.track.mediaStreamTrack);
+    });
+    room.localParticipant.audioTrackPublications.forEach((pub) => {
+      if (pub.track) tracks.push(pub.track.mediaStreamTrack);
+    });
+    setLocalStream(tracks.length ? new MediaStream(tracks) : null);
   }, []);
 
-  const drainIceCandidates = useCallback(async (peerId: string, pc: RTCPeerConnection) => {
-    const queue = iceQueueRef.current.get(peerId) ?? [];
-    iceQueueRef.current.delete(peerId);
-    for (const candidate of queue) {
-      try {
-        await pc.addIceCandidate(new RTCIceCandidate(candidate));
-      } catch (err) { logRTC('drainIceCandidate', peerId, err); }
-    }
+  // The local screen-share preview — deliberately a separate MediaStream
+  // from localStream (camera), same reasoning as the mesh-era implementation:
+  // screen share must never share a track slot with the camera.
+  const rebuildScreenStream = useCallback(() => {
+    const room = roomRef.current;
+    if (!room) { setScreenStream(null); return; }
+    let track: MediaStreamTrack | null = null;
+    room.localParticipant.videoTrackPublications.forEach((pub) => {
+      if (pub.track && pub.source === Track.Source.ScreenShare) track = pub.track.mediaStreamTrack;
+    });
+    setScreenStream(track ? new MediaStream([track]) : null);
   }, []);
 
-  const attachTracksToConnection = useCallback((pc: RTCPeerConnection) => {
-    // Always the camera stream — screen sharing lives on its own peer connections
-    // (see below) and must never hijack this one.
-    const streamToShare = cameraStreamRef.current;
-    if (!streamToShare) return;
-
-    streamToShare.getTracks().forEach((track) => {
-      const alreadyAttached = pc.getSenders().find((s) => s.track?.id === track.id);
-      if (!alreadyAttached) {
-        try { pc.addTrack(track, streamToShare); } catch (e) { console.warn('[webrtc] addTrack failed:', e); }
-      }
+  const refreshPeer = useCallback((participant: RemoteParticipant) => {
+    setPeers((prev) => {
+      const info = peerInfoFor(participant);
+      const at = prev.findIndex((p) => p.id === info.id);
+      if (at === -1) return [...prev, info];
+      const next = [...prev];
+      next[at] = info;
+      return next;
     });
   }, []);
 
-  const getOrCreatePeerConnection = useCallback((peerId: string): RTCPeerConnection => {
-    let pc = pcsRef.current.get(peerId);
-    if (pc) return pc;
+  // Remote screen shares are tracked entirely separately from `peers` (the
+  // camera roster) — the UI treats "someone's screen" as its own tile
+  // (ActiveMeetingView.tsx combines local-screen + screenPeers into one
+  // presentation list), not a property of their camera tile.
+  const refreshScreenPeer = useCallback((participant: RemoteParticipant) => {
+    const screenPub = Array.from(participant.videoTrackPublications.values())
+      .find((pub) => pub.source === Track.Source.ScreenShare && pub.track);
+    setScreenPeers((prev) => {
+      const withoutThisPeer = prev.filter((p) => p.id !== participant.identity);
+      if (!screenPub?.track) return withoutThisPeer; // they stopped sharing (or never were) — just absent, not an error
+      const stream = new MediaStream([screenPub.track.mediaStreamTrack]);
+      const name = participant.name?.trim() || getFallbackName(participant.identity);
+      return [...withoutThisPeer, { id: participant.identity, name, stream }];
+    });
+  }, []);
 
-    pc = new RTCPeerConnection(iceConfig);
-    pcsRef.current.set(peerId, pc);
+  // Connects to the LiveKit room and publishes camera/mic per the lobby's
+  // choice. Called by MeetingContext AFTER the existing /ws create_room/
+  // join_room round trip succeeds and a LiveKit token has been minted for
+  // that confirmed room_id — the /ws room membership check IS the
+  // authorization for the token (see server/livekit.go), so this can't run
+  // first the way the old initMedia() did.
+  const connect = useCallback(async (livekitUrl: string, token: string, prefs: MediaPrefs = {}) => {
+    // Hopping rooms on one tab (createMeeting/joinMeeting can be called again
+    // without leaveMeeting in between — e.g. the host starting a fresh
+    // meeting) must not leak the previous Room's connection.
+    if (roomRef.current) {
+      void roomRef.current.disconnect();
+      roomRef.current = null;
+    }
 
-    attachTracksToConnection(pc);
+    const room = new Room();
+    roomRef.current = room;
 
-    pc.ontrack = (event) => {
-      const remoteStream = event.streams[0];
-      if (!remoteStream) return;
-
-      remoteStream.getTracks().forEach(t => t.enabled = true);
-
-      const resolvedName = peerNamesRef.current.get(peerId) || getFallbackName(peerId);
-
-      setPeers((prev) => {
-        const existing = prev.find((p) => p.id === peerId);
-        if (existing) {
-          return prev.map((p) => (p.id === peerId ? { ...p, stream: remoteStream, name: resolvedName } : p));
-        }
-        return [...prev, { id: peerId, name: resolvedName, stream: remoteStream }];
+    room.on(RoomEvent.ParticipantConnected, (participant: RemoteParticipant) => {
+      refreshPeer(participant);
+      setQualityFor(participant.identity, participant.connectionQuality);
+    });
+    room.on(RoomEvent.ParticipantDisconnected, (participant: RemoteParticipant) => {
+      setPeers((prev) => prev.filter((p) => p.id !== participant.identity));
+      setScreenPeers((prev) => prev.filter((p) => p.id !== participant.identity));
+      setLinkQuality((prev) => {
+        if (!prev.has(participant.identity)) return prev;
+        const next = new Map(prev);
+        next.delete(participant.identity);
+        return next;
       });
-    };
-
-    pc.onicecandidate = (event) => {
-      if (event.candidate && socketRef.current) {
-        socketRef.current.send('ice_candidate', { to: peerId, candidate: event.candidate });
-      }
-    };
-
-    pc.oniceconnectionstatechange = () => {
-      const state = pc.iceConnectionState;
-      if (state === 'connected' || state === 'completed') {
-        clearIceCleanupTimer(`cam:${peerId}`);
-        return;
-      }
-      if (state !== 'failed') return;
-      restartCameraPeerConnection(peerId);
-      if (iceCleanupTimersRef.current.has(`cam:${peerId}`)) return;
-      const timer = setTimeout(() => {
-        iceCleanupTimersRef.current.delete(`cam:${peerId}`);
-        if (pcsRef.current.get(peerId) !== pc) return; // already replaced/torn down elsewhere
-        if (pc.iceConnectionState === 'connected' || pc.iceConnectionState === 'completed') return;
-        pc.close();
-        pcsRef.current.delete(peerId);
-        negRef.current.delete(peerId);
-        setPeers((prev) => prev.filter((p) => p.id !== peerId));
-      }, 8000);
-      iceCleanupTimersRef.current.set(`cam:${peerId}`, timer);
-    };
-
-    return pc;
-  }, [attachTracksToConnection, clearIceCleanupTimer, restartCameraPeerConnection]);
-
-  const createOfferFor = useCallback((peerId: string) => serialize(peerId, async () => {
-    await ensureIceServers();
-    if (!cameraStreamRef.current) await initMedia();
-    const pc = getOrCreatePeerConnection(peerId);
-    attachTracksToConnection(pc);
-    const neg = negFor(peerId);
-    try {
-      neg.makingOffer = true;
-      // No-argument setLocalDescription lets the browser pick the right description
-      // type for the current signaling state, which is what makes the rollback in
-      // handleOffer below safe to interleave with this.
-      await pc.setLocalDescription();
-      await applyVideoBudget(pc, pcsRef.current.size,
-        [CAMERA_BUDGET_BPS, CAMERA_MIN_BPS, CAMERA_MAX_BPS], true);
-      socketRef.current?.send('offer', { to: peerId, sdp: pc.localDescription });
-    } catch (err) {
-      logRTC('createOffer', peerId, err);
-    } finally {
-      neg.makingOffer = false;
-    }
-  }), [getOrCreatePeerConnection, initMedia, attachTracksToConnection, negFor, serialize]);
-
-  const handleOffer = useCallback((fromId: string, sdp: RTCSessionDescriptionInit) => serialize(fromId, async () => {
-    await ensureIceServers();
-    if (!cameraStreamRef.current) await initMedia();
-    const pc = getOrCreatePeerConnection(fromId);
-    attachTracksToConnection(pc);
-    const neg = negFor(fromId);
-
-    // Glare: an offer arrived while we have an offer of our own outstanding. The
-    // impolite side ignores it and keeps its own; the polite side rolls its offer
-    // back and accepts theirs. Both sides agreeing on who is which is what stops
-    // the connection deadlocking half-open.
-    const readyForOffer = !neg.makingOffer && (pc.signalingState === 'stable' || neg.isSettingRemoteAnswerPending);
-    const offerCollision = !readyForOffer;
-
-    neg.ignoreOffer = !isPolite(fromId) && offerCollision;
-    if (neg.ignoreOffer) return;
-
-    try {
-      // setRemoteDescription performs the implicit rollback when we're the polite
-      // side mid-offer, so no explicit rollback call is needed here.
-      await pc.setRemoteDescription(new RTCSessionDescription(sdp));
-      await drainIceCandidates(fromId, pc);
-      await pc.setLocalDescription();
-      await applyVideoBudget(pc, pcsRef.current.size,
-        [CAMERA_BUDGET_BPS, CAMERA_MIN_BPS, CAMERA_MAX_BPS], true);
-      socketRef.current?.send('answer', { to: fromId, sdp: pc.localDescription });
-    } catch (err) {
-      logRTC('handleOffer', fromId, err);
-    }
-  }), [getOrCreatePeerConnection, initMedia, drainIceCandidates, attachTracksToConnection, negFor, isPolite, serialize]);
-
-  const handleAnswer = useCallback((fromId: string, sdp: RTCSessionDescriptionInit) => serialize(fromId, async () => {
-    // Never create a connection here. An answer for a peer we hold nothing for is
-    // stale — it belongs to a connection we already tore down — and materialising
-    // one leaves a peer that can never connect and never renders anything but the
-    // "Connecting…" placeholder.
-    const pc = pcsRef.current.get(fromId);
-    if (!pc) return;
-    const neg = negFor(fromId);
-    try {
-      neg.isSettingRemoteAnswerPending = true;
-      await pc.setRemoteDescription(new RTCSessionDescription(sdp));
-      await drainIceCandidates(fromId, pc);
-    } catch (err) {
-      logRTC('handleAnswer', fromId, err);
-    } finally {
-      neg.isSettingRemoteAnswerPending = false;
-    }
-  }), [drainIceCandidates, negFor, serialize]);
-
-  useEffect(() => { createOfferForRef.current = createOfferFor; }, [createOfferFor]);
-
-  const handleIceCandidate = useCallback(async (fromId: string, candidate: RTCIceCandidateInit) => {
-    // Same rule as handleAnswer: a candidate is never a reason to build a peer
-    // connection. Candidates keep arriving for a short while after someone leaves,
-    // and each one used to spawn a permanent ghost tile.
-    const pc = pcsRef.current.get(fromId);
-    if (!pc) return;
-    if (!pc.remoteDescription) {
-      const queue = iceQueueRef.current.get(fromId) ?? [];
-      queue.push(candidate);
-      iceQueueRef.current.set(fromId, queue);
-      return;
-    }
-    try {
-      await pc.addIceCandidate(new RTCIceCandidate(candidate));
-    } catch (err) {
-      // Candidates for an offer we deliberately ignored are expected to fail.
-      if (!negFor(fromId).ignoreOffer) logRTC('addIceCandidate', fromId, err);
-    }
-  }, [negFor]);
-
-  // ─── Screen-share signaling (separate connections, tagged kind:"screen") ──
-
-  const makeScreenPc = useCallback((peerId: string, direction: 'in' | 'out'): RTCPeerConnection => {
-    const pc = new RTCPeerConnection(iceConfig);
-    const timerKey = `${direction}:${peerId}`;
-    pc.onicecandidate = (event) => {
-      if (event.candidate && socketRef.current) {
-        socketRef.current.send('ice_candidate', { to: peerId, candidate: event.candidate, kind: 'screen' });
-      }
-    };
-    pc.oniceconnectionstatechange = () => {
-      const state = pc.iceConnectionState;
-      if (state === 'connected' || state === 'completed') {
-        clearIceCleanupTimer(timerKey);
-        return;
-      }
-      if (state !== 'failed') return;
-      pc.restartIce();
-      if (iceCleanupTimersRef.current.has(timerKey)) return;
-      const timer = setTimeout(() => {
-        iceCleanupTimersRef.current.delete(timerKey);
-        const map = direction === 'in' ? inScreenPcsRef.current : outScreenPcsRef.current;
-        if (map.get(peerId) !== pc) return; // already replaced/torn down elsewhere
-        if (pc.iceConnectionState === 'connected' || pc.iceConnectionState === 'completed') return;
-        pc.close();
-        map.delete(peerId);
-        if (direction === 'in') setScreenPeers((prev) => prev.filter((p) => p.id !== peerId));
-      }, 8000);
-      iceCleanupTimersRef.current.set(timerKey, timer);
-    };
-    if (direction === 'in') {
-      pc.ontrack = (event) => {
-        const remoteStream = event.streams[0];
-        if (!remoteStream) return;
-        const resolvedName = peerNamesRef.current.get(peerId) || getFallbackName(peerId);
-        setScreenPeers((prev) => {
-          const existing = prev.find((p) => p.id === peerId);
-          if (existing) return prev.map((p) => (p.id === peerId ? { ...p, stream: remoteStream, name: resolvedName } : p));
-          return [...prev, { id: peerId, name: resolvedName, stream: remoteStream }];
-        });
-      };
-    }
-    return pc;
-  }, [clearIceCleanupTimer]);
-
-  const drainScreenIce = useCallback(async (key: string, pc: RTCPeerConnection) => {
-    const queue = screenIceQueueRef.current.get(key) ?? [];
-    screenIceQueueRef.current.delete(key);
-    for (const candidate of queue) {
-      try { await pc.addIceCandidate(new RTCIceCandidate(candidate)); } catch (err) {
-        logRTC('drainScreenIce', key, err);
-      }
-    }
-  }, []);
-
-  const createScreenOfferFor = useCallback(async (peerId: string) => {
-    if (!screenStreamRef.current) return;
-    await ensureIceServers();
-    let pc = outScreenPcsRef.current.get(peerId);
-    if (!pc) { pc = makeScreenPc(peerId, 'out'); outScreenPcsRef.current.set(peerId, pc); }
-    screenStreamRef.current.getTracks().forEach((track) => {
-      if (!pc!.getSenders().find((s) => s.track?.id === track.id)) {
-        try { pc!.addTrack(track, screenStreamRef.current!); } catch (e) {
-          logRTC('addTrack(screen)', peerId, e);
-        }
-      }
     });
+    // Fires for the local participant too (per LiveKit's own docs), harmless
+    // here — nothing currently reads a 'local' entry out of this map, the
+    // People panel only ever looks up OTHER participants' ids.
+    room.on(RoomEvent.ConnectionQualityChanged, (quality: ConnectionQuality, participant: Participant) => {
+      setQualityFor(participant.identity, quality);
+    });
+    room.on(RoomEvent.TrackSubscribed, (_track: RemoteTrack, pub: RemoteTrackPublication, participant: RemoteParticipant) => {
+      if (pub.source === Track.Source.ScreenShare) refreshScreenPeer(participant);
+      else refreshPeer(participant);
+    });
+    room.on(RoomEvent.TrackUnsubscribed, (_track: RemoteTrack, pub: RemoteTrackPublication, participant: RemoteParticipant) => {
+      if (pub.source === Track.Source.ScreenShare) refreshScreenPeer(participant);
+      else refreshPeer(participant);
+    });
+    // Found by actually testing stop-sharing, not by inspection: relying on
+    // TrackUnsubscribed alone left a dead, disabled 2x2 screen-share track
+    // rendered full-size in the guest's spotlight after the host stopped —
+    // TrackUnpublished ("a RemoteParticipant has unpublished a track", per
+    // LiveKit's own docs) is the semantically correct event for exactly this
+    // case, and TrackUnsubscribed evidently isn't reliably redundant with it
+    // for a source-side unpublish. Both wired now, same handler either way.
+    room.on(RoomEvent.TrackUnpublished, (pub: RemoteTrackPublication, participant: RemoteParticipant) => {
+      if (pub.source === Track.Source.ScreenShare) refreshScreenPeer(participant);
+      else refreshPeer(participant);
+    });
+    room.on(RoomEvent.LocalTrackPublished, (pub: LocalTrackPublication) => {
+      if (pub.source === Track.Source.ScreenShare) { setIsScreenSharing(true); rebuildScreenStream(); }
+      else rebuildLocalStream();
+    });
+    room.on(RoomEvent.LocalTrackUnpublished, (pub: LocalTrackPublication) => {
+      // Covers BOTH toggleScreenShare(false) below AND LiveKit's own handling
+      // of the browser's native "Stop sharing" control ending the capture —
+      // that path unpublishes on its own, with no app code involved, so this
+      // listener (not a manual track.onended, unlike the old mesh code) is
+      // what keeps isScreenSharing/screenStream in sync with it either way.
+      if (pub.source === Track.Source.ScreenShare) { setIsScreenSharing(false); setScreenStream(null); }
+      else rebuildLocalStream();
+    });
+    room.on(RoomEvent.Disconnected, () => {
+      setPeers([]);
+      setScreenPeers([]);
+      setLocalStream(null);
+      setScreenStream(null);
+      setIsScreenSharing(false);
+      setLinkQuality(new Map());
+    });
+
+    // ICE fallback for participants whose network can't reach the SFU's
+    // direct UDP path (symmetric NAT, an outbound-UDP-blocking firewall) —
+    // reuses the SAME coturn credentials connectionTest.ts already fetches
+    // independently, not a new relay. Best-effort: a failed fetch here must
+    // never block the call from connecting via LiveKit's default path, so
+    // this only ever adds a fallback, never removes the attempt to connect.
+    let iceServers: RTCIceServer[] | undefined;
     try {
-      const offer = await pc.createOffer();
-      await pc.setLocalDescription(offer);
-      // Screen shares are the single most expensive thing a client sends, and the
-      // presenter is paying for one copy per peer. Cap before the offer goes out.
-      await applyVideoBudget(pc, peersRef.current.length,
-        [SCREEN_BUDGET_BPS, SCREEN_MIN_BPS, SCREEN_MAX_BPS], false);
-      socketRef.current?.send('offer', { to: peerId, sdp: pc.localDescription, kind: 'screen' });
+      iceServers = (await api.getTurnCredentials()).iceServers;
     } catch (err) {
-      logRTC('createScreenOffer', peerId, err);
+      console.warn('[LiveKit] TURN credentials unavailable, continuing without ICE fallback', err);
     }
-  }, [makeScreenPc]);
 
-  const handleScreenOffer = useCallback(async (fromId: string, sdp: RTCSessionDescriptionInit) => {
-    await ensureIceServers();
-    let pc = inScreenPcsRef.current.get(fromId);
-    if (!pc) { pc = makeScreenPc(fromId, 'in'); inScreenPcsRef.current.set(fromId, pc); }
     try {
-      await pc.setRemoteDescription(new RTCSessionDescription(sdp));
-      await drainScreenIce(`in:${fromId}`, pc);
-      const answer = await pc.createAnswer();
-      await pc.setLocalDescription(answer);
-      socketRef.current?.send('answer', { to: fromId, sdp: pc.localDescription, kind: 'screen' });
-    } catch (err) { logRTC('handleScreenOffer', fromId, err); }
-  }, [makeScreenPc, drainScreenIce]);
-
-  const handleScreenAnswer = useCallback(async (fromId: string, sdp: RTCSessionDescriptionInit) => {
-    const pc = outScreenPcsRef.current.get(fromId);
-    if (!pc) return;
-    try {
-      if (pc.signalingState === 'have-local-offer') {
-        await pc.setRemoteDescription(new RTCSessionDescription(sdp));
-        await drainScreenIce(`out:${fromId}`, pc);
-      }
-    } catch (err) { logRTC('handleScreenAnswer', fromId, err); }
-  }, [drainScreenIce]);
-
-  const handleScreenIce = useCallback(async (fromId: string, candidate: RTCIceCandidateInit) => {
-    const targets: [string, RTCPeerConnection | undefined][] = [
-      [`in:${fromId}`, inScreenPcsRef.current.get(fromId)],
-      [`out:${fromId}`, outScreenPcsRef.current.get(fromId)],
-    ];
-    for (const [key, pc] of targets) {
-      if (!pc) continue;
-      if (!pc.remoteDescription) {
-        const queue = screenIceQueueRef.current.get(key) ?? [];
-        queue.push(candidate);
-        screenIceQueueRef.current.set(key, queue);
-        continue;
-      }
-      try { await pc.addIceCandidate(new RTCIceCandidate(candidate)); } catch (err) {
-        logRTC('addIceCandidate(screen)', fromId, err);
-      }
+      await room.connect(livekitUrl, token, iceServers ? { rtcConfig: { iceServers } } : undefined);
+    } catch (err) {
+      roomRef.current = null;
+      throw err;
     }
-  }, []);
 
-  const closeInboundScreen = useCallback((peerId: string) => {
-    const pc = inScreenPcsRef.current.get(peerId);
-    if (pc) { pc.close(); inScreenPcsRef.current.delete(peerId); }
-    screenIceQueueRef.current.delete(`in:${peerId}`);
-    clearIceCleanupTimer(`in:${peerId}`);
-    setScreenPeers((prev) => prev.filter((p) => p.id !== peerId));
-  }, [clearIceCleanupTimer]);
+    // Participants already in the room when we connect do NOT fire
+    // ParticipantConnected (that event is only for joins after ours) — seed
+    // them from the room's own snapshot instead, same job addPeers() used to
+    // do from the /ws room_created/room_joined peer list.
+    const existingRemotes = Array.from(room.remoteParticipants.values());
+    setPeers(existingRemotes.map(peerInfoFor));
+    setLinkQuality(new Map(existingRemotes.map((p) => [p.identity, { quality: mapConnectionQuality(p.connectionQuality), stats: null }])));
 
-  useEffect(() => {
-    if (!socket) return;
-    const unsubs = [
-      socket.on('peer_joined', (payload) => {
-        const { peer_id, peer_name } = payload as { peer_id: string; peer_name: string };
-        const validName = peer_name?.trim() ? peer_name : getFallbackName(peer_id);
-        peerNamesRef.current.set(peer_id, validName);
-
-        // Anything we still hold for this id belongs to their previous socket.
-        discardPeerConnection(peer_id);
-        closeInboundScreen(peer_id);
-
-        setPeers((prev) => {
-          if (prev.find((p) => p.id === peer_id)) {
-            return prev.map(p => p.id === peer_id ? { ...p, name: validName, stream: null } : p);
-          }
-          return [...prev, { id: peer_id, name: validName, stream: null }];
-        });
-
-        if (screenStreamRef.current) createScreenOfferFor(peer_id);
-      }),
-      socket.on('peer_left', (payload) => {
-        const { peer_id } = payload as { peer_id: string };
-        const pc = pcsRef.current.get(peer_id);
-        if (pc) { pc.close(); pcsRef.current.delete(peer_id); }
-        iceQueueRef.current.delete(peer_id);
-        negRef.current.delete(peer_id);
-        peerNamesRef.current.delete(peer_id);
-        clearIceCleanupTimer(`cam:${peer_id}`);
-        setPeers((prev) => prev.filter((p) => p.id !== peer_id));
-
-        const outPc = outScreenPcsRef.current.get(peer_id);
-        if (outPc) { outPc.close(); outScreenPcsRef.current.delete(peer_id); }
-        screenIceQueueRef.current.delete(`out:${peer_id}`);
-        clearIceCleanupTimer(`out:${peer_id}`);
-        closeInboundScreen(peer_id);
-      }),
-      socket.on('offer', (payload) => {
-        const { from, from_name, sdp, kind } = payload as { from: string; from_name?: string; sdp: RTCSessionDescriptionInit; kind?: string };
-        const validName = from_name?.trim() ? from_name : peerNamesRef.current.get(from) || getFallbackName(from);
-        peerNamesRef.current.set(from, validName);
-
-        if (kind === 'screen') {
-          handleScreenOffer(from, sdp);
-          return;
-        }
-
-        setPeers((prev) => {
-          if (prev.find((p) => p.id === from)) {
-            return prev.map(p => p.id === from ? { ...p, name: validName } : p);
-          }
-          return [...prev, { id: from, name: validName, stream: null }];
-        });
-        handleOffer(from, sdp);
-      }),
-      socket.on('answer', (payload) => {
-        const { from, sdp, kind } = payload as { from: string; sdp: RTCSessionDescriptionInit; kind?: string };
-        if (kind === 'screen') { handleScreenAnswer(from, sdp); return; }
-        handleAnswer(from, sdp);
-      }),
-      socket.on('ice_candidate', (payload) => {
-        const { from, candidate, kind } = payload as { from: string; candidate: RTCIceCandidateInit; kind?: string };
-        if (kind === 'screen') { handleScreenIce(from, candidate); return; }
-        handleIceCandidate(from, candidate);
-      }),
-      socket.on('screen_share_state', (payload) => {
-        const { peer_id, sharing } = payload as { peer_id: string; sharing: boolean };
-        if (!sharing) closeInboundScreen(peer_id);
-      }),
-    ];
-    return () => unsubs.forEach((u) => u());
-  }, [socket, handleOffer, handleAnswer, handleIceCandidate, handleScreenOffer, handleScreenAnswer, handleScreenIce, createScreenOfferFor, closeInboundScreen, clearIceCleanupTimer, discardPeerConnection]);
+    const wantVideo = !prefs.videoOff;
+    const wantAudio = !prefs.muted;
+    try {
+      await room.localParticipant.setMicrophoneEnabled(wantAudio);
+    } catch (err) {
+      setMediaNotice(describeMediaError(err, 'microphone'));
+    }
+    try {
+      await room.localParticipant.setCameraEnabled(wantVideo);
+    } catch (err) {
+      if (wantVideo) setMediaNotice(describeMediaError(err, 'camera'));
+    }
+    setIsMuted(!wantAudio);
+    setIsVideoOff(!wantVideo);
+    rebuildLocalStream();
+  }, [refreshPeer, refreshScreenPeer, rebuildLocalStream, rebuildScreenStream]);
 
   const toggleMic = useCallback(() => {
-    if (!cameraStreamRef.current) return;
-    cameraStreamRef.current.getAudioTracks().forEach((t) => { t.enabled = !t.enabled; });
-    setIsMuted((prev) => !prev);
-  }, []);
+    const room = roomRef.current;
+    if (!room) return;
+    const next = !isMuted;
+    void room.localParticipant.setMicrophoneEnabled(!next).finally(() => setIsMuted(next));
+  }, [isMuted]);
 
-  // Explicit setter rather than a toggle, for push-to-talk. A toggle can desynchronise
-  // from the key state if a keyup is missed (alt-tab mid-hold) and leave the mic live;
-  // setting the absolute value makes a missed event self-correct on the next one.
   const setMicMuted = useCallback((muted: boolean) => {
-    if (!cameraStreamRef.current) return;
-    cameraStreamRef.current.getAudioTracks().forEach((t) => { t.enabled = !muted; });
-    setIsMuted(muted);
+    const room = roomRef.current;
+    if (!room) return;
+    void room.localParticipant.setMicrophoneEnabled(!muted).finally(() => setIsMuted(muted));
   }, []);
-
-  // Renegotiates every live camera connection so a peer connection actually reflects
-  // whether we currently have a video track to send — used any time toggleCamera
-  // adds or removes the local video track (renegotiation, not replaceTrack, because
-  // switchCamera/switchMic already own the "keep the same track slot alive" case).
-  const renegotiateCamera = useCallback(async () => {
-    // This is the main source of offer collisions in a large call — one camera
-    // toggle fans an offer out to everybody at once, and any of them may be
-    // mid-offer themselves. It must go through the same negotiation bookkeeping
-    // as createOfferFor or the glare handling in handleOffer sees stale state.
-    await Promise.all([...pcsRef.current.entries()].map(async ([peerId, pc]) => {
-      const neg = negFor(peerId);
-      if (neg.makingOffer || pc.signalingState !== 'stable') return;
-      try {
-        neg.makingOffer = true;
-        await pc.setLocalDescription();
-        socketRef.current?.send('offer', { to: peerId, sdp: pc.localDescription });
-      } catch (err) {
-        logRTC('renegotiateCamera', peerId, err);
-      } finally {
-        neg.makingOffer = false;
-      }
-    }));
-  }, [negFor]);
 
   const toggleCamera = useCallback(async () => {
-    if (!cameraStreamRef.current) return;
-
-    if (!isVideoOff) {
-      // Turning OFF: fully stop the hardware track (not just `enabled = false`) so the
-      // OS camera indicator actually turns off, and remove the sender + renegotiate so
-      // remote peers' video element cleanly empties instead of freezing mid-stream.
-      const tracks = cameraStreamRef.current.getVideoTracks();
-      if (tracks.length === 0) return;
-      tracks.forEach((track) => {
-        pcsRef.current.forEach((pc) => {
-          const sender = pc.getSenders().find((s) => s.track === track);
-          if (sender) { try { pc.removeTrack(sender); } catch (err) { console.warn('[webrtc] removeTrack failed:', err); } }
-        });
-        track.stop();
-        cameraStreamRef.current!.removeTrack(track);
-      });
-      setIsVideoOff(true);
-      setLocalStream(cameraStreamRef.current);
-      await renegotiateCamera();
-      return;
-    }
-
-    // Turning ON: the previous track was fully released above, so re-acquire fresh
-    // hardware access rather than just re-enabling a dead track.
+    const room = roomRef.current;
+    if (!room) return;
+    const next = !isVideoOff;
     try {
-      const newStream = await navigator.mediaDevices.getUserMedia({ video: true });
-      const newTrack = newStream.getVideoTracks()[0];
-      if (!newTrack) return;
-      cameraStreamRef.current.addTrack(newTrack);
-      pcsRef.current.forEach((pc) => { try { pc.addTrack(newTrack, cameraStreamRef.current!); } catch (err) { console.warn('[webrtc] addTrack failed:', err); } });
-      setIsVideoOff(false);
-      setLocalStream(cameraStreamRef.current);
-      await renegotiateCamera();
+      await room.localParticipant.setCameraEnabled(!next);
+      setIsVideoOff(next);
+      rebuildLocalStream();
     } catch (err) {
-      // Permission can be revoked mid-call, or another app can take the device
-      // between turning the camera off and back on. isVideoOff stays true, which
-      // is correct — but the user needs to know why the button did nothing.
-      console.error('[toggleCamera] failed to re-acquire camera', err);
+      console.error('[toggleCamera] failed', err);
       setMediaNotice(describeMediaError(err, 'camera'));
     }
-  }, [isVideoOff, renegotiateCamera]);
+  }, [isVideoOff, rebuildLocalStream]);
 
-  const stopScreenShare = useCallback(() => {
-    screenStreamRef.current?.getTracks().forEach((t) => t.stop());
-    screenStreamRef.current = null;
-    setScreenStream(null);
-    setIsScreenSharing(false);
-    outScreenPcsRef.current.forEach((pc, peerId) => { pc.close(); clearIceCleanupTimer(`out:${peerId}`); });
-    outScreenPcsRef.current.clear();
-    socketRef.current?.send('screen_share_state', { sharing: false });
-  }, [clearIceCleanupTimer]);
-
+  // Gap #1 — see file header. Explicit, visible failure rather than a
+  // A second published track on the SAME Room/LocalParticipant camera and
+  // mic already use — see the file header. isScreenSharing/screenStream are
+  // actually driven by the LocalTrackPublished/LocalTrackUnpublished
+  // listeners in connect() above, not set directly here, so that LiveKit's
+  // own handling of the browser's native "Stop sharing" control (which
+  // unpublishes with no app code involved) keeps this state correct too —
+  // this function only ever needs to ask LiveKit to start or stop, not
+  // separately track whether it succeeded.
   const toggleScreenShare = useCallback(async () => {
+    const room = roomRef.current;
+    if (!room) return;
     if (isScreenSharing) {
-      stopScreenShare();
-      return;
-    }
-    // Belt-and-braces: the button is hidden via isScreenShareSupported() when this
-    // API doesn't exist (mainly iOS Safari, and unreliably elsewhere on mobile — see
-    // src/lib/screenShare.ts), but guard here too rather than let a bare TypeError
-    // ("getDisplayMedia is not a function") reach the catch below with no useful name
-    // to branch on.
-    if (typeof navigator.mediaDevices?.getDisplayMedia !== 'function') {
-      setMediaNotice("Screen sharing isn't available on this device or browser.");
+      try { await room.localParticipant.setScreenShareEnabled(false); }
+      catch (err) { console.warn('[toggleScreenShare] stop failed:', err); }
       return;
     }
     try {
-      const stream = await navigator.mediaDevices.getDisplayMedia({ video: { frameRate: 30 }, audio: false });
-      screenStreamRef.current = stream;
-      setScreenStream(stream);
-      setIsScreenSharing(true);
-      socketRef.current?.send('screen_share_state', { sharing: true });
-      // Bounded fan-out. This used to be one unbounded Promise.all, so a presenter
-      // in a 35-person call opened 34 extra peer connections — each with its own
-      // 30fps encoder — in a single tick, on top of the 34 camera connections
-      // already running. Their uplink and CPU collapsed, and the first thing to
-      // die was their own outgoing audio: the "nobody can hear the presenter" bug.
-      await pooled(peersRef.current.map((p) => p.id), FANOUT_CONCURRENCY, createScreenOfferFor);
-      const track = stream.getVideoTracks()[0];
-      if (track) track.onended = () => stopScreenShare();
+      await room.localParticipant.setScreenShareEnabled(true);
     } catch (err) {
-      // A user dismissing the picker throws NotAllowedError — not an error worth surfacing.
-      // Anything else used to go to console.warn only, which is invisible on a phone —
-      // exactly where this is most likely to fail. Surface it the same way every other
-      // media failure is (mediaNotice), so tapping the button visibly does SOMETHING
-      // even when that something is "this isn't going to work, here's why."
+      // A user dismissing the picker throws NotAllowedError — not an error
+      // worth surfacing, same rule the old mesh implementation used.
       if ((err as { name?: string })?.name !== 'NotAllowedError') {
-        console.warn('[webrtc] screen share failed to start:', err);
+        console.warn('[toggleScreenShare] start failed:', err);
         setMediaNotice("Couldn't start screen sharing on this device or browser.");
       }
     }
-  }, [isScreenSharing, createScreenOfferFor, stopScreenShare]);
+  }, [isScreenSharing]);
 
   const switchCamera = useCallback(async (deviceId: string) => {
+    const room = roomRef.current;
+    if (!room) return;
     try {
-      const newStream = await navigator.mediaDevices.getUserMedia({ video: { deviceId: { exact: deviceId } }, audio: false });
-      const newTrack = newStream.getVideoTracks()[0];
-      if (!newTrack) return;
-      // Replace track in all peer connections
-      await Promise.all([...pcsRef.current.values()].map(pc => {
-        const sender = pc.getSenders().find(s => s.track?.kind === 'video');
-        return sender ? sender.replaceTrack(newTrack) : Promise.resolve();
-      }));
-      // Swap track in local camera stream
-      if (cameraStreamRef.current) {
-        cameraStreamRef.current.getVideoTracks().forEach(t => { t.stop(); cameraStreamRef.current!.removeTrack(t); });
-        cameraStreamRef.current.addTrack(newTrack);
-      } else {
-        cameraStreamRef.current = newStream;
-      }
-      setLocalStream(cameraStreamRef.current);
-      // Only persist after the switch has actually succeeded. Saving on selection
-      // would remember a device that failed to open and re-fail on every future join.
-      saveCameraId(deviceId);
-    } catch (err) { console.error('[switchCamera]', err); setMediaNotice(describeMediaError(err, 'camera')); }
-  }, []);
+      await room.switchActiveDevice('videoinput', deviceId);
+      rebuildLocalStream();
+    } catch (err) {
+      console.error('[switchCamera]', err);
+      setMediaNotice(describeMediaError(err, 'camera'));
+    }
+  }, [rebuildLocalStream]);
 
   const switchMic = useCallback(async (deviceId: string) => {
+    const room = roomRef.current;
+    if (!room) return;
     try {
-      const newStream = await navigator.mediaDevices.getUserMedia({ audio: { deviceId: { exact: deviceId } }, video: false });
-      const newTrack = newStream.getAudioTracks()[0];
-      if (!newTrack) return;
-      await Promise.all([...pcsRef.current.values()].map(pc => {
-        const sender = pc.getSenders().find(s => s.track?.kind === 'audio');
-        return sender ? sender.replaceTrack(newTrack) : Promise.resolve();
-      }));
-      if (cameraStreamRef.current) {
-        cameraStreamRef.current.getAudioTracks().forEach(t => { t.stop(); cameraStreamRef.current!.removeTrack(t); });
-        cameraStreamRef.current.addTrack(newTrack);
-      }
-      // Carry the current mute state onto the replacement track. Without this,
-      // switching microphones while muted silently unmutes you — the new track
-      // arrives enabled and the button still says "unmute".
-      if (isMutedRef.current) newTrack.enabled = false;
-      setLocalStream(cameraStreamRef.current);
-      saveMicId(deviceId);
-    } catch (err) { console.error('[switchMic]', err); setMediaNotice(describeMediaError(err, 'microphone')); }
+      await room.switchActiveDevice('audioinput', deviceId);
+      rebuildLocalStream();
+    } catch (err) {
+      console.error('[switchMic]', err);
+      setMediaNotice(describeMediaError(err, 'microphone'));
+    }
+  }, [rebuildLocalStream]);
+
+  // LiveKit's own connection has its own independent, built-in reconnection
+  // (RoomEvent.Reconnecting/Reconnected/SignalReconnecting) — it is a SEPARATE
+  // socket to a SEPARATE server from /ws, so a /ws drop (reenterRoom,
+  // MeetingContext.tsx) does not imply this connection dropped too, and
+  // shouldn't blindly rebuild it and throw that built-in recovery away. This
+  // is what lets a caller check first: only reconnect LiveKit if it's
+  // actually disconnected (e.g. its own reconnection gave up after the
+  // access token's TTL lapsed during a long outage), not on every /ws hiccup.
+  const isMediaConnected = useCallback(
+    () => !!roomRef.current && roomRef.current.state !== ConnectionState.Disconnected,
+    [],
+  );
+
+  // The mesh-era fix for "this one peer's decode has quietly stalled" was
+  // pc.restartIce() + a follow-up offer, scoped to that one peer's own
+  // RTCPeerConnection (see useStalledVideoRecovery.ts's header — deliberately
+  // never touching a link everyone else already sees fine). LiveKit has no
+  // per-peer connection to restart, but it does have a per-TRACK equivalent:
+  // unsubscribing and resubscribing forces the SFU to redeliver that
+  // participant's stream fresh (a new keyframe, effectively), without
+  // touching the shared transport or any other participant's subscription.
+  // Scoped to VIDEO only, not audio — the detector this feeds
+  // (useStalledVideoRecovery) watches a <video> element's own currentTime,
+  // so it's specifically a video-decode symptom; resubscribing audio too
+  // would add an audible hiccup for a problem that was never in the audio.
+  // A short gap between unsubscribe and resubscribe, not back-to-back in the
+  // same tick, to give the unsubscribe an actual round trip to the SFU
+  // before asking it to subscribe again.
+  const restartPeerConnection = useCallback((peerId: string) => {
+    const room = roomRef.current;
+    if (!room) return;
+    const participant = room.remoteParticipants.get(peerId);
+    if (!participant) return;
+    participant.videoTrackPublications.forEach((pub) => {
+      if (pub.source === Track.Source.ScreenShare || !pub.isSubscribed) return;
+      pub.setSubscribed(false);
+      setTimeout(() => pub.setSubscribed(true), 300);
+    });
   }, []);
 
-  // Read-only view of the live camera peer connections, for getStats() polling.
-  // Returns the live map rather than a copy: the caller only reads from it, and a
-  // copy per poll would allocate a fresh Map every two seconds for the whole call.
-  // Screen-share connections are deliberately excluded — they come and go and their
-  // quality is not what a participant tile is reporting on.
-  const getPeerConnections = useCallback((): ReadonlyMap<string, RTCPeerConnection> => pcsRef.current, []);
+  // Kept as no-ops, not deleted, so MeetingContext's existing call sites
+  // (registerPeerName on a mid-call rename, addPeers from the old
+  // room_created/room_joined flow) don't need to change in this pass. Real
+  // behavior change: peer display names now come from LiveKit's own
+  // participant.name (set once, at token-mint time, from the SAME user_name
+  // the /ws join already sends) rather than from a hand-maintained registry —
+  // simpler, but a mid-call rename will not reach already-connected peers
+  // until they reconnect. Flagged, not fixed, in the Stage 2 plan.
+  const registerPeerName = useCallback((_peerId: string, _name: string) => {}, []);
+  const addPeers = useCallback((_incoming: { id: string; name?: string }[]) => {}, []);
 
-  // Tears down every peer connection but leaves the local camera/mic running.
-  // Used when moving between rooms on the same tab: without it the previous
-  // room's participants stay in `peers` and render as blank, frozen tiles in
-  // the new call. cleanup() is the heavier version for actually leaving.
   const resetPeers = useCallback(() => {
-    pcsRef.current.forEach((pc) => pc.close());
-    pcsRef.current.clear();
-    outScreenPcsRef.current.forEach((pc) => pc.close());
-    outScreenPcsRef.current.clear();
-    inScreenPcsRef.current.forEach((pc) => pc.close());
-    inScreenPcsRef.current.clear();
-    iceQueueRef.current.clear();
-    screenIceQueueRef.current.clear();
-    negRef.current.clear();
-    opChainRef.current.clear();
-    peerNamesRef.current.clear();
-    iceCleanupTimersRef.current.forEach((t) => clearTimeout(t));
-    iceCleanupTimersRef.current.clear();
     setPeers([]);
-    setScreenPeers([]);
   }, []);
 
   const cleanup = useCallback(() => {
-    pcsRef.current.forEach((pc) => pc.close());
-    pcsRef.current.clear();
-    iceQueueRef.current.clear();
-    negRef.current.clear();
-    opChainRef.current.clear();
-    peerNamesRef.current.clear();
-    outScreenPcsRef.current.forEach((pc) => pc.close());
-    outScreenPcsRef.current.clear();
-    inScreenPcsRef.current.forEach((pc) => pc.close());
-    inScreenPcsRef.current.clear();
-    screenIceQueueRef.current.clear();
-    iceCleanupTimersRef.current.forEach((t) => clearTimeout(t));
-    iceCleanupTimersRef.current.clear();
-    cameraStreamRef.current?.getTracks().forEach((t) => t.stop());
-    screenStreamRef.current?.getTracks().forEach((t) => t.stop());
-    cameraStreamRef.current = null;
-    screenStreamRef.current = null;
-    setLocalStream(null);
-    setScreenStream(null);
+    const room = roomRef.current;
+    roomRef.current = null;
+    if (room && room.state !== ConnectionState.Disconnected) {
+      void room.disconnect();
+    }
     setPeers([]);
     setScreenPeers([]);
+    setLocalStream(null);
+    setScreenStream(null);
+    setIsScreenSharing(false);
     setIsMuted(false);
     setIsVideoOff(false);
-    setIsScreenSharing(false);
     setMediaNotice(null);
+    setLinkQuality(new Map());
   }, []);
+
+  useEffect(() => () => cleanup(), [cleanup]);
 
   return {
     localStream,
@@ -1044,16 +476,16 @@ export function useWebRTC(socket: SignalingSocket | null, selfId = '') {
     isScreenSharing,
     screenStream,
     screenPeers,
-    initMedia,
-    createOfferFor,
+    linkQuality,
+    connect,
+    isMediaConnected,
     toggleMic,
     setMicMuted,
     toggleCamera,
     toggleScreenShare,
     switchCamera,
     switchMic,
-    getPeerConnections,
-    restartPeerConnection: restartCameraPeerConnection,
+    restartPeerConnection,
     cleanup,
     resetPeers,
     registerPeerName,

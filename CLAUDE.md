@@ -7,7 +7,7 @@ Secure messaging / video calling / calendar web app. React + Go, deployed at **h
 - **Frontend**: React 19 + TypeScript, Vite 6, Tailwind CSS v4 (`@tailwindcss/vite`, arbitrary-value utility classes like `bg-[#1c1b1b]` rather than a theme config — see Theming below), `lucide-react` icons, `motion` for animation.
 - **Backend**: Go (`server/main.go`) — REST API + WebSocket signaling/chat, JWT auth, MariaDB via `go-sql-driver/mysql`.
 - **DB**: MariaDB 10.11, local (`127.0.0.1:3306`, db `lolafire_IBConnect`, user `ibconnect_app`). Migrated off a remote hostpoint.ch DB during this session's work — `main.go`'s `migrate()` uses `CREATE TABLE IF NOT EXISTS`, so it will **not** retroactively alter columns on tables that already exist (e.g. an `avatar TEXT`→`LONGTEXT` widening won't apply to a pre-existing table without a manual `ALTER TABLE`).
-- **ASR**: separate Python Whisper transcription server (`server/transcription_server.py`), systemd service `ibconnect-transcription.service`, proxied at `/asr` (port 8765). **Feature is TURNED OFF as of 2026-08-08 — the UI is gone and the service is stopped+disabled. See "Audio-to-text" below before touching it.**
+- **Live captions (ASR)**: multilingual, per-speaker, real-time — Whisper (language ID) → IndicConformer or `nvidia/nemotron-3.5-asr-streaming-0.6b` (ASR, routed by detected language) → NLLB (translation), all on a **separate GPU VM** the main box only reaches through `server/asr_gpu.go` + `server/transcription_relay.go` (`/asr`). See "Live captions (ASR)" below. Supersedes the old single-language `transcription_server.py` prototype (retired 2026-08-18 — it was CPU-only and ~27x slower than real time, see git history if you need the postmortem).
 - **WebRTC**: TURN server at `meet.icebrkr.space` (user `webrtc` — see `src/hooks/useWebRTC.ts`).
 - **Identity**: auth is OIDC-only against **IB Account** (`/home/ubuntu/ib-account`, served at `/auth/`), consumed by `handleOIDCCallback` in `server/main.go`. That repo has its own CLAUDE.md covering the login/OTP/email side; anything about sign-in, verification codes or transactional mail belongs there, not here.
 
@@ -60,8 +60,8 @@ Both managed via systemd; `sudo systemctl status/restart ibconnect-backend`.
 ## Deployment (frontend)
 
 The live site is **static files**, not the Vite dev server. nginx (`/etc/nginx/sites-enabled/ibconnect`)
-serves `/var/www/ibconnect` (root) and reverse-proxies `/api`, `/health`, `/ws`, `/chat-ws`, `/asr` to
-the Go backend on :8080 (and ASR on :8765). To ship a frontend change:
+serves `/var/www/ibconnect` (root) and reverse-proxies `/api`, `/health`, `/ws`, `/chat-ws`, `/asr` — all
+of them, `/asr` included since 2026-08-27 — to the Go backend on :8080. To ship a frontend change:
 
 ```bash
 npm run build                                            # writes dist/
@@ -221,52 +221,156 @@ Still missing from groups proper: no add/remove member after creation, no rename
 no leave-group, no admin concept — `thread_members` supports all of it, there's
 just no endpoint or UI.
 
-## Audio-to-text (ASR)
+## Live captions (ASR)
 
-**Status: SHIPPED OFF as of 2026-08-08.** The feature is disabled behind
-`TRANSCRIPTION_ENABLED` in `src/lib/features.ts` (default `false`, override with
-`VITE_ENABLE_TRANSCRIPTION=true` at build time), and
-`ibconnect-transcription.service` is stopped and disabled. Everything below still
-describes the pipeline accurately — it is dormant, not deleted.
+**Status: LIVE in production as of 2026-08-27.** The old single-
+language `transcription_server.py` prototype (Whisper-Hindi2Hinglish, CPU-only,
+measured ~27x slower than real time on 2026-08-04 — see git history for that
+postmortem if it's ever relevant again) is retired. It never worked live and
+never could have on that hardware; this replaces it rather than fixing it.
 
-**Why: the pipeline is correct and the transcripts are accurate, but it is
-roughly 27x slower than real time, so live transcription cannot work.** Measured
-2026-08-04, not inferred:
+**Why there was no SFU to "tap"**: IB Connect is mesh WebRTC (`server/main.go`
+is signalling-only, no `pion`/`mediasoup`/`livekit`) — audio is peer-to-peer,
+encrypted, and never touches any server. So captions are captured at the
+source instead: each participant's own browser streams **only its own mic**
+(never a peer's decoded remote audio) to the relay. This is also what fixes a
+real scaling bug the old prototype's design had if it had ever run at
+usable speed: it opened one pipeline per OTHER participant too, so an
+N-person room did O(N²) GPU work for O(N) speakers. One stream per active
+speaker, independent of listener count, is O(N).
 
-```
-transcribe took 268.6s for 10s of audio      # ~27x real time
-TEXT: "Is the micro machine I'm present in the most minute minute of micro
-       machine. This 1 has dramatic detail perfect trim precision paint job..."
-```
+**Pipeline**: mic (Int16 PCM, 16kHz, mono) → Go backend `/asr`
+(`server/transcription_relay.go`, `handleASRRelay`) → GPU VM
+(`server/asr_gpu.go`, contract in `gpu/ASR_CONTRACT.md`) → Silero VAD segments
+speech → Whisper detects the segment's language → routed to IndicConformer
+(Indic languages) or `nvidia/nemotron-3.5-asr-streaming-0.6b` (everything
+else) → partial hypotheses while speech continues, a final on end-of-segment
+→ the Go backend broadcasts the final to the whole room
+(`Room.broadcastAll`, `server/main.go`) → for finals only, translates into
+whichever languages the room's viewers currently have selected
+(`activeCaptionLangs`, one NLLB call per distinct language actually
+requested, not per viewer) → `Room.broadcastAll` again with the
+`translations` map attached. Every viewer sees the original speaker's speech
+in their **own independently chosen** caption language (`caption_lang`
+signalling message, `SigClient.captionLang`) — partials are always shown
+untranslated (translating those would be wasted GPU work on text that's
+about to be superseded).
 
-Feeding 20s of real speech over the actual WebSocket protocol returned nothing in
-65s — not a failure, the answer was still being computed. Every segment queues
-behind the previous one, so the backlog grows for as long as anyone talks. The
-service log's only ever transcript is a single word (`"Transcript: Bets."`,
-Jul 30), which is consistent with someone testing and giving up.
+**Follows the Interview feature's GPU-VM convention** (`gpu/CONTRACT.md`,
+`server/interview_gpu.go`): the Go backend is the only thing that ever talks
+to the GPU VM (`ASR_GPU_URL`/`ASR_GPU_TOKEN`/`ASR_GPU_TIMEOUT` in
+`/etc/ibconnect/env`, never the repo — it's public), the browser never
+reaches it directly, and a standard mock (`gpu/mock_asr_server.py`, FastAPI —
+unlike the interview mock this couldn't stay stdlib-only, `/v1/stream` is a
+WebSocket) lets the entire feature be built and Playwright-tested with zero
+GPU hardware. `gpu/asr_server.py` is the real thing, written against each
+model's documented API but **not run or verified anywhere in this
+environment** — no GPU, no model weights available here. Sections marked
+"NEEDS GPU-SIDE VALIDATION" in that file are exactly that: correct by
+documentation, unverified in practice. `INDIC_CONFORMER_MODEL_ID` is an
+explicit placeholder env var — AI4Bharat publishes several IndicConformer
+checkpoints and none was specified, so it's left configurable rather than
+guessed.
 
-Cause is hardware, not configuration: `Oriserve/Whisper-Hindi2Hinglish-Prime` is a
-large-v3-class model (32+32 layers, d_model 1280, **5.8GB** on disk, 6.8GB
-resident) doing autoregressive decoding on **4 CPU cores with no GPU**
-(`torch.cuda.is_available()` is `False`). Nothing is misconfigured.
+**Status the frontend actually shows**: `not_configured` ("captions aren't
+set up yet" — `ASR_GPU_URL` unset, never touches the network or opens a mic),
+`loading` (`/healthz` still warming up four models), `unreachable`
+(temporary, the relay retries with backoff before surfacing this). The
+caption toggle itself is always visible when the browser has mic + Web Audio
+(`isLiveCaptionsSupported`, `src/lib/liveCaptions.ts`) — unlike the old
+feature it is not hidden behind a build flag; `TRANSCRIPTION_ENABLED` /
+`src/lib/features.ts` / `VITE_ENABLE_TRANSCRIPTION` no longer exist.
 
-Options, roughly in order of fidelity: a GPU (keeps this exact Hinglish model,
-~0.1-0.3x real time); `faster-whisper`/CTranslate2 with int8 (4-8x faster on the
-same CPU, cheapest thing to try); a smaller model (`small` ~10x, `base` ~30x, but
-loses the Hinglish fine-tune); or a hosted ASR API (meeting audio then leaves the
-server, which cuts against the product's security positioning).
+**UI surfaces, unified 2026-08-27**: an on-screen movie-subtitle-style
+caption bar (`src/components/meeting/CaptionBar.tsx`, toggled from the
+toolbar — the same click starts/stops this participant's own mic capture;
+plain centered dark bars above the control bar, no chrome of its own) and a
+**Live Captions** tab in the right sidebar, next to Chat/People (renamed
+from a mobile-only "Transcript" tab — there used to *also* be a separate,
+always-open desktop-only left sidebar duplicating this same UI at `lg+`
+widths; removed, since keeping two parallel implementations of one settings
+surface in sync is worse than one that works at every breakpoint). The tab
+holds the transcript log, an on/off toggle (mirrors the toolbar one), the
+caption-language `<select>` (`CAPTION_LANGUAGES`, `src/lib/captions.ts` — a
+curated static subset for now, since there's nothing to source a real list
+from until `/healthz` `supported_languages` is wired in), a caption **size**
+picker (`CaptionSize`, `src/lib/captions.ts` — small/medium/large, persisted
+to `localStorage` the same way `devicePrefs.ts` persists device choices,
+purely a personal display preference so it doesn't need to sync between
+peers), and the Key Points block (ported over from the removed desktop
+sidebar, previously not available on the mobile tab at all). Room code /
+copy-link controls, previously duplicated inside that desktop sidebar too,
+now live solely in the floating badge over the stage, unconditionally.
 
-**Wire protocol** (if you touch either end): browser sends raw **float32 PCM,
-16 kHz, mono** as binary frames; JSON control messages `{"type":"flush"}` and
-`{"type":"ping"}`; server replies `{"type":"transcript","text":...,"isFinal":true}`.
-Silero VAD segments speech in 512-sample windows before anything reaches Whisper.
-A standalone test client that drives all of this lives in the scratchpad
-(`asr_test.py`) — re-derive it from this paragraph if it's gone; testing through
-the browser is far slower than testing the socket directly.
+**Verified**: `_verify_live_captions.mjs` (7/7, run twice for flakiness) —
+against a local throwaway Go backend (`ASR_GPU_URL` pointed at
+`gpu/mock_asr_server.py`) plus a second throwaway backend with `ASR_GPU_URL`
+unset. Confirms: a speaker sees their own caption via the same broadcast
+path as everyone else (no special-casing), a second participant receives it
+too (cross-participant delivery — the O(N) claim), two viewers with
+different caption-language selections see genuinely different text for the
+same utterance (per-viewer translation, checked both directions — the
+translated viewer sees the tag, the untranslated one doesn't), and `/asr`
+never reports anything but `not_configured` when the GPU VM env var is
+unset — checked at the raw WS-protocol level via Node's native `WebSocket`,
+deliberately bypassing the browser so this isolates the Go-side contract
+from any frontend timing. Full existing regression battery re-run against
+the same local stack and stayed clean (`_verify_meeting_fixes` 20/20,
+`_verify_call_upgrades` 38/38, `_verify_identity_and_camera` 16/16,
+`_verify_multiparty_audio` 12/12, `_verify_eviction_fix` 8/8,
+`_verify_guest_reconnect` 6/6, `_verify_screenshare_mobile` 7/7,
+`_verify_join_video_wording` 7/7, `_verify_asymmetric_video_recovery`
+12/12, `_verify_stall_detector` 14/14, `_verify_reconnect_rejoin` clean) —
+confirms captions cannot break the actual call even when badly misconfigured,
+since `/asr` never touches the WebRTC audio/video path at all.
 
-Also note the failure is **silent**: the Transcript panel shows nothing
-indefinitely, with no indication it's still working or has fallen behind. Even
-after a speed fix, that state should surface in the UI.
+Two things found and fixed along the way, not part of the feature itself:
+- `_verify_call_upgrades.mjs` indexed `<select>` elements globally
+  (`page.locator('select').nth(2)`) assuming camera/mic/speaker were the only
+  three on the page. The captions sidebar's own language `<select>` (which
+  now renders unconditionally at desktop widths, unlike the old dormant
+  transcript sidebar) shifted those indices by one and failed the suite
+  against no real regression. Fixed by scoping to the settings panel's
+  container (`.z-30 select`) instead of the whole page.
+- `gpu/mock_asr_server.py` needs the `websockets` package installed for
+  uvicorn to actually upgrade `/v1/stream` (`pip install fastapi uvicorn
+  websockets`, not just the first two) — without it uvicorn 404s every
+  WebSocket connection attempt with only a log warning, no error the client
+  side sees, which produced a convincing false pass on the first suite run
+  (page text matched for an unrelated reason — the roster, not a caption —
+  while the WS connection had been silently failing the entire time). Caught
+  by checking the mock server's own log, not by trusting a green suite.
+
+**Update, 2026-08-21 — a real GPU VM exists now (`ib-bom-dev-gpu0`), reconciled
+with its own independently-authored contract.** See the same-day work-log
+entry below for the full story; summary: the GPU VM's own Claude Code
+instance had no access to this repo and wrote its own `CONTRACT.md` from the
+feature description alone, which differs from `gpu/ASR_CONTRACT.md` in real
+ways (a `ready` handshake ack before audio, `language` not `lang`, a
+non-fatal `error` event type, `source_language`/`target_languages` field
+names). `gpu/ASR_CONTRACT.md`, `server/asr_gpu.go`,
+`server/transcription_relay.go`, and `gpu/mock_asr_server.py` were all
+updated to match the GPU VM's actual contract, and `_verify_live_captions.mjs`
+re-run clean (7/7) against the updated mock. `ASR_GPU_TOKEN` is now in
+`/etc/ibconnect/env`.
+
+**Update, 2026-08-27 — connected and verified live end-to-end. See the
+same-day work-log entry below for the full story.** `ASR_GPU_URL`,
+`ASR_GPU_TOKEN`, and `ASR_GPU_PIN` (SPKI SHA-256 cert pin — the GPU VM's TLS
+cert is self-signed, no CA to chain to, so `server/asr_gpu.go` pins the exact
+public key instead of trusting any cert from that IP) are all set in
+`/etc/ibconnect/env`. Nginx's `/asr` location's `proxy_pass` is now
+`http://127.0.0.1:8080` (was still pointing at the retired `:8765` Python
+service until today — this was the last thing actually blocking the feature
+even after the GPU link itself came up; found by testing, not by inspection).
+`ibconnect-transcription.service` (the retired Python prototype) has not yet
+been formally disabled/removed — it's not running and nothing points at it
+anymore, so this is cleanup, not a blocker.
+
+**Still open**: Indic-language routing (IndicConformer) has not been verified
+against real speech — only against synthetic TTS audio, which wasn't
+intelligible enough for a confident answer either way. Worth watching the
+first real non-English call closely.
 
 ## Testing approach
 
@@ -321,7 +425,8 @@ rejected autoplay leaves exactly that state (see `playWhenAllowed` under WebRTC)
 | `_verify_join_video_wording.mjs` | 7 checks: a healthy camera-on join never shows "Camera off" (from both an existing peer's and a new joiner's perspective), a camera-off join still settles to "Camera off" after the grace period rather than "Connecting…" forever. Its fake-camera stub is the reference pattern for passing data into `addInitScript` correctly — see the file header for the closure gotcha it replaced |
 | `_verify_eviction_fix.mjs` | 8 checks, two connections as the same user id in the same room (the two-tabs/two-devices scenario): the eviction close carries code 4001 not 1006, the evicted side makes zero reconnect attempts, the "connected elsewhere" notice is shown, the surviving connection is unaffected |
 | `_verify_guest_reconnect.mjs` | 6 checks: kills a guest's signalling socket without a page reload (a phone locking its screen), asserts the guest is never wrongly told their session expired, and the host recovers the guest's LIVE video rather than a stuck/gone tile |
-| `_verify_screenshare_mobile.mjs` | 6 checks: simulates a browser without `getDisplayMedia` (the iOS Safari case) by deleting it from `MediaDevices.prototype`, confirms "Share screen" is absent from the DOM entirely (not just hidden), and confirms a normal desktop-class browser still offers and can use it |
+| `_verify_screenshare_mobile.mjs` | 7 checks: simulates a browser without `getDisplayMedia` (the iOS Safari case) by deleting it from `MediaDevices.prototype`, confirms "Share screen" is absent from the DOM entirely (not just hidden) including inside the mobile "More" sheet (opened via its real accessible name, `"More options"`), and confirms a normal desktop-class browser still offers it both inline (desktop width) and through the mobile sheet (narrowed to phone width) |
+| `_verify_live_captions.mjs` | 7 checks, two participants + a local throwaway Go backend pointed at `gpu/mock_asr_server.py`: a speaker sees their own caption via the same room-broadcast path as everyone else, a second participant receives it too (the O(N) cross-participant claim), two viewers with different caption-language selections see genuinely different (translated vs. original) text for the same utterance, and `/asr` reports only `not_configured` — never opens a mic — when `ASR_GPU_URL` is unset, checked at the raw WS-protocol level via Node's native `WebSocket` |
 
 **Simulating a dead socket** (for the reconnect path): wrap `window.WebSocket` in an `addInitScript` to
 collect instances on `window.__sockets`, then `.close()` the one whose `url` contains `/ws`. That
@@ -337,6 +442,732 @@ under an off-canvas transform, i.e. the closed sidebar drawer at `translateX(-10
 decorative child triggers it.
 
 ## Recent work log
+
+**2026-08-28, same migration — asked to close every remaining gap: the /ws
+divergence fix, a TURN/ICE fallback for LiveKit, cross-browser coverage, and
+production LiveKit server infra prepared (not yet stood up), all still not
+merged, not deployed:**
+- **The `/ws`-vs-LiveKit divergence (previously logged as accepted backlog,
+  not part of this migration) is now fixed** — deliberately NOT via the
+  LiveKit-disconnect-webhook/reconciliation approach originally sketched for
+  it. That direction turned out to be solving the wrong side of the bug: the
+  measured divergence is `/ws`'s roster lagging BEHIND live reality (someone
+  still fully on the call, briefly unrecognised), not `/ws` being stale about
+  someone who genuinely left — a LiveKit-driven eviction only ever helps the
+  opposite case, and risks a new false eviction if wired to fire on every
+  transient LiveKit hiccup. The actual fix: `server/main.go`'s deferred `/ws`
+  cleanup no longer calls `leaveRoom()` inline on a bare socket close; it
+  schedules it after `wsLeaveGraceInterval` (3s, chosen with margin over the
+  measured ~1s self-heal) via `time.AfterFunc`. `enterRoom()` already
+  overwrites `room.clients[client.id]` the instant a reconnect lands, and
+  `leaveRoom()` already only vacates "if the room still points at *this*
+  connection" — so a delayed `leaveRoom` for someone who already reconnected
+  finds someone else's entry in its place and correctly no-ops, no new
+  bookkeeping needed to "cancel" it. A genuine, never-healed departure still
+  gets cleaned up, just after the same short window.
+  `_verify_livekit_ws_divergence.mjs` (which originally existed to MEASURE
+  the bug) was rewritten to assert the fix instead: a token/`/asr` request
+  for the dropped identity now succeeds inside the grace window (no more
+  spurious 403), AND — a new check, not in the original — a genuine,
+  never-reconnected departure (whole browser context closed, no reconnect
+  possible) is still eventually refused once the window passes, proving the
+  grace period delays eviction rather than disabling it. **9/9 passing.**
+- **LiveKit now gets a TURN/ICE fallback**, reusing the exact same coturn
+  credentials `connectionTest.ts` already fetches independently for the
+  pre-join diagnostic — not a new relay, not a new secret. `api.ts` gained
+  `getTurnCredentials()` (`GET /api/turn-credentials`, already existed
+  server-side); `useWebRTC.ts`'s `connect()` fetches it and passes it to
+  `room.connect()` as `rtcConfig.iceServers`, best-effort — a failed fetch
+  logs a warning and connects without the fallback rather than blocking the
+  call. This closes a real, previously-undisclosed gap: without it, a
+  participant behind a symmetric NAT or a UDP-blocking firewall had no path
+  to the SFU at all, the same restrictive-network case coturn already
+  existed for under mesh.
+- **Cross-browser coverage — genuinely new, previously only Chromium had ever
+  been tested.** New `_verify_livekit_crossbrowser.mjs` runs the same
+  real-two-way-video bar the rest of this migration's tests use, across all
+  three Playwright engines with each one's own correct fake-media/autoplay
+  setup (Chromium's CLI flags, Firefox's `firefoxUserPrefs`, WebKit's own
+  requirements) — not one config force-fit across all three.
+  **Chromium: PASS. Firefox: PASS**, both with real, verified two-way LiveKit
+  video — Firefox had never once been exercised against this migration
+  before now. **WebKit: investigated, not achieved, and not silently marked
+  passing.** WebKit connects to the real LiveKit server cleanly (session
+  negotiated, protocol confirmed) but the test's fake-camera injection
+  (`getUserMedia` override) never reaches the video pipeline — traced with a
+  direct probe to `livekit-client`'s bundled `webrtc-adapter` (confirmed
+  present via its own `package.json` and its `shimGetUserMedia` in the
+  built bundle), which installs its own Safari/WebKit `getUserMedia` shim
+  that this test's override doesn't survive underneath. This is a real,
+  disclosed test-harness limitation for exercising WebKit specifically in
+  this sandbox, not evidence of an app bug — real Safari with a real camera
+  was never and could not be tested here regardless, sandboxed-headless-
+  WebKit-with-a-fake-camera was always going to be the closest available
+  proxy, and it fell short. Needed `sudo npx playwright install-deps webkit`
+  (missing system libraries, e.g. `libgtk-4.so.1`) to even launch, unrelated
+  to the getUserMedia finding above.
+- **Production LiveKit server infra drafted and reviewed, deliberately NOT
+  stood up yet** — `deploy/livekit/` (`livekit.yaml.template`,
+  `livekit.service`, `nginx-livekit.conf.snippet`, `README.md`): same host as
+  the backend, no new subdomain — `/livekit/` on the existing
+  `meet.icebrkr.space` nginx vhost, reusing its TLS cert (per an explicit
+  choice, asked for rather than assumed). Single-port UDP mux (7882) rather
+  than a wide port range, chosen outside coturn's own 20000-60000 relay
+  range so the two can never collide. `MAX_ROOM_SIZE=16` (an explicit choice,
+  asked for rather than assumed — the load test's N=6-8 "unusable" ceiling
+  was the shared test host saturating, not the SFU, whose own process stayed
+  near-idle throughout, so a materially higher cap than mesh's is justified
+  pending a real ceiling measurement) and a real generated
+  `LIVEKIT_API_KEY`/`LIVEKIT_API_SECRET` are ready to add to
+  `/etc/ibconnect/env` — prepared as a copy-paste command block in
+  `deploy/livekit/README.md`, not executed here (writing to the production
+  env file is blocked by the Claude Code auto-mode classifier, correctly —
+  this always goes through the user via the `!` prefix). The one item in the
+  whole setup that has to happen outside this VM entirely: **UDP 7882 and
+  TCP 7881 need to be open at whatever actually firewalls this host** (`ufw`
+  is inactive locally, so it's almost certainly a cloud-provider security
+  group, invisible from in here). README.md splits this deliberately into
+  Stage 1 (bring up LiveKit alongside the still-running mesh backend — zero
+  effect on live calls) and Stage 2 (the actual application cutover: rebuild
+  and restart `ibconnect-backend`, redeploy the frontend bundle) — Stage 2 is
+  intentionally not a copy-paste block, pending a fresh `journalctl` check
+  for live calls and one more explicit go-ahead right before it runs.
+- **A live-production check, not just an assumption**: confirmed directly
+  against the running server that none of this migration has reached
+  production yet, rather than trusting the branch/commit state alone —
+  `POST /api/livekit/token` on the live domain returns 404 (old binary, no
+  such route), and the served frontend bundle has no `livekit-client` string
+  in it (old build). Worth recording precisely because this working
+  directory IS the production deploy path (`ibconnect-backend.service`'s
+  `WorkingDirectory`) — the running process just hasn't been rebuilt/restarted
+  since any of this landed on disk.
+- Regression re-run after all of the above, same throwaway stack pattern:
+  `_verify_livekit_ws_divergence.mjs` 9/9, `_verify_livekit_stage3.mjs` 9/9,
+  `_verify_livekit_screenshare.mjs` 9/9, `_verify_livekit_gaps2_3.mjs` 10/10.
+  `go build` and `npx tsc --noEmit` both clean.
+- **Discovered while committing, not folded in**: this same working
+  directory also holds substantial uncommitted work for an unrelated
+  feature, live captions/ASR (`server/asr_gpu.go`,
+  `server/transcription_relay.go`, `gpu/asr_server.py`,
+  `src/hooks/useLiveCaptions.ts`, `CaptionBar.tsx`, plus its own edits to
+  `vite.config.ts` and two pre-existing test files). Verified by reading the
+  actual diffs, not assumed — left entirely untouched and still uncommitted;
+  the commit that follows this entry stages only the LiveKit-migration-scoped
+  files.
+
+**2026-08-28, same migration — the remaining two Stage-3 gaps (quality
+badges, stall-recovery) closed, verified against the real LiveKit server,
+not merged, not deployed:**
+Asked to deploy; declined explicitly — "close the gaps first" was chosen
+over a full or parallel production cutover, since no real production
+LiveKit server exists yet (only local `--dev` mode has ever run) and
+`MAX_ROOM_SIZE`/capacity remain open per Stage 5. Closed the two gaps that
+were still open after 2026-08-28's screen-share fix:
+- **Quality badges**: `useConnectionQuality.ts` (mesh-era `getStats()`
+  polling) deleted outright, not kept around unused. Replaced with
+  `linkQuality` state in `useWebRTC.ts`, sourced from LiveKit's own
+  `participant.connectionQuality` (computed server-side by the SFU) pushed
+  via `RoomEvent.ConnectionQualityChanged` — no polling needed at all.
+  `PeerLink` (the shape `ActiveMeetingView.tsx`'s four render call sites
+  already expected) moved to `connectionStats.ts` as its canonical home.
+  One real resolution loss, disclosed not hidden: LiveKit has a single
+  degraded tier (`Poor`) vs. the old mesh grading's two (`fair`/`poor`) —
+  mapped to the more severe `'poor'` rather than guessing an intermediate
+  value the SFU never actually signals. `stats.relayed` is always `null`
+  now — there's no per-peer "was this relayed via TURN" fact once every
+  participant shares one SFU connection.
+  **Verified for real**: monkey-patched `Room.prototype.emit` (impossible to
+  do cleanly via a bare `import('livekit-client')` injected into the app's
+  own page — Vite only rewrites bare specifiers inside files it actually
+  serves and transforms, not injected scripts; worked around with a real
+  `.html` file Vite does serve, run as a genuine third participant) —
+  confirmed `ConnectionQualityChanged` fires with real `excellent`/`good`/
+  `poor` values for every participant, not asserted from reading the code.
+- **Stall-recovery**: `restartPeerConnection` no longer touches a connection
+  (LiveKit has none per-peer) — it unsubscribes and resubscribes that one
+  participant's video track (`RemoteTrackPublication.setSubscribed`), the
+  per-track equivalent of the old per-connection ICE restart, scoped the
+  same way the original was (never touching a link everyone else already
+  sees fine) and scoped to video only, not audio — the symptom this feeds
+  (`useStalledVideoRecovery`) is specifically a `<video>`-decode stall, and
+  resubscribing audio too would add an audible hiccup for a problem that
+  was never in the audio.
+  **The real trigger (a genuinely stalled decode for 3+ consecutive
+  seconds) is impractical to force in this environment** — verified the
+  mechanism it depends on instead, directly against the real LiveKit
+  server: a third real participant's real subscription to a real published
+  camera track was cycled `setSubscribed(false)` → `setSubscribed(true)`,
+  and the video was confirmed to **genuinely resume decoding new frames
+  afterward** (`decodesAfter: true`, checked via an attached `<video>`
+  element's `videoWidth`/`paused` state, not just that the SDK's flags
+  flipped) — 10/10 checks, including the quality-event confirmation above,
+  in the same pass (`_verify_livekit_gaps2_3.mjs`).
+- Both `_lk_negtest.html` (from the earlier auth-negative pass) and the new
+  `_lk_mechanism_test.html` are real, reusable test fixtures other
+  verification scripts depend on — kept in the repo, not scratch files to
+  discard after one run (briefly deleted by mistake, restored once the
+  auth-negative script's dependency on the first one was noticed).
+- Re-ran `_verify_livekit_stage3.mjs` (9/9) and `_verify_livekit_screenshare.mjs`
+  (9/9) after both fixes landed — zero regressions to core join/leave or to
+  the previous day's screen-share fix. `npx tsc --noEmit` clean throughout.
+- **All three of Stage 3's original gaps (screen share, quality badges,
+  stall-recovery) are now closed.** Still not deployed, still on
+  `livekit-migration`. What remains before a real production conversation:
+  a real LiveKit server (TLS, real API keys, a proper service — none of
+  which exist anywhere yet) and `MAX_ROOM_SIZE`/capacity, per Stage 5.
+
+**2026-08-27, mesh WebRTC → LiveKit SFU migration, Stage 3 (branch
+`livekit-migration`, NOT merged to main, NOT deployed):**
+Staged migration (audit → plan → implement → verify → revisit, each stage
+gated on explicit review). Stage 3 scope: room join/leave through a real
+LiveKit SFU, camera + mic only — no UI polish, no simulcast tuning, screen
+share explicitly deferred rather than migrated.
+- **Deleted outright** (no replacement, not "conceptually replaced"): the
+  entire perfect-negotiation state machine in `useWebRTC.ts` (glare handling
+  only existed because mesh had no arbiter — an SFU is the arbiter), the
+  parallel screen-share peer-connection scheme, `pcsRef`/`outScreenPcsRef`/
+  `inScreenPcsRef`, and server-side the `offer`/`answer`/`ice_candidate` relay
+  case, `screen_share_state` case, `SignalPayload`/`ScreenSharePayload`
+  structs, and `sigReporter`/`sigOffers`/`sigAnswers`/`sigCandidates` (measured
+  mesh renegotiation volume that no longer exists).
+- **Kept, deliberately unchanged**: `room.clients`/`SigClient` (still the sole
+  roster for chat/reactions/hand-raise/captions — LiveKit's participant list
+  is a second, independent membership concept, never merged with this one),
+  `handleTurnCredentials` (still has a real caller — `connectionTest.ts`'s
+  pre-join diagnostic, entirely independent of the mesh-vs-SFU choice), coturn
+  itself (kept running, decommissioning explicitly deferred as its own
+  decision, not done here).
+- **New**: `server/livekit.go` — `POST /api/livekit/token`. Signed-in callers
+  get their identity from the existing session JWT (`bearerUID`, reused, never
+  from the request body); guests get it from the body, same trust level
+  `join_room` already has. Authorization is a **membership** check reusing
+  `room.clients[identity]` (the same pattern `transcription_relay.go` already
+  uses for `/asr`) — not a re-run of `join_room`'s admission check, since by
+  design a client only asks for a token after it's already in the `/ws` room.
+  Token TTL: 10 minutes, gates only the initial connect handshake (LiveKit
+  doesn't re-check `exp` against an already-open room connection); reconnects
+  always fetch a fresh token rather than reuse one, mirroring
+  `reenterRoom`'s existing redial-from-scratch pattern.
+  Hand-rolled the JWT with `golang-jwt/jwt/v5` (already a dependency, used for
+  this app's own session tokens) instead of `github.com/livekit/server-sdk-go`
+  — the official module pulls in NATS, Pion's full WebRTC stack, OpenTelemetry,
+  and a Docker client just to sign a JWT with a documented, stable claims
+  shape; not worth it for something this self-contained.
+- **TURN decision**: LiveKit's own built-in TURN (TLS/443) is used for the
+  SFU's relay path, not coturn — `rtc.turn_servers`-style external config
+  would hand a static, non-expiring credential to every connecting browser,
+  the same exposure class as the `webrtc`/`webrtc123` incident fixed
+  2026-08-12. Not yet configured for anything beyond local `--dev` testing.
+- **`useWebRTC.ts`** is now a thin wrapper around a LiveKit `Room`: `connect()`
+  replaces `initMedia()` and is called AFTER `/ws` admission succeeds (the
+  token endpoint's authorization requires it), not before. `MeetingContext.tsx`'s
+  `createMeeting`/`joinMeeting`/`reenterRoom` were reordered accordingly.
+  `reenterRoom` deliberately does NOT reconnect LiveKit on every `/ws` drop —
+  LiveKit's connection is a separate socket to a separate server with its own
+  built-in reconnection; only reconnects it if `isMediaConnected()` says it's
+  actually down (e.g. the 10-minute token expired during a long outage).
+- **Three explicit, flagged gaps from this stage** — not silently broken:
+  screen sharing (no transport left after the mesh relay it rode on was
+  deleted; `toggleScreenShare` now surfaces a clear notice instead of doing
+  nothing), per-peer connection-quality badges (`getPeerConnections()` returns
+  empty — LiveKit doesn't expose a raw `RTCPeerConnection` per remote
+  participant), and per-tile stall recovery (`restartPeerConnection` is a
+  no-op — "restart just this one peer's connection" has no LiveKit
+  equivalent). All three are follow-ups, not regressions to silently live with.
+- **Verified for real**, not just built: `npx tsc --noEmit` clean; a local
+  LiveKit `--dev` instance plus a throwaway backend/Vite pair
+  (`_verify_livekit_stage3.mjs`) — two real browser contexts, host creates a
+  meeting, guest joins, both sides' remote tile decodes genuine non-black
+  video pixels matching the other side's assigned color (proof media actually
+  round-tripped through the SFU, not a stale frame), roster counts correct,
+  chat (untouched `/ws` path) still reaches the other participant, zero
+  console errors — **9/9**. Cross-checked independently against LiveKit's own
+  server log: correct room name, correct participant identities, correct
+  video grant, token expiry matching the 10-minute TTL.
+- **Not done in this stage, on record**: `livekit.yaml` production config
+  (TLS/443, real API keys — `--dev` mode's placeholder `devkey`/`secret` was
+  used for this verification only), deployment placement decision (same box
+  vs. separate — plan says same box for now, explicit trigger to move it
+  named in the plan), Stage 4's real multi-participant + before/after
+  bandwidth numbers, Stage 5's `MAX_ROOM_SIZE`/simulcast revisit.
+
+**2026-08-27, same migration — three Stage 4 checks run ahead of the full
+multi-participant pass, requested explicitly before signing off Stage 3:**
+- **KNOWN LIMITATION (bounded, measured, accepted — not an open bug with
+  vague severity): `/ws` membership can briefly diverge from live LiveKit
+  presence.** Killing only a participant's `/ws` socket (LiveKit's connection
+  untouched) correctly fires `leaveRoom()` server-side (confirmed against the
+  backend's own log, not inferred) — but for a **measured window of ~1 second
+  in this environment**, until the client's own existing `SignalingSocket`
+  reconnect logic heals it, that participant is still fully live and visibly
+  publishing video via LiveKit to every other participant while
+  `POST /api/livekit/token` (403, "not a member of this room") and `/asr`'s
+  membership gate (`not_in_room`) both refuse them. This is the same class of
+  bug the migration was meant to fix, relocated to a new boundary — real,
+  not hypothetical, and specifically NOT "fixed by LiveKit" the way the
+  original mesh three-way-roster divergence was. It is **bounded and
+  self-healing** (the window closes on its own once `/ws` reconnects), which
+  is a real improvement over old mesh's divergence, which had no such bound —
+  but bounded-and-self-healing is a different, weaker claim than "does not
+  exist," and this is logged as the honest one.
+  Accepted as-is for now: **not urgent given current usage (~12 users,
+  non-adversarial)** — a 1-second window with no way for another participant
+  to exploit it in practice isn't worth blocking the migration over. The
+  proper fix (a LiveKit disconnect webhook, or a reconciliation pass that
+  triggers `leaveRoom()`-equivalent cleanup from LiveKit's own participant
+  state rather than only from `/ws`'s own disconnect) is real backlog,
+  tracked separately — **deliberately not folded into Stage 5**, which is
+  scoped to `MAX_ROOM_SIZE`/simulcast only.
+  (First attempt at measuring this gave a false negative — waiting 1.5s
+  before checking let the app's own reconnect logic complete and re-run
+  `join_room` before the check ran, masking the window entirely. Re-run with
+  the check immediately after the close, cross-checked against the backend's
+  log line-by-line, caught it correctly.)
+- **Negative-path auth — all confirmed real, not just "should work"**: a
+  tampered token, a token signed with the wrong secret, an expired token,
+  and an empty token are all independently rejected by the real LiveKit
+  server itself (exact rejection reasons captured — "signature is invalid",
+  "token is expired", "no permissions to access the room" — not just "it
+  failed somehow"). A user_id that never joined a room via `/ws`, and a
+  room_id that doesn't exist at all, both get a 403 with no token in the
+  body from `/api/livekit/token` — the membership check genuinely refuses
+  rather than trusting either. A signed-in caller supplying a different
+  user_id in the request body still gets a token carrying THEIR OWN session
+  identity, confirming the approved auth design holds under an actual
+  attempt to violate it, not just in the code as written.
+- **The three documented Stage 3 gaps were confirmed to fail gracefully, not
+  just asserted to**: clicking "Share screen" mid-call shows the real
+  `mediaNotice` banner (not a silent no-op, not a crash) and leaves the call
+  itself completely unaffected; the People/roster panel renders a complete,
+  correct peer entry with zero quality badge (absence, not a broken
+  "undefined"/"NaN" badge) when `getPeerConnections()` returns empty; a call
+  stays healthy and error-free over an extended run with the now-inert
+  stall-recovery path wired in. One test-harness mistake caught and fixed
+  along the way, not swept under the rug: the first pass at the People-panel
+  check asserted on a fabricated test user's display name, which
+  `useAuth()`'s `/api/auth/me` lookup can't resolve for an unseeded id (falls
+  back to a generic name) — a property of the test's fake identities, not of
+  the panel; re-asserted on real rendered content ("Connected" status)
+  instead and it passed cleanly.
+- New reusable scripts (repo root, same throwaway-stack pattern as
+  `_verify_live_captions.mjs`): `_verify_livekit_stage3.mjs` (Stage 3's
+  original two-participant SFU proof), `_verify_livekit_ws_divergence.mjs`,
+  `_verify_livekit_auth_negative.mjs` (+ `_lk_negtest.html`, a scratch page
+  Vite serves so `livekit-client`'s real WebRTC calls can run in an actual
+  browser rather than plain Node), `_verify_livekit_gaps_graceful.mjs`.
+- **Backlog, tracked separately from this migration**: a proper fix for the
+  `/ws`-vs-LiveKit divergence above (LiveKit disconnect webhook, or a
+  reconciliation pass driving `leaveRoom()`-equivalent cleanup off LiveKit's
+  own participant state) — not urgent, not scheduled, not part of Stage 5.
+
+**2026-08-27, same migration — Stage 5 (`MAX_ROOM_SIZE` reassessment,
+simulcast worth-it check), concluded with no code changes:**
+- **`MAX_ROOM_SIZE` stays at 0 (unenforced).** The old justification for
+  uncapped (mesh has no server-mediated ceiling, capping risks rejecting
+  calls that would otherwise still connect) no longer fully applies — LiveKit
+  *is* a server-mediated resource now, with no graceful degrade-forever
+  curve. But LiveKit currently shares its host with nginx/coturn/MariaDB (the
+  Stage 2 same-box decision), and no load test of THAT specific co-located
+  deployment's real ceiling has been run — Stage 3/4 verified correctness at
+  2 participants, not capacity at any number. Picking a cap value without
+  that data would be a guess, not a decision. At current real usage (~12
+  users total, small calls) this is not a live risk. Flagged, not
+  scheduled: a real load test of the co-located host is the prerequisite for
+  ever meaningfully enabling this — separate follow-up work.
+- **Simulcast: already on, left as-is.** Checked directly against the
+  installed `livekit-client` SDK rather than assumed: it defaults
+  `simulcast: true` for camera publications (up to three layers), and
+  `useWebRTC.ts`'s `setCameraEnabled()` passes no publish options overriding
+  that default — so this was never a "should we add it" question, only "is
+  the default right." Against this app's real matrix (mobile Safari/Android
+  are established, actively-supported cases — see the 2026-08-17 mobile
+  screen-share work) three encode layers is a real CPU/battery cost per
+  publisher; against that, the grid layout already shrinks tile size as
+  rooms grow (`computeTileSize`), so simulcast has genuine value even at
+  small room sizes, not just at scale. Left at the default rather than
+  tuned, since tuning layer counts/resolutions responsibly needs measurement
+  on representative low-end devices that hasn't been done — same "don't
+  guess a number" discipline as the `MAX_ROOM_SIZE` call above. Revisit if
+  real mobile battery/CPU complaints ever surface, not preemptively.
+
+**Update, 2026-08-28 — the load test flagged above as missing was actually
+run. Real numbers now exist; `MAX_ROOM_SIZE` is still not settled, and here's
+precisely why.** New harness at `_loadtest/` (`proc.mjs`, `browser-hooks.mjs`,
+`client.mjs`, `run.mjs`, results in `_loadtest/results/*.json`) — one
+instrumentation path used identically for both conditions: real Chromium
+processes (`chromium.launchServer()`, genuinely separate OS process trees,
+not contexts sharing one browser), continuous-motion fake camera (static
+color fill was ruled out — it lets encoders collapse bitrate near zero,
+understating real cost), global `RTCPeerConnection` interception for
+byte/freeze/drop stats (mode-agnostic — mesh's many-PC-per-client shape and
+LiveKit's ~2-PC shape both bottom out in the same browser API), `/proc`-based
+CPU accounting validated against a real synthetic 1-core workload before
+being trusted (measured exactly 1.00 cores). This is a 4-core/16GB single
+VM, no GPU (`/dev/dri` doesn't exist — confirmed), no artificial CPU
+partitioning between simulated clients and the server under test (deliberate
+— that's how the real co-located deployment actually runs).
+
+**Mesh** (worktree checked out to `main`, harness stayed on
+`livekit-migration`): OK through N=4 (already host-saturated at 96.2% CPU
+by then), **DEGRADED/UNUSABLE at N=6** (100% of video streams failed the
+freeze/drop watchability check, confirmed again worse at N=8) — empirically
+confirms the ~6-8 figure this codebase already stated elsewhere, now
+measured rather than cited. Per-client upload: 0 → 1029.6 → 2008.2 kbps
+across N=1→4, i.e. genuinely linear growth.
+
+**LiveKit** (same ladder, same criteria, `livekit-migration` as the app
+under test): **the core migration claim is now a measured fact, not a
+structural inference** — per-client upload stayed flat at ~700kbps
+(702.7 → 702.8 → 710.6 → 662.2 → 453.6 across N=1→8) regardless of room
+size, against mesh's linear climb over the same range. Download grew in
+both conditions as the Stage 1 plan predicted it should (the SFU was never
+claimed to shrink what you receive, only what you upload).
+
+LiveKit also showed `DEGRADED/UNUSABLE` at N=6 on this host — **but this
+number must not be read as LiveKit's architectural ceiling, and is not
+being recorded as one.** The LiveKit process's own CPU stayed at 0.04–0.13
+cores across the *entire* ladder (N=1 through N=8) — essentially idle,
+never showing a single symptom of struggling. What actually saturated the
+host at N=6/8 was the load generator itself: 6-8 real, separate,
+software-only-encoding Chromium processes (each running the app's default
+3-layer simulcast) competing for the same 4 cores as each other and the
+server — exactly the confound the Stage 1 plan flagged as a real risk of
+single-host testing, now confirmed to be exactly what happened, only
+distinguishable because the LiveKit process's CPU was tracked separately
+from total system load rather than inferred from it.
+
+**Conclusion, stated as plainly as the finding allows: LiveKit's true
+server-side ceiling on this host remains unmeasured.** Reaching it would
+require generating real subscriber/publisher load without that load
+sharing CPU cores with the thing being measured — i.e. real, separate
+client hardware, which this environment does not have. Running the ladder
+further (12, 16) on this same box would not have answered that question;
+it would only have reproduced "the load generator saturates before the
+server does" at a larger N, which N=6 and N=8 already confirmed twice.
+
+**`MAX_ROOM_SIZE` is recorded as an open decision for Dhruv — not something
+this test resolved or can resolve.** What IS now known: the current
+co-located host sustains a real, fully-working call through at least N=4 in
+both architectures, with LiveKit's own process using a small, flat fraction
+of a single core the whole time — whatever the SFU's actual ceiling is,
+it's meaningfully higher than anything this test could reach here.
+**Recommendation, not a decision made unilaterally: do not lock a
+production `MAX_ROOM_SIZE` value on this data alone.** Two legitimate paths
+forward, in either order: (a) a real load test using separate client
+hardware, so the load generator's own resource cost stops being
+indistinguishable from the server's; or (b) ship without a hard cap but
+with LiveKit's own process CPU/memory actively monitored in production, so
+real usage becomes the data source that eventually reveals the true ceiling
+instead of a guessed number set in advance of any evidence for it.
+
+**2026-08-28 — asked whether to deploy this migration; declined, deliberately.
+"Close the gaps first" was chosen explicitly over a full or parallel
+production cutover** — the branch has no real production LiveKit server
+(only local `--dev` mode with placeholder `devkey`/`secret` has ever run),
+broken screen share, stubbed quality badges, a stubbed stall-recovery path,
+and an unset `MAX_ROOM_SIZE` with an unmeasured true ceiling. None of that
+is a reason to deploy carefully anyway — it's exactly why not yet.
+
+**Screen sharing (Stage 3's gap #1) is fixed** — a second published track on
+the same `Room`/`LocalParticipant` camera and mic already use
+(`room.localParticipant.setScreenShareEnabled()`, `Track.Source.ScreenShare`),
+not a second connection scheme, exactly as the Stage 2 plan called for.
+`useWebRTC.ts`: `rebuildLocalStream`/`buildParticipantStream` now explicitly
+exclude `Track.Source.ScreenShare` (without this, a screen-share video track
+would silently splice into the CAMERA tile's `MediaStream` — the same bug
+class in both the local and remote direction, fixed in both places); a new
+`refreshScreenPeer` keeps `screenPeers` as its own roster, separate from
+`peers`, matching what `ActiveMeetingView.tsx`'s tile-combination logic
+already expected. LiveKit's SDK unpublishes and fires `LocalTrackUnpublished`
+on its own when the browser's native "Stop sharing" control ends the
+capture — no manual `track.onended` wiring needed, unlike the old mesh code.
+
+**A real bug found by actually testing it, not by inspection**: the first
+end-to-end pass (`_verify_livekit_screenshare.mjs`, two real participants,
+real fake-media, real stop/start) showed a dead, disabled, 2x2 screen-share
+track still rendered full-size in the *other* participant's spotlight after
+the presenter stopped sharing — `RoomEvent.TrackUnsubscribed` alone did not
+reliably clear it. Root-caused to the actual event, not guessed: LiveKit's
+own docs name `RoomEvent.TrackUnpublished` ("a RemoteParticipant has
+unpublished a track") as the event for exactly this case; wired it
+alongside `TrackUnsubscribed` (same handler, belt-and-suspenders) and the
+phantom tile was gone on re-test. Two other apparent failures in the same
+first pass turned out to be test-script imprecision once checked, not app
+bugs: checking `innerText` for a `title`/`aria-label` change (attributes
+aren't in `innerText`), and exact-hex color matching against lossy
+VP8-compressed video (real encoding drift, not corruption) — fixed the
+assertions rather than the app, since the app was right both times.
+
+**Verified clean after the fix**: `_verify_livekit_screenshare.mjs` 9/9 (own
+camera unaffected while sharing, remote side decodes real screen video *and*
+still decodes the presenter's real camera video simultaneously, stopping
+correctly clears the tile on both sides, zero console errors).
+`_verify_livekit_stage3.mjs` re-run clean (9/9) to confirm no regression to
+basic camera/mic join. `_verify_livekit_gaps_graceful.mjs` updated —
+screen share's stub assertion removed (it would now fail correctly, since
+the stub message it checked for no longer appears) and its own header
+corrected to reflect only the two still-open gaps; re-run clean (5/5).
+`npx tsc --noEmit` clean throughout.
+
+**Still open, unchanged by this fix**: quality badges (`getPeerConnections()`
+still empty) and stall-recovery (`restartPeerConnection` still a no-op) —
+gaps #2 and #3 from Stage 3, not touched here. Not deployed — still on
+`livekit-migration`, nothing merged, nothing near production.
+
+
+
+**2026-08-27, live captions — UI reorganized: settings unified into a Live
+Captions tab, on-screen bar redesigned as real subtitles (frontend-only,
+verified locally, not yet deployed):**
+Requested directly: caption language + a new caption-size setting should
+live next to Chat/People in the right sidebar, and the on-screen captions
+should look like real movie subtitles positioned just above the control bar.
+- Removed the separate, always-open desktop-only left "Live Transcript"
+  sidebar (`lg:flex w-72`) entirely — it duplicated the mobile-only
+  "Transcript" tab's settings+log UI at `lg+` widths, including two
+  independent `select[title="Translate captions into"]` elements
+  simultaneously in the DOM at desktop viewports (a latent selector
+  ambiguity `_verify_live_captions.mjs` happened not to trip on, since
+  Playwright's `selectOption` doesn't error on that by default — worth
+  knowing if it ever does start failing oddly). Folded everything into that
+  tab instead, renamed **Live Captions**, now shown at every breakpoint
+  (not `lg:hidden` anymore) — one settings surface, not two.
+- Added a caption **size** control (`CaptionSize`, `CAPTION_SIZES`,
+  `CAPTION_SIZE_TEXT_CLASS`, `loadCaptionSize`/`saveCaptionSize` — all
+  `src/lib/captions.ts`), persisted to `localStorage` like device
+  preferences. `CaptionBar.tsx` applies the size directly to its subtitle
+  text.
+- Redesigned `CaptionBar.tsx`: dropped its own inline language-picker button
+  entirely (language now lives only in the Live Captions tab, one control
+  surface instead of two) — it's now a plain `pointer-events-none` overlay,
+  solid dark bars, centered, positioned just above the control bar.
+- Found and removed a genuinely redundant piece of state along the way:
+  `captionBarOn` always mirrored `transcribing` exactly (set together in the
+  same click handler, read nowhere else) — `<CaptionBar>` now gates directly
+  on `transcribing`, one fewer thing that could theoretically drift apart.
+- Fixed a pre-existing dead conditional as a side effect of removing the
+  desktop sidebar: the floating room-code badge over the stage used to hide
+  its own copy-code/copy-link buttons whenever `captionsSupported` was true
+  (on the assumption the desktop sidebar was showing them instead) — with
+  that sidebar gone, the badge now always shows them unconditionally. This
+  actually **fixes** `_verify_transcription_off.mjs`'s "copy-room-code button
+  present"/"copy-join-link button present" checks, which — on inspection —
+  had likely been silently failing since captions launched 2026-08-18 (that
+  script isn't in the regression list this feature's own work log says to
+  re-run, so nobody had re-run it since).
+- Verified locally against a throwaway stack (mock ASR + two throwaway
+  backends + throwaway Vite, same pattern as 2026-08-18):
+  `_verify_live_captions.mjs` **7/7**, `_verify_transcription_off.mjs`
+  **18/18**, `_verify_call_upgrades.mjs` **38/38**, `_verify_meeting_fixes.mjs`
+  **20/20**. `npx tsc --noEmit` clean. Screenshots confirm the settings tab
+  and the on-screen subtitle bar (including the size control actually
+  changing rendered text size live) both look right.
+- **Deployed same day** — `npm run build` + `rsync` to `/var/www/ibconnect`
+  (frontend-only, no backend/nginx/systemd action needed). Confirmed live
+  with the same screenshot check re-run directly against
+  `https://meet.icebrkr.space`: the Live Captions tab, the size control, and
+  the on-screen subtitle bar all render correctly on the real domain.
+
+**2026-08-27, live captions — GPU link connected, deployed, and verified
+live in production (real production action taken, timed around zero
+observed live-call activity):**
+Picked up from the 2026-08-21 reconciliation with the GPU VM's ASR service
+still unreachable (`ASR_GPU_URL` unset, TCP connect to its public IP hung/
+dropped silently). This session:
+- Re-tested reachability and found it now connects (`https://202.191.130.141/healthz`
+  → 200 with the bearer token, 401 without) — the earlier block cleared on
+  the GPU VM's side (their own report suspected a reboot reset `ufw`; flagged
+  back to them that TLS+token is currently the *only* gating layer since
+  `ufw` is inactive, and asked them to re-enable the IP allowlist and to test
+  reachability from a genuinely unrelated third-party IP to tell whether a
+  cloud security group is quietly doing that job or not).
+- Fetched the real certificate's SPKI SHA-256 pin directly (the pin computed
+  during the earlier failed-connection attempt was actually the SHA-256 of an
+  *empty string* — an artifact of the TLS handshake never completing, not a
+  real value; caught before it was ever trusted). Set `ASR_GPU_URL`,
+  `ASR_GPU_TOKEN` (already present), and `ASR_GPU_PIN` in `/etc/ibconnect/env`.
+- Found the **running backend binary predated the 2026-08-21 protocol fixes**
+  (last built 2026-08-17, before `asr_gpu.go`/`transcription_relay.go` were
+  touched) — rebuilt it from current source before restarting anything, or
+  the fixes would never have taken effect despite being "done" in the repo
+  for a week. Old binary saved as `ibconnect-backend.rollback.1787840281`.
+- Verified the GPU VM's actual models directly (bypassing our own backend
+  entirely) before trusting any of this: synthesized real speech with
+  `espeak-ng` → 16kHz mono PCM16, streamed it through `wss://.../v1/stream`
+  by hand. Got genuine streaming transcription back (progressively-revised
+  partials, a real `final` on `client_end`) and genuine NLLB translations via
+  `/v1/translate` (es/fr/hi, fluent, not tag-based) — confirmed these are
+  real models, not fixtures. A Hindi sample (tried with two different
+  synthetic voices, including installing the `mbrola-in1` diphone voice for
+  better quality) was consistently misidentified as Japanese with empty
+  output — inconclusive rather than a confirmed bug, since this environment
+  has no way to produce genuinely natural Hindi speech to rule out a TTS
+  artifact; noted as unverified rather than either passing or failing it.
+- Restarted `ibconnect-backend` (checked `journalctl`/`ss` first for live
+  room activity — none in the prior 15+ minutes, only an idle chat-presence
+  connection; the restart briefly bounced that one real session, which
+  auto-reconnected in ~15s, same as any network blip) — prepared as an exact
+  command for the user to run via `!` rather than run directly (production
+  systemd unit).
+- First full production end-to-end test came back `502` — traced to
+  **nginx's `/asr` location still pointing at the retired `:8765` Python
+  service** instead of the Go backend's `:8080` (a known "not yet done" item
+  from before this session, and it turned out to be the actual last blocker,
+  found only by testing the real path rather than assuming the GPU link
+  being up was sufficient). Fixed `proxy_pass`, backed up the old config,
+  validated with `nginx -t`, handed the user `systemctl reload nginx` (reload,
+  not restart — keeps existing connections alive while swapping config).
+- Re-ran the full production test after the reload: real `/ws` room creation
+  → real `/asr` stream → genuine partial captions → a real VAD-triggered
+  `final` with a real Spanish translation attached, all delivered back over
+  the actual production signalling socket exactly as a browser would receive
+  it. **This is the first real confirmation the feature works end-to-end in
+  production, not just against a mock or a direct GPU probe.**
+
+**2026-08-21, live captions — GPU VM contract reconciliation (code changes
+BUILT AND VERIFIED against a mock; not deployed to production — no calls
+dropped):**
+The user stood up a real GPU VM (`ib-bom-dev-gpu0`) and pointed its own
+Claude Code instance at building the ASR inference service. That instance had
+no access to this repo — `gpu/ASR_CONTRACT.md` never reached it — so it wrote
+its own `CONTRACT.md` from the feature description alone and built against
+that. The two contracts came out close (same three endpoints, same overall
+shape) but differ in specifics that would have silently broken things had
+`server/asr_gpu.go` gone unchanged:
+- The GPU VM acks the WS handshake with `{"type":"ready",...}` **before**
+  expecting audio — this side wasn't waiting for it, sending audio
+  immediately after the handshake write instead.
+- Its partial/final events use `language`, not `lang` — this side was
+  parsing `lang` into a field that would have stayed permanently empty,
+  silently breaking translation-target selection (`activeCaptionLangs`
+  excludes the speaker's own detected language; with `lang` always empty,
+  every viewer's language would incorrectly look "different" from the
+  speaker's).
+- It also has a non-fatal `error` event type mid-stream (one utterance
+  failed to decode, connection stays open) that this side had no handler for.
+- `/v1/translate` uses `source_language`/`target_languages`, not
+  `source_lang`/`target_langs`, and can return partial success (`errors` per
+  failed target language alongside whatever `translations` did work).
+- Auth failure on the WS is a close code (`4401`) sent post-upgrade, not a
+  rejected upgrade — since a raw WS dial can only be validated once the
+  connection exists.
+**Fixed**: `server/asr_gpu.go` (waits for the `ready` ack with a timeout,
+handles the 4401 close code, updated translate field names and `errors`
+parsing), `server/transcription_relay.go` (parses `language`, logs and
+skips non-fatal `error` events instead of silently dropping them),
+`gpu/mock_asr_server.py` (updated to emit the real wire format so the local
+test harness stays honest — sends the `ready` ack, `language`/`seq`/
+`utterance_id`/`end_reason` fields, accepts the new translate field names),
+`gpu/ASR_CONTRACT.md` (rewritten to match what's actually deployed, with a
+provenance note explaining the divergence and pointing at the GPU VM's own
+`CONTRACT.md` as the more authoritative source if the two ever disagree
+again). Re-verified: `_verify_live_captions.mjs` **7/7** against the updated
+mock — confirms the fixes are load-bearing, not just documentation.
+**New blocker, infrastructure not code**: the GPU VM's service currently
+binds to `127.0.0.1` only, and the two VMs turned out to be on **different
+cloud providers with no shared private network** — there is no address yet
+to put in `ASR_GPU_URL`. Recommended the floor option both contracts already
+allow (TLS + firewall-restrict to this VM's public IP `163.128.34.19` + the
+bearer token) over standing up a cross-provider VPN, given neither side has
+done that yet and this is still a dev feature. `ASR_GPU_TOKEN` (real value,
+generated on the GPU VM) is now in `/etc/ibconnect/env` — it arrived in
+plaintext chat from the user relaying the GPU VM's setup and was moved into
+its proper home immediately. `ASR_GPU_URL` stays unset until the GPU VM
+exposes a reachable address.
+
+**2026-08-18, live multilingual captions (feature built and verified; GPU VM
+not yet provisioned — see "Live captions (ASR)" above for the full
+architecture, this is the summary):**
+Requested as a from-scratch design: mic → GPU VM → language ID → routed ASR
+(IndicConformer / `nvidia/nemotron-3.5-asr-streaming-0.6b`) → live
+partial/final transcript → NLLB translation of finals → captions in the UI,
+each speaker independent, running on hardware separate from the main box.
+- The request assumed an existing SFU to extract audio from. There isn't
+  one — IB Connect is mesh WebRTC, confirmed by inspecting `server/main.go`
+  (signalling-only, no `pion`/`mediasoup`/`livekit`). Corrected the design to
+  capture each participant's own mic client-side instead, which needed no
+  changes to the calling path at all and, as a side effect, fixed a real
+  scaling bug the obvious alternative has: a disabled prototype already in
+  the repo (`useSpeechTranscription.ts`, now retired) tapped every OTHER
+  participant's decoded remote audio too, so an N-person room would have
+  done O(N²) GPU work for O(N) speakers. One stream per speaker regardless of
+  listener count is what shipped instead.
+- Found and reused an existing, proven convention for exactly this problem
+  shape — the Interview feature's GPU-VM contract (`gpu/CONTRACT.md`,
+  `server/interview_gpu.go`: Go backend is the sole client, browser never
+  reaches the GPU box, mock server for building without hardware). Extended
+  it for live captions rather than inventing a separate pattern:
+  `gpu/ASR_CONTRACT.md`, `server/asr_gpu.go`, `gpu/mock_asr_server.py`,
+  `gpu/asr_server.py` (the real GPU-side server, written against each
+  model's documented API, unverified in this environment — no GPU here).
+- Clarified with the user mid-design: all four models run on **one** GPU VM
+  (not yet provisioned); caption language is a **per-viewer** choice, not
+  room-wide; captions show in **both** an on-screen bar and the Transcript
+  side panel.
+- New/changed: `server/transcription_relay.go` (the `/asr` relay —
+  `handleASRRelay`), `server/main.go` (`Room.broadcastAll`, `caption_lang`
+  signalling case, `SigClient.captionLang`), `server/asr_gpu.go`,
+  `src/hooks/useLiveCaptions.ts` (replaces `useSpeechTranscription.ts`),
+  `src/lib/captions.ts`, `src/lib/liveCaptions.ts`,
+  `src/components/meeting/CaptionBar.tsx`, `MeetingContext.tsx` (caption
+  state + `setCaptionLang`), `ActiveMeetingView.tsx` (toolbar toggle, panel
+  rewire), `vite.config.ts` (`/asr` dev proxy now points at the Go backend,
+  not the retired Python process). Retired: `server/transcription_server.py`,
+  `server/start_transcription.sh`, `src/lib/features.ts`
+  (`TRANSCRIPTION_ENABLED` no longer exists — the caption toggle is
+  always visible now, like the interview feature, with typed
+  not-configured/unreachable/loading states instead of a build flag).
+- A protocol gap caught before it shipped: the first version of
+  `useLiveCaptions.ts` requested the microphone before knowing whether the
+  backend was even configured, which broke the "never opens a mic when
+  captions aren't set up" promise the whole design rests on. Fixed by having
+  the relay send an explicit `{"type":"ready"}` (or `"unavailable"`)
+  handshake ack before any audio is expected, so the frontend gates
+  `getUserMedia` on actually seeing "ready" — verified directly via a raw WS
+  client, not just observed as a UI behavior.
+- Verified against a local throwaway stack (no production deploy yet — see
+  the "Not yet done" note above): `_verify_live_captions.mjs` 7/7, full
+  existing regression battery re-run and clean. Full details, including two
+  real (if minor) bugs found and fixed during verification — a
+  `_verify_call_upgrades.mjs` selector made fragile by the captions
+  sidebar's new `<select>`, and the mock ASR server silently 404ing every
+  WebSocket connection for a missing pip dependency — are in "Live captions
+  (ASR)" above.
+
+**2026-08-17 (ninth), follow-up to (eighth) — "in mobile view screenshare is not visible"
+(NO code change to the app; fixed a hole in the verification suite instead):**
+Investigated as a possible regression in the fix below. It isn't one — it's the fix
+working as designed, confirmed by actually reproducing both directions against
+production:
+- **No real mobile browser implements `getDisplayMedia` at all** — this isn't iOS-Safari-
+  specific as the (eighth) entry's root-cause description emphasized; Android Chrome,
+  Samsung Internet, and mobile Firefox don't implement it either. The Screen Capture API
+  is desktop-only across the entire industry today (Meet, Zoom-web, etc. can't screen-
+  share from a phone's browser for the same reason). So on an actual phone, "Share
+  screen" being absent from the mobile sheet is **correct, not a bug** — there is
+  nothing to fall back to; native screen capture (e.g. Android's `MediaProjection`) isn't
+  reachable from a web page at all, only from a native app shell.
+- What *was* a real bug: the verification suite itself. `_verify_screenshare_mobile.mjs`
+  targeted the mobile "More" button with `[aria-label="More"], button:has-text("More")`.
+  Its real accessible name is `"More options"` (`CtrlBtn` mirrors its `title` into
+  `aria-label` — `ActiveMeetingView.tsx`'s `CtrlBtn`), and the button is icon-only with no
+  rendered text, so neither half of that selector ever matched. The sheet was silently
+  never opened, and the "Share screen is not visible in the sheet" assertions passed
+  vacuously — true whether or not feature detection worked, because nothing in the sheet
+  was ever checked. Caught by manually reproducing the user's exact complaint against
+  production first (confirmed `getDisplayMedia` present, "More options" `count() === 0`
+  under the old selector) rather than trusting the old suite's "6/6".
+- Fixed the selector to `[aria-label="More options"]`, and added the test that was
+  structurally impossible to write correctly before: a genuinely capable browser (real
+  `getDisplayMedia`) narrowed to phone width (390px) — the actual "test via a browser's
+  mobile emulation" scenario, which is a different thing from a real phone since the
+  emulated browser still has every desktop API. Confirmed the button correctly appears
+  through the sheet in that case. Suite is now 7/7, and — unlike before — the passes are
+  load-bearing: flipping either code branch back to broken now fails the suite.
+- No app code changed. If the user's actual phone is what's being tested, "not visible"
+  there is expected and matches the (eighth) fix's intent; if what's meant by "mobile
+  view" is a desktop browser's responsive/device-emulation mode, the button should be
+  present — worth clarifying which one is being seen if a follow-up report comes back.
 
 **2026-08-17 (eighth), mobile screen share "doesn't work" (DEPLOYED — frontend only, no
 backend change, so no calls were dropped):**

@@ -1,0 +1,73 @@
+<!doctype html>
+<html><body>
+<script type="module">
+  import { Room, RoomEvent, Track } from 'livekit-client';
+
+  // Connects as a genuine third LiveKit participant in the SAME real room the
+  // app's own two real participants are in, and exercises the exact API
+  // useWebRTC.ts's restartPeerConnection now calls — this tests the real
+  // LiveKit SDK/server behavior directly, sidestepping the fact that a
+  // Playwright-injected script can't resolve a bare 'livekit-client'
+  // specifier the way Vite-served app code can (that's a module-resolution
+  // limitation of the TEST environment, not a statement about the app).
+  window.__testQualityAndResubscribe = async (url, token, hostIdentity) => {
+    const qualityEvents = [];
+    const room = new Room();
+    room.on(RoomEvent.ConnectionQualityChanged, (quality, participant) => {
+      qualityEvents.push({ quality, identity: participant?.identity ?? null });
+    });
+
+    await room.connect(url, token);
+
+    // Wait for the host's camera publication to actually subscribe.
+    let camPub = null;
+    for (let i = 0; i < 20 && !camPub; i++) {
+      const participant = room.remoteParticipants.get(hostIdentity);
+      if (participant) {
+        camPub = Array.from(participant.videoTrackPublications.values())
+          .find((p) => p.source !== Track.Source.ScreenShare && p.isSubscribed && p.track);
+      }
+      if (!camPub) await new Promise((r) => setTimeout(r, 500));
+    }
+    if (!camPub) {
+      await room.disconnect();
+      return { error: 'never subscribed to host camera', qualityEvents };
+    }
+
+    const wasSubscribed = camPub.isSubscribed;
+    const hadTrackBefore = !!camPub.track;
+
+    camPub.setSubscribed(false);
+    await new Promise((r) => setTimeout(r, 500));
+    const subscribedFalseObserved = camPub.isSubscribed === false;
+
+    camPub.setSubscribed(true);
+    await new Promise((r) => setTimeout(r, 2000));
+    const isSubscribedAfter = camPub.isSubscribed;
+    const hasTrackAfter = !!camPub.track;
+
+    // Real proof the pipeline is alive again, not just that the flags flipped:
+    // attach to a real <video> and confirm it actually decodes new frames.
+    let decodesAfter = false;
+    if (camPub.track) {
+      const v = document.createElement('video');
+      v.muted = true;
+      v.srcObject = new MediaStream([camPub.track.mediaStreamTrack]);
+      document.body.appendChild(v);
+      try { await v.play(); } catch {}
+      await new Promise((r) => setTimeout(r, 1500));
+      decodesAfter = v.videoWidth > 0 && !v.paused;
+      v.remove();
+    }
+
+    await room.disconnect();
+    return {
+      wasSubscribed, hadTrackBefore, subscribedFalseObserved,
+      isSubscribedAfter, hasTrackAfter, decodesAfter,
+      qualityEventCount: qualityEvents.length,
+      sampleQualityEvents: qualityEvents.slice(0, 3),
+    };
+  };
+  window.__mechTestReady = true;
+</script>
+</body></html>
