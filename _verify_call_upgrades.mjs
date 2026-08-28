@@ -202,21 +202,26 @@ await a.page.waitForTimeout(600);
 await a.page.click('button:has-text("Devices")');
 await a.page.waitForTimeout(400);
 
-const speakerVisible = await a.page.locator('select').nth(2).isVisible().catch(() => false);
+// Scoped to the settings panel (its container is the only `.z-30` element on
+// screen here) rather than a bare `page.locator('select')` — the live-
+// captions desktop sidebar added its own <select> (caption language) that
+// now renders unconditionally at desktop widths, which used to shift these
+// nth() indices by one and made this suite fail against no real regression.
+const speakerVisible = await a.page.locator('.z-30 select').nth(2).isVisible().catch(() => false);
 check('speaker picker is shown when the browser supports setSinkId', speakerVisible);
 
 // Choose a speaker while still alone in the room. There are no peer audio elements
 // yet, so nothing can be routed at this instant — the choice has to be *remembered*
 // and applied to elements as they mount. That deferred application is asserted after
 // the second client joins, below.
-await a.page.locator('select').nth(2).selectOption('spk-2');
+await a.page.locator('.z-30 select').nth(2).selectOption('spk-2');
 await a.page.waitForTimeout(900);
 
 const speakerPersisted = await a.page.evaluate(() => localStorage.getItem('ibconnect_speaker_id'));
 check('speaker choice persisted to localStorage', speakerPersisted === 'spk-2', String(speakerPersisted));
 
 // Camera switch persists only after the switch succeeds.
-await a.page.locator('select').nth(0).selectOption('cam-2');
+await a.page.locator('.z-30 select').nth(0).selectOption('cam-2');
 await a.page.waitForTimeout(1500);
 const camPersisted = await a.page.evaluate(() => localStorage.getItem('ibconnect_camera_id'));
 check('camera choice persisted after a successful switch', camPersisted === 'cam-2', String(camPersisted));
@@ -225,7 +230,7 @@ const listeners = await a.page.evaluate(() => window.__deviceChangeListeners);
 check('a devicechange listener is registered (there were none before)', listeners >= 1, `${listeners} listener(s)`);
 
 // Hot-plug: the list must refresh without reopening settings.
-const optionsBefore = await a.page.locator('select').nth(2).locator('option').count();
+const optionsBefore = await a.page.locator('.z-30 select').nth(2).locator('option').count();
 await a.page.evaluate(() => {
   window.__extraDevice = true;
   const prev = navigator.mediaDevices.enumerateDevices;
@@ -236,7 +241,7 @@ await a.page.evaluate(() => {
   window.__fireDeviceChange();
 });
 await a.page.waitForTimeout(900);
-const optionsAfter = await a.page.locator('select').nth(2).locator('option').count();
+const optionsAfter = await a.page.locator('.z-30 select').nth(2).locator('option').count();
 check('device list refreshes on devicechange while settings stay open',
   optionsAfter === optionsBefore + 1, `${optionsBefore} → ${optionsAfter}`);
 
@@ -306,7 +311,7 @@ await a.page.waitForTimeout(600);
 await a.page.click('button:has-text("Devices")');
 await a.page.waitForTimeout(400);
 const before = await a.page.evaluate(() => window.__sinkCalls.length);
-await a.page.locator('select').nth(2).selectOption('spk-1');
+await a.page.locator('.z-30 select').nth(2).selectOption('spk-1');
 await a.page.waitForTimeout(900);
 const afterSwitch = await a.page.evaluate(() => window.__sinkCalls);
 check('changing the speaker mid-call re-routes live audio elements',

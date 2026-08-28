@@ -115,9 +115,17 @@ check('the stub really did remove getDisplayMedia (sanity check on the simulatio
 await mobile.page.setViewportSize({ width: 390, height: 844 });
 await mobile.page.waitForTimeout(500);
 
-// Desktop control strip is hidden below lg, so open the "More" sheet mobile actually uses.
-const moreBtn = mobile.page.locator('[aria-label="More"], button:has-text("More")').first();
-if (await moreBtn.isVisible().catch(() => false)) await moreBtn.click();
+// The button's accessible name is "More options" (its `title`, mirrored into
+// `aria-label` — see CtrlBtn in ActiveMeetingView.tsx), not "More". An earlier version
+// of this check used `[aria-label="More"], button:has-text("More")`, which matches
+// neither: the exact-match attribute selector misses "More options", and the button
+// carries no visible text (icon-only), so `:has-text("More")` never fires either. That
+// selector silently matched nothing, the sheet was never actually opened, and the "not
+// visible" assertions below passed vacuously — true regardless of whether the feature
+// detection worked. Fixed to the real accessible name so the sheet is genuinely opened.
+const moreBtn = mobile.page.locator('[aria-label="More options"]').first();
+if (await moreBtn.count() === 0) throw new Error('"More options" button not found — cannot open mobile sheet at all');
+await moreBtn.click();
 await mobile.page.waitForTimeout(500);
 const shareVisibleInSheet = await mobile.page.locator('text=/Share screen/i').isVisible().catch(() => false);
 check('"Share screen" is not offered anywhere in the mobile sheet', !shareVisibleInSheet);
@@ -125,14 +133,26 @@ const shareVisibleAnywhere = await mobile.page.locator('[aria-label="Share scree
 check('"Share screen" is not present anywhere in the DOM (not just visually hidden)', shareVisibleAnywhere === 0,
   `${shareVisibleAnywhere} match(es)`);
 
-console.log('\n── Regression guard: a normal (desktop-class) browser still offers it ──');
+console.log('\n── Regression guard: a normal (desktop-class) browser still offers it, inline AND in the mobile sheet ──');
 const desktop = await mk('desktop', { mobile: false });
 await joinAsHost(desktop.page);
 const hasApiOnDesktop = await desktop.page.evaluate(() => typeof navigator.mediaDevices.getDisplayMedia === 'function');
 check('the desktop context genuinely has getDisplayMedia (sanity check)', hasApiOnDesktop);
 const shareVisibleDesktop = await desktop.page.locator('[aria-label="Share screen"], [title="Share screen"]').count();
-check('"Share screen" IS offered when the capability genuinely exists', shareVisibleDesktop > 0,
+check('"Share screen" IS offered when the capability genuinely exists (desktop inline bar)', shareVisibleDesktop > 0,
   `${shareVisibleDesktop} match(es)`);
+
+// Same capable browser, narrowed to a phone-width viewport — this is what testing via
+// a browser's device-emulation "mobile view" actually is: still the same engine, same
+// APIs, just a narrower layout. The button must still be reachable through the sheet.
+await desktop.page.setViewportSize({ width: 390, height: 844 });
+await desktop.page.waitForTimeout(500);
+const moreBtnCapable = desktop.page.locator('[aria-label="More options"]').first();
+if (await moreBtnCapable.count() === 0) throw new Error('"More options" button not found on a capable browser at mobile width');
+await moreBtnCapable.click();
+await desktop.page.waitForTimeout(500);
+const shareVisibleCapableMobile = await desktop.page.locator('text=/Share screen/i').isVisible().catch(() => false);
+check('"Share screen" IS offered in the mobile sheet when the capability genuinely exists', shareVisibleCapableMobile);
 
 check('no console or page errors', errors.length === 0, errors.join(' | '));
 

@@ -37,10 +37,13 @@ export default defineConfig(() => {
           changeOrigin: true,
         },
         '/asr': {
-          target: 'ws://localhost:8765',
+          // Used to point straight at the retired Python transcription_server.py
+          // on :8765. Live captions now go through the Go backend's own /asr
+          // handler (handleASRRelay, server/transcription_relay.go), same
+          // upstream as /ws — it's the thing that knows the GPU VM's address.
+          target: wsBackend,
           ws: true,
           changeOrigin: true,
-          rewrite: (path) => path.replace(/^\/asr/, ''),
         },
       },
     },
