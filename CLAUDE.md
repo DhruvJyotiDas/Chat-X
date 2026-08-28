@@ -443,6 +443,53 @@ decorative child triggers it.
 
 ## Recent work log
 
+**2026-08-28, same migration — Stage 2 run: THE MIGRATION IS LIVE IN
+PRODUCTION.** No active call was in progress (checked, per the standing
+rule on this). Sequence, in the order it actually matters:
+1. Caught and fixed a real staleness bug before deploying anything further:
+   the committed `server/ibconnect-backend` predated today's `/ws`-divergence
+   fix — confirmed by diffing against a fresh build from the exact same
+   checkout (byte-different despite identical source, meaning it was built
+   at an earlier point and just never rebuilt before committing). Rebuilt
+   and committed before touching production.
+2. `npm run build` from current `main`, confirmed the new bundle actually
+   contains the LiveKit integration by grepping for literal strings that
+   can only come from it (`livekit/token`, `turn-credentials`, `rtcConfig`)
+   — checking for `livekit-client`/`RoomEvent` first gave a false negative
+   (minification strips identifier names, not literal strings), caught
+   before it was mistaken for a real problem.
+3. Deployed to `/var/www/ibconnect` (`rsync --delete`, re-owned to
+   `www-data:www-data`). **This is the moment real risk was live, not
+   hypothetical**: for the seconds between this and the next step, the
+   served frontend was the new LiveKit-only build while the running backend
+   process was still the old mesh one — any real visitor loading the page in
+   that exact window would have gotten a broken call. Immediately followed
+   by:
+4. `sudo systemctl restart ibconnect-backend`. Clean restart confirmed
+   against its own log (DB connected, migrations OK, listening) — the one
+   real cost of this whole migration: the single idle chat-ws connection
+   that existed (someone's tab left open, not a call) dropped and its own
+   reconnect logic brought it back within ~1s, exactly the self-healing
+   behavior this same reconnect logic was built for.
+5. **Real production smoke test, not just "service is active"**
+   (`_verify_prod_smoke.mjs`, kept in the repo as a reusable post-deploy
+   check): two real participants against the actual live
+   `https://meet.icebrkr.space`, real fake media, real two-way video.
+   **4/4 passing.** Cross-checked directly against LiveKit's own log for the
+   same room/participant IDs: real ICE candidates negotiated over UDP on the
+   real public IP (`163.128.34.19:20000`), `"connectionType": "udp"`, clean
+   room close on departure (`"reason": "departure timeout"`) — not inferred
+   from the browser side alone.
+- **The mesh WebRTC → LiveKit SFU migration is live for real users as of
+  this entry.** Coturn stays running (still used by `connectionTest.ts`'s
+  pre-join diagnostic and as LiveKit's own ICE/TURN fallback, per the
+  TURN-fallback work earlier today) — nothing about it was touched or
+  retired.
+- Not done by this migration, still open: the live-captions/ASR feature's
+  own uncommitted work (found sitting in this same working tree, untouched
+  throughout) still needs its own review and commit, on its own timeline —
+  unrelated to anything above.
+
 **2026-08-28, same migration — merged to `main`, LiveKit actually standing
 in production now (Stage 1 only — mesh calls untouched, Stage 2 cutover not
 yet run):**
