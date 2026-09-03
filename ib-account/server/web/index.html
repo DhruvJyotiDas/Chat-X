@@ -1,0 +1,286 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex">
+<title>IB Account</title>
+<style>
+  :root{
+    --bg:#0e0e0e; --card:#131313; --border:#2a2d38; --border2:#424655;
+    --text:#e5e2e1; --muted:#8c90a1; --blue:#0066FF; --blue-h:#0052cc;
+    --err:#ff6b6b; --ok:#4dffb1;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--text);
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+    min-height:100vh;display:flex;align-items:center;justify-content:center;padding:16px}
+  .wrap{width:100%;max-width:400px}
+  .brand{display:flex;flex-direction:column;align-items:center;margin-bottom:22px}
+  .logo{width:52px;height:52px;border-radius:15px;background:var(--blue);display:flex;
+    align-items:center;justify-content:center;font-weight:800;font-size:20px;color:#fff;
+    box-shadow:0 0 30px rgba(0,102,255,.35);margin-bottom:12px}
+  h1{font-size:22px;margin:0}
+  .sub{font-size:13px;color:var(--muted);margin-top:3px}
+  .card{background:var(--card);border:1px solid var(--border2);border-radius:18px;padding:26px}
+  .ctx{margin-bottom:16px;padding:9px 12px;border-radius:10px;background:rgba(86,141,255,.1);
+    border:1px solid rgba(86,141,255,.3);font-size:12px;color:#b0c6ff;text-align:center}
+  label{display:block;font-size:12px;color:var(--muted);margin:14px 0 6px}
+  input{width:100%;padding:11px 12px;border-radius:10px;border:1px solid var(--border2);
+    background:#0e0e0e;color:var(--text);font-size:14px;outline:none}
+  input:focus{border-color:var(--blue)}
+  button.primary{width:100%;margin-top:18px;padding:12px;border:0;border-radius:11px;
+    background:var(--blue);color:#fff;font-weight:700;font-size:14px;cursor:pointer}
+  button.primary:hover{background:var(--blue-h)}
+  button.primary:disabled{opacity:.6;cursor:default}
+  .links{margin-top:16px;display:flex;justify-content:space-between;font-size:12px}
+  a.link,button.link{background:0;border:0;color:#7fb0ff;cursor:pointer;font-size:12px;
+    text-decoration:none;padding:0}
+  a.link:hover,button.link:hover{text-decoration:underline}
+  .msg{margin-top:14px;font-size:13px;min-height:18px}
+  .msg.err{color:var(--err)} .msg.ok{color:var(--ok)}
+  .foot{text-align:center;font-size:10px;color:rgba(140,144,161,.5);margin-top:20px}
+  .code-input{letter-spacing:6px;text-align:center;font-size:18px;font-weight:700}
+  .row{display:flex;gap:10px} .row>div{flex:1}
+  .kv{font-size:13px;color:var(--muted);margin:6px 0}
+  .kv b{color:var(--text);font-weight:600}
+  hr{border:0;border-top:1px solid var(--border);margin:20px 0}
+  h2{font-size:15px;margin:0 0 4px}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="brand">
+    <div class="logo">IB</div>
+    <h1>IB Account</h1>
+    <div class="sub">One secure identity for every IB application</div>
+  </div>
+  <div class="card" id="card"></div>
+  <div class="foot">IB Connect · End-to-End Encrypted</div>
+</div>
+
+<script>
+const BASE = "__BASE_PATH__";
+const qs = new URLSearchParams(location.search);
+const OAUTH = qs.has("client_id") && qs.has("redirect_uri") && qs.get("response_type") === "code";
+const ACCOUNT_PATH = location.pathname.replace(/\/+$/,"").endsWith("/account");
+
+const state = {
+  screen: qs.get("screen") || (ACCOUNT_PATH ? "account" : "login"),
+  email: qs.get("email") || "",
+  msg: "", msgKind: "",
+};
+
+const card = document.getElementById("card");
+const esc = s => (s||"").replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+
+async function api(path, method, body){
+  const r = await fetch(BASE + path, {
+    method,
+    headers: body ? {"Content-Type":"application/json"} : undefined,
+    body: body ? JSON.stringify(body) : undefined,
+    credentials: "same-origin",
+  });
+  let data = {};
+  try { data = await r.json(); } catch(e){}
+  return { ok: r.ok, status: r.status, data };
+}
+
+function setMsg(t, kind){ state.msg = t; state.msgKind = kind || "err"; render(); }
+function go(screen){ state.msg=""; state.screen = screen; render(); }
+function afterAuth(){
+  if (OAUTH){ location.reload(); return; }   // server re-runs /oauth/authorize, issues code
+  go("account");
+}
+
+const ctxBanner = OAUTH ? '<div class="ctx">Signing in to <b>IB Connect</b></div>' : '';
+const msgEl = () => `<div class="msg ${state.msgKind}">${esc(state.msg)}</div>`;
+
+function bindSubmit(id, fn){
+  const f = document.getElementById(id);
+  if (!f) return;
+  f.addEventListener("submit", async e => {
+    e.preventDefault();
+    const btn = f.querySelector("button.primary");
+    btn.disabled = true;
+    try { await fn(new FormData(f)); } finally { btn.disabled = false; }
+  });
+}
+
+function render(){
+  const S = state.screen;
+  if (S === "login") card.innerHTML = `
+    ${ctxBanner}
+    <form id="f">
+      <label>Email</label>
+      <input name="email" type="email" autocomplete="username" required value="${esc(state.email)}">
+      <label>Password</label>
+      <input name="password" type="password" autocomplete="current-password" required>
+      <button class="primary" type="submit">Sign in</button>
+      ${msgEl()}
+    </form>
+    <div class="links">
+      <button class="link" onclick="go('forgot')">Forgot password?</button>
+      <button class="link" onclick="go('register')">Create account</button>
+    </div>`;
+
+  else if (S === "register") card.innerHTML = `
+    ${ctxBanner}
+    <form id="f">
+      <label>Full name</label>
+      <input name="name" type="text" autocomplete="name" required>
+      <label>Email</label>
+      <input name="email" type="email" autocomplete="username" required value="${esc(state.email)}">
+      <label>Password <span style="color:var(--muted)">(min 8 characters)</span></label>
+      <input name="password" type="password" autocomplete="new-password" minlength="8" required>
+      <button class="primary" type="submit">Create account</button>
+      ${msgEl()}
+    </form>
+    <div class="links">
+      <span></span>
+      <button class="link" onclick="go('login')">Have an account? Sign in</button>
+    </div>`;
+
+  else if (S === "verify") card.innerHTML = `
+    ${ctxBanner}
+    <h2>Check your email</h2>
+    <div class="kv">We sent a 6-digit code to <b>${esc(state.email)}</b></div>
+    <form id="f">
+      <label>Verification code</label>
+      <input name="code" class="code-input" inputmode="numeric" pattern="[0-9]*" maxlength="6" required>
+      <button class="primary" type="submit">Verify</button>
+      ${msgEl()}
+    </form>
+    <div class="links">
+      <button class="link" onclick="resend('verify')">Resend code</button>
+      <button class="link" onclick="go('login')">Back to sign in</button>
+    </div>`;
+
+  else if (S === "forgot") card.innerHTML = `
+    <h2>Reset your password</h2>
+    <div class="kv">Enter your email and we'll send a reset code.</div>
+    <form id="f">
+      <label>Email</label>
+      <input name="email" type="email" autocomplete="username" required value="${esc(state.email)}">
+      <button class="primary" type="submit">Send reset code</button>
+      ${msgEl()}
+    </form>
+    <div class="links"><span></span><button class="link" onclick="go('login')">Back to sign in</button></div>`;
+
+  else if (S === "reset") card.innerHTML = `
+    <h2>Set a new password</h2>
+    <div class="kv">Code sent to <b>${esc(state.email)}</b></div>
+    <form id="f">
+      <label>Reset code</label>
+      <input name="code" class="code-input" inputmode="numeric" pattern="[0-9]*" maxlength="6" required>
+      <label>New password <span style="color:var(--muted)">(min 8 characters)</span></label>
+      <input name="password" type="password" autocomplete="new-password" minlength="8" required>
+      <button class="primary" type="submit">Update password</button>
+      ${msgEl()}
+    </form>
+    <div class="links">
+      <button class="link" onclick="resend('reset')">Resend code</button>
+      <button class="link" onclick="go('login')">Back to sign in</button>
+    </div>`;
+
+  else if (S === "account") { renderAccount(); return; }
+
+  wireForms();
+}
+
+function wireForms(){
+  bindSubmit("f", async fd => {
+    const S = state.screen;
+    if (S === "login"){
+      const { ok, data } = await api("/api/login","POST",{ email:fd.get("email"), password:fd.get("password") });
+      if (ok && data.ok) return afterAuth();
+      if (ok && data.next === "verify"){ state.email = data.email || fd.get("email"); return go("verify"); }
+      return setMsg(data.error || "Sign-in failed");
+    }
+    if (S === "register"){
+      const { ok, data } = await api("/api/register","POST",
+        { name:fd.get("name"), email:fd.get("email"), password:fd.get("password") });
+      if (ok && data.next === "verify"){ state.email = data.email || fd.get("email"); return go("verify"); }
+      return setMsg(data.error || "Could not create account");
+    }
+    if (S === "verify"){
+      const { ok, data } = await api("/api/verify","POST",{ email:state.email, code:fd.get("code") });
+      if (ok && data.ok) return afterAuth();
+      return setMsg(data.error || "Invalid code");
+    }
+    if (S === "forgot"){
+      state.email = fd.get("email");
+      await api("/api/forgot","POST",{ email:state.email });
+      setMsg("If that email has an account, a reset code is on its way.","ok");
+      setTimeout(()=>go("reset"), 700);
+      return;
+    }
+    if (S === "reset"){
+      const { ok, data } = await api("/api/reset","POST",
+        { email:state.email, code:fd.get("code"), password:fd.get("password") });
+      if (ok && data.ok){ state.screen="login"; setMsg("Password updated — sign in with your new password.","ok"); return; }
+      return setMsg(data.error || "Reset failed");
+    }
+  });
+}
+
+async function resend(purpose){
+  const { ok, status } = await api("/api/resend","POST",{ email:state.email, purpose });
+  if (status === 429) return setMsg("Please wait a minute before requesting another code.");
+  setMsg(ok ? "Code sent." : "Could not resend code.", ok ? "ok" : "err");
+}
+
+async function renderAccount(){
+  const { ok, status, data } = await api("/api/account","GET");
+  if (!ok || status === 401){ state.screen = "login"; return render(); }
+  card.innerHTML = `
+    <h2>Your account</h2>
+    <div class="kv">Email <b>${esc(data.email)}</b></div>
+    <form id="fname">
+      <label>Display name</label>
+      <input name="name" type="text" required value="${esc(data.name)}">
+      <button class="primary" type="submit">Save name</button>
+      <div class="msg ${state.msgKind}" id="m1">${state.screen==="account"?esc(state.msg):""}</div>
+    </form>
+    <hr>
+    <h2>Change password</h2>
+    <form id="fpw">
+      <label>Current password</label>
+      <input name="current" type="password" autocomplete="current-password" required>
+      <label>New password <span style="color:var(--muted)">(min 8 characters)</span></label>
+      <input name="new" type="password" autocomplete="new-password" minlength="8" required>
+      <button class="primary" type="submit">Update password</button>
+      <div class="msg" id="m2"></div>
+    </form>
+    <hr>
+    <button class="link" onclick="signOut()">Sign out</button>`;
+
+  bindSubmit("fname", async fd => {
+    const { ok, data } = await api("/api/account","PATCH",{ name:fd.get("name") });
+    document.getElementById("m1").className = "msg " + (ok?"ok":"err");
+    document.getElementById("m1").textContent = ok ? "Saved." : (data.error||"Could not save");
+  });
+  bindSubmit("fpw", async fd => {
+    const { ok, data } = await api("/api/password","POST",{ current:fd.get("current"), new:fd.get("new") });
+    document.getElementById("m2").className = "msg " + (ok?"ok":"err");
+    document.getElementById("m2").textContent = ok ? "Password updated." : (data.error||"Could not update");
+    if (ok) document.getElementById("fpw").reset();
+  });
+}
+
+async function signOut(){
+  await api("/api/logout","POST",{});
+  state.screen = "login"; state.msg = ""; render();
+}
+
+// entry
+(async function(){
+  if (!OAUTH && !ACCOUNT_PATH && state.screen === "login"){
+    const { data } = await api("/api/session","GET");
+    if (data && data.authenticated){ state.screen = "account"; }
+  }
+  render();
+})();
+</script>
+</body>
+</html>

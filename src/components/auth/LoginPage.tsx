@@ -1,13 +1,14 @@
 import { generatePKCE, randomState } from '../../lib/pkce';
 import BrandMark from '../BrandMark';
+import { config } from '../../config';
 
 // One secure IB identity across every IB application — IB Connect never
 // collects or sees a password itself; see App.tsx's `code`/`state` callback
 // effect for the other half of this flow, and server/main.go's
-// handleOIDCCallback for the server-side token exchange.
-const IB_ACCOUNT_ISSUER = 'https://meet.icebrkr.space/auth';
-const IB_ACCOUNT_CLIENT_ID = 'ibc_C_gqO2jdhASAN73QgLG0LXbDM4osR046';
-const REDIRECT_URI = 'https://meet.icebrkr.space/';
+// handleOIDCCallback for the server-side token exchange. Host-specific values
+// come from src/config.ts — REDIRECT_URI in particular must match the
+// backend's IB_ACCOUNT_REDIRECT_URI exactly.
+const { issuer: IB_ACCOUNT_ISSUER, clientId: IB_ACCOUNT_CLIENT_ID, redirectUri: REDIRECT_URI } = config.ibAccount;
 
 export default function LoginPage({ pendingJoinCode }: { pendingJoinCode?: string }) {
   const continueWithIB = async () => {

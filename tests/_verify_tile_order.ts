@@ -6,7 +6,7 @@
  * far easier to pin down here than by choreographing browsers. The browser-level proof
  * that it is actually wired up lives in `_verify_speaker_promotion.mjs`.
  */
-import { orderTiles, rankTiles, PROMOTE_HOLD_MS, type TileRankInput } from './src/lib/tileOrder';
+import { orderTiles, rankTiles, PROMOTE_HOLD_MS, type TileRankInput } from '../src/lib/tileOrder';
 
 let failures = 0;
 const check = (name: string, pass: boolean, detail = '') => {

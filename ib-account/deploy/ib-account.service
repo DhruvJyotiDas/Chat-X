@@ -1,0 +1,24 @@
+[Unit]
+Description=IB Account — OIDC identity provider for IB Connect
+After=network-online.target mariadb.service
+Wants=network-online.target
+Requires=mariadb.service
+
+[Service]
+Type=simple
+User=ubuntu
+WorkingDirectory=/home/ubuntu/IB-Connect-ver-2/ib-account/server
+EnvironmentFile=/etc/ib-account/env
+ExecStart=/home/ubuntu/IB-Connect-ver-2/ib-account/server/ib-account
+Restart=on-failure
+RestartSec=2
+
+# hardening
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ProtectHome=read-only
+ReadWritePaths=/home/ubuntu/IB-Connect-ver-2/ib-account/server/data
+
+[Install]
+WantedBy=multi-user.target

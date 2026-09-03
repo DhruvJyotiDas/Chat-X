@@ -8,8 +8,8 @@
  * is the viewport minus the stage padding, and guessing that offset is exactly how the
  * 360px-phone bug survived (the 2x3 layout required 360 against a 344px container).
  */
-import { selectGridLayout, GRID_LAYOUTS, type GridLayoutInfo } from './src/lib/gridLayout';
-import { computeTileSize } from './src/hooks/useGridLayout';
+import { selectGridLayout, GRID_LAYOUTS, type GridLayoutInfo } from '../src/lib/gridLayout';
+import { computeTileSize } from '../src/hooks/useGridLayout';
 
 let failures = 0;
 const check = (name: string, pass: boolean, detail = '') => {

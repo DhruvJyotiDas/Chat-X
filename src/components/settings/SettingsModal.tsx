@@ -12,6 +12,7 @@ import { loadStatus, saveStatus, loadNotifications, saveNotifications, Notificat
 import { watchDevices, resolveSelection, loadDevicePrefs, EMPTY_SNAPSHOT, type DeviceSnapshot } from '../../lib/devicePrefs';
 import { isSpeakerSelectionSupported, setPreferredSpeaker } from '../../lib/audioOutput';
 import ConnectionTestPanel from '../meeting/ConnectionTestPanel';
+import { config } from '../../config';
 
 type Tab = 'profile' | 'preferences' | 'devices' | 'security' | 'account';
 
@@ -319,7 +320,7 @@ function SecurityTab() {
       </div>
 
       <a
-        href="https://meet.icebrkr.space/auth/account"
+        href={config.ibAccount.accountUrl}
         target="_blank"
         rel="noopener noreferrer"
         className="w-full py-2.5 bg-[#568dff] text-[#002661] font-bold text-xs rounded-xl hover:bg-[#568dff]/90 cursor-pointer transition-all flex items-center justify-center gap-2"

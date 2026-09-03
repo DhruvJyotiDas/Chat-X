@@ -48,7 +48,7 @@ const browser = await chromium.launch({ args: ['--no-sandbox', '--use-fake-ui-fo
 
 // ── Part 1: does LiveKit itself actually reject bad tokens? ────────────────
 const lkPage = await (await browser.newContext()).newPage();
-await lkPage.goto(`${BASE}/_lk_negtest.html`);
+await lkPage.goto(`${BASE}/tests/_lk_negtest.html`);
 await lkPage.waitForFunction(() => window.__lkReady === true, { timeout: 10000 });
 
 async function tryConnect(token) {

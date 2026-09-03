@@ -2,7 +2,7 @@
 // Property checks on StallTracker (src/lib/stallDetector.ts) — the pure decision core
 // behind useStalledVideoRecovery. Run with `npx tsx`, not node.
 
-import { StallTracker, STALL_THRESHOLD_MS, RECOVERY_COOLDOWN_MS } from './src/lib/stallDetector';
+import { StallTracker, STALL_THRESHOLD_MS, RECOVERY_COOLDOWN_MS } from '../src/lib/stallDetector';
 
 let pass = 0;
 let fail = 0;

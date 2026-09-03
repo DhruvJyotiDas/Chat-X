@@ -19,6 +19,7 @@
 // blocking the relay specifically.
 
 import { readPeerStats, describePath, type PeerStats } from './connectionStats';
+import { config } from '../config';
 
 export type StepId = 'devices' | 'media' | 'signaling' | 'turnCredentials' | 'gathering' | 'relay';
 export type StepStatus = 'pending' | 'running' | 'pass' | 'warn' | 'fail' | 'skipped';
@@ -54,10 +55,7 @@ const CONNECT_TIMEOUT_MS = 15000;
 const SIGNALING_TIMEOUT_MS = 8000;
 
 function wsUrl(): string {
-  const env = import.meta.env.VITE_WS_URL as string | undefined;
-  if (env) return env;
-  const proto = window.location.protocol === 'https:' ? 'wss' : 'ws';
-  return `${proto}://${window.location.host}/ws`;
+  return config.wsUrl;
 }
 
 /** Collect ICE candidates until gathering completes or the timeout fires. */

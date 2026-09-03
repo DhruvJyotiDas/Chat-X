@@ -9,12 +9,16 @@ Secure messaging / video calling / calendar web app. React + Go, deployed at **h
 - **DB**: MariaDB 10.11, local (`127.0.0.1:3306`, db `lolafire_IBConnect`, user `ibconnect_app`). Migrated off a remote hostpoint.ch DB during this session's work — `main.go`'s `migrate()` uses `CREATE TABLE IF NOT EXISTS`, so it will **not** retroactively alter columns on tables that already exist (e.g. an `avatar TEXT`→`LONGTEXT` widening won't apply to a pre-existing table without a manual `ALTER TABLE`).
 - **Live captions (ASR)**: multilingual, per-speaker, real-time — Whisper (language ID) → IndicConformer or `nvidia/nemotron-3.5-asr-streaming-0.6b` (ASR, routed by detected language) → NLLB (translation), all on a **separate GPU VM** the main box only reaches through `server/asr_gpu.go` + `server/transcription_relay.go` (`/asr`). See "Live captions (ASR)" below. Supersedes the old single-language `transcription_server.py` prototype (retired 2026-08-18 — it was CPU-only and ~27x slower than real time, see git history if you need the postmortem).
 - **WebRTC**: TURN server at `meet.icebrkr.space` (user `webrtc` — see `src/hooks/useWebRTC.ts`).
-- **Identity**: auth is OIDC-only against **IB Account** (`/home/ubuntu/ib-account`, served at `/auth/`), consumed by `handleOIDCCallback` in `server/main.go`. That repo has its own CLAUDE.md covering the login/OTP/email side; anything about sign-in, verification codes or transactional mail belongs there, not here.
+- **Identity**: auth is OIDC-only against **IB Account**, consumed by `handleOIDCCallback` in `server/main.go`. As of 2026-09-03 IB Account lives **in this repo** at `ib-account/` (self-contained Go OIDC provider — email+password accounts, OTP email verification, forgot-password, account management, auth-code+PKCE). It runs as its own systemd service `ib-account` on `127.0.0.1:8090`, nginx routes all of `/auth/` to it, and it has its own schema `ib_account` (same MariaDB) + its own env at `/etc/ib-account/env`. See `ib-account/README.md`. The old external `/home/ubuntu/ib-account` checkout is superseded. Transactional email: set `SMTP_*` in `/etc/ib-account/env`; until then it runs in "log mode" (codes printed to `journalctl -u ib-account`).
 
 ## Directory structure
 
 ```
 src/
+  config.ts        Single source of truth for runtime config — WS/ASR URLs, API base,
+                     OIDC issuer/client/redirect. Defaults derive from window.location;
+                     override at build time with VITE_* (see .env.example). Nothing
+                     host-specific should be hard-coded anywhere else in src/.
   components/
     layout/        Sidebar.tsx, TopBar.tsx
     views/         DashboardView, ChatsView, CallsView, CalendarView, DebriefView, SecurityView, SupportView
@@ -32,14 +36,48 @@ src/
                      preferences.ts (per-user localStorage: status, notification prefs),
                      gridLayout.ts (selectGridLayout, container-size-aware tile grid picker)
 server/
-  main.go           Go backend (single file). Also has several *.bak files and old binaries
-                     (ibconnect-server, ibconnect-signaling, signaling-server, main) — cruft, not
-                     used by the systemd service; only server/ibconnect-backend is deployed.
+  main.go           Go backend (single Go package spread over main.go + interview*.go +
+                     livekit.go + asr_gpu.go + transcription_relay.go + config.go).
+  config.go         Deployment-specific values (DB user/addr/name, SSO email domain) —
+                     env-driven with current-box defaults. The rest of the backend's
+                     config is scattered os.Getenv reads; the full list with defaults is
+                     deploy/ibconnect.env.example (template for /etc/ibconnect/env).
+  ibconnect-backend  The built binary the systemd service runs. Git-ignored now — rebuild
+                     with `cd server && go build -o ibconnect-backend .`.
+deploy/
+  nginx/           reference copy of the production nginx vhost
+  livekit/         LiveKit SFU systemd unit + config template + standup README
+  ibconnect.env.example   every backend env var, with defaults and which are required
+docs/              DEFERRED.md, INTERVIEW_PLAN.md, SESSION-NOTES-*.md
+gpu/               GPU-VM contracts (ASR_CONTRACT.md, CONTRACT.md) + mock servers
+tests/             all ad-hoc verification scripts (_verify_*.mjs / _verify_*.ts /
+                     _e2e_*.mjs / _smoke_test.mjs / _signup.json / _lk_*.html) and
+                     tests/loadtest/ (mesh-vs-LiveKit load harness). Not a CI suite —
+                     see "Testing approach" below.
 ```
 
-Note: a few stray `.backup` files exist in `src/` (`App.tsx.backup`, `Sidebar.tsx.backup`,
-`ChatsView.tsx.backup.*`) from earlier ad-hoc edits — not part of the build, safe to ignore/delete
-but left alone since nobody asked to clean them up.
+## Configuration (moving to another VM)
+
+Nothing host-specific is hard-coded — relocating the project is an env-var exercise,
+not a source edit. As of the 2026-09-02 tidy:
+
+- **Backend**: `server/config.go` holds the DB coordinates (`IBCONNECT_DB_USER` /
+  `IBCONNECT_DB_ADDR` / `IBCONNECT_DB_NAME`) and `SSO_EMAIL_DOMAIN`, each defaulting
+  to the original box's value. Everything else is `os.Getenv` reads scattered through
+  the package (`IB_ACCOUNT_*`, `TURN_*`, `LIVEKIT_*`, `ASR_GPU_*`, `INTERVIEW_GPU_*`,
+  `PORT`, `BIND_ADDR`, `MAX_ROOM_SIZE`, …). **`deploy/ibconnect.env.example` is the
+  authoritative list** — every variable, its default, and whether it's required. It's
+  the template for `/etc/ibconnect/env` (systemd `EnvironmentFile`, chmod 600).
+  Required with no default: `IBCONNECT_JWT_SECRET`, `IBCONNECT_DB_PASSWORD`.
+- **Frontend**: `src/config.ts` is the only place that names a URL or the OIDC client.
+  Defaults are derived from `window.location` at load time, so a plain `npm run build`
+  already works on whatever domain serves it. Override at build time with `VITE_*`
+  (template: `.env.example`) only when the frontend origin ≠ the backend origin.
+  `VITE_IB_ACCOUNT_REDIRECT_URI` and the backend's `IB_ACCOUNT_REDIRECT_URI` must be
+  byte-identical.
+- The built Go binary (`server/ibconnect-backend`) and stale `server/*.bak` / old
+  binaries are git-ignored / removed. `npm install` + `go build` regenerate everything
+  a fresh checkout needs.
 
 ## Local dev
 
@@ -375,8 +413,10 @@ first real non-English call closely.
 ## Testing approach
 
 No unit/e2e test suite exists. Verification is done ad hoc with Playwright smoke scripts (not checked
-in as a permanent suite, but `_smoke_test.mjs` + `_signup.json` in the repo root are reusable local
-scratch scripts): log in via seeded JWT + user in `localStorage`, navigate the main views, assert zero
+in as a permanent suite). **All of them live in `tests/`** (moved there from the repo root in the
+2026-09-02 tidy — historical work-log entries below still say "repo root"; read that as `tests/`).
+`tests/_smoke_test.mjs` + `tests/_signup.json` are reusable local scratch scripts: log in via seeded
+JWT + user in `localStorage`, navigate the main views, assert zero
 `console.error`/`pageerror`/`requestfailed`, and screenshot key screens in both themes. Always run
 `npx tsc --noEmit` too. Test against `http://localhost:3000` for dev-server checks and
 `https://meet.icebrkr.space` to confirm a deploy actually took effect.
@@ -404,8 +444,9 @@ each fake camera a distinct solid color and sample pixels off a `<video>` via an
 playing (not frozen). A tile can also be present, streaming *and* stuck: check `video.paused`, since a
 rejected autoplay leaves exactly that state (see `playWhenAllowed` under WebRTC).
 
-**Reusable verification scripts** (repo root, all take a `BASE` env var so the same script runs against
-`http://127.0.0.1:3100` or `https://meet.icebrkr.space`):
+**Reusable verification scripts** (all in `tests/`, all take a `BASE` env var so the same script runs
+against `http://127.0.0.1:3100` or `https://meet.icebrkr.space`; `.ts` ones run via `npx tsx` and
+import from `../src/…`):
 
 | script | covers |
 |---|---|

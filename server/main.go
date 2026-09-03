@@ -571,7 +571,7 @@ func handleMe(w http.ResponseWriter, r *http.Request) {
 
 	if err != nil {
 		fallbackName := "IB Member"
-		fallbackEmail := uid + "@sso.icebrkr.space"
+		fallbackEmail := uid + "@" + ssoEmailDomain
 		_, insertErr := db.Exec(`
 			INSERT INTO users (id, username, display_name, email, password_hash, status, created_at)
 			VALUES (?, ?, ?, ?, ?, ?, NOW())
@@ -1844,15 +1844,17 @@ func main() {
 
 	var err error
 	cfg := mysql.NewConfig()
-	cfg.User = "ibconnect_app"
+	cfg.User = dbUser
 	// Was a hardcoded literal, and this repo is PUBLIC on GitHub — the database
 	// password was world-readable. Mitigated only by MariaDB binding to localhost,
 	// which stops being a mitigation the moment anything else on this host is
 	// compromised. Sourced from the environment like every other credential now.
 	cfg.Passwd = mustEnv("IBCONNECT_DB_PASSWORD")
 	cfg.Net = "tcp"
-	cfg.Addr = "127.0.0.1:3306"
-	cfg.DBName = "lolafire_IBConnect"
+	// dbUser/dbAddr/dbName default to the current box's values — override via
+	// IBCONNECT_DB_USER / IBCONNECT_DB_ADDR / IBCONNECT_DB_NAME (see config.go).
+	cfg.Addr = dbAddr
+	cfg.DBName = dbName
 	cfg.ParseTime = true
 	cfg.Params = map[string]string{"charset": "utf8mb4", "collation": "utf8mb4_unicode_ci"}
 	db, err = sql.Open("mysql", cfg.FormatDSN())

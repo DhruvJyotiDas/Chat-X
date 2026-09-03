@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { isLiveCaptionsSupported } from '../lib/liveCaptions';
+import { config } from '../config';
 
 // Streams this participant's OWN mic to the live-captions relay — never a
 // peer's already-decoded remote audio, which is what the retired
@@ -12,10 +13,7 @@ import { isLiveCaptionsSupported } from '../lib/liveCaptions';
 // this same browser, so there is nothing to parse out of THIS socket except
 // the "unavailable" state below.
 
-const ASR_WS_URL = import.meta.env.VITE_ASR_WS_URL
-  ?? (typeof window !== 'undefined'
-    ? `${window.location.protocol === 'https:' ? 'wss' : 'ws'}://${window.location.host}/asr`
-    : 'ws://localhost:8080/asr');
+const ASR_WS_URL = config.asrWsUrl;
 
 const SAMPLE_RATE = 16000;
 

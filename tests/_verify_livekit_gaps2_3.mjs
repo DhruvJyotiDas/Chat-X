@@ -128,7 +128,7 @@ check('got a real LiveKit token for the 3rd identity (membership check passed)',
 console.log('\n── Connecting the 3rd participant via a real page (resolves the real livekit-client module) ──');
 const mechPage = await (await browser.newContext()).newPage();
 mechPage.on('pageerror', (e) => errors.push(`mechtest: ${e.message}`));
-await mechPage.goto(`${BASE}/_lk_mechanism_test.html`);
+await mechPage.goto(`${BASE}/tests/_lk_mechanism_test.html`);
 await mechPage.waitForFunction(() => window.__mechTestReady === true, { timeout: 10000 });
 
 const result = await mechPage.evaluate(

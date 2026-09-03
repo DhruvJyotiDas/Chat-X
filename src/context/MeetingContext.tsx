@@ -6,6 +6,7 @@ import { api } from '../lib/api';
 import { makeFloatingReaction, isReaction, REACTION_TTL_MS, type FloatingReaction } from '../lib/reactions';
 import { extractKeyPoints, type CaptionEvent, type KeyPoint, type TranscriptLine } from '../lib/captions';
 import type { PeerLink } from '../lib/connectionStats';
+import { config } from '../config';
 
 export interface AppUser { id: string; name: string; isGuest: boolean; }
 export interface LiveChatMessage { id: string; fromId: string; fromName: string; text: string; time: string; isSelf: boolean; }
@@ -91,7 +92,7 @@ interface MeetingContextType {
 
 const MeetingContext = createContext<MeetingContextType | null>(null);
 
-const WS_URL = import.meta.env.VITE_WS_URL ?? (typeof window !== 'undefined' ? `${window.location.protocol === 'https:' ? 'wss' : 'ws'}://${window.location.host}/ws` : 'ws://localhost:3000/ws');
+const WS_URL = config.wsUrl;
 
 function getOrCreateUserId(): string {
   let id = sessionStorage.getItem('ibconnect_user_id');

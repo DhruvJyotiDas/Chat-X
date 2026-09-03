@@ -4,5 +4,28 @@ dist/
 coverage/
 .DS_Store
 *.log
+
+# Environment / secrets — never commit real values.
+# .env.example (frontend build vars) and deploy/ibconnect.env.example
+# (backend runtime vars) are the checked-in templates.
 .env*
 !.env.example
+
+# Go build artifacts — rebuilt with:
+#   cd server && go build -o ibconnect-backend .
+/server/ibconnect-backend
+/server/ibconnect-backend.rollback.*
+/server/ibconnect-server
+/server/ibconnect-signaling
+/server/signaling-server
+/server/main
+/server/*.bak
+
+# Test scratch output
+_verify_tiling_shots/
+
+# IB Account (ib-account/) build artifacts + generated signing key
+#   cd ib-account/server && go build -o ib-account .
+/ib-account/server/ib-account
+/ib-account/server/data/
+
