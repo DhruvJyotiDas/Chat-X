@@ -1402,9 +1402,25 @@ const (
 const wsLeaveGraceInterval = 3 * time.Second
 
 // maxRoomSize caps participants per room. DEFAULT IS 0 = UNLIMITED, deliberately:
-// this codebase is mesh WebRTC, which realistically supports 6-8 people, but
 // turning a cap on silently would start rejecting users from calls that
-// currently connect (badly). Set MAX_ROOM_SIZE=8 to enforce it.
+// currently connect. Set MAX_ROOM_SIZE in /etc/ibconnect/env to enforce one.
+//
+// The "6-8 people" this comment used to cite was a MESH figure and has been
+// stale since the 2026-08-27 LiveKit migration: it came from a 4-core test VM
+// where the LOAD GENERATOR saturated while LiveKit's own process sat at
+// 0.04-0.13 cores, so it never measured this server at all. It has now been
+// measured properly, and the server is nowhere near being the constraint:
+//
+//   - signaling: 10,000 concurrent /ws connections = 544 MB, 0.08 cores,
+//     0% loss, p99 fan-out 7.9 ms; 1,000 in ONE room = p99 11.9 ms
+//   - SFU: 0.007-0.011 cores per forwarded Mbps, so saturating the whole
+//     625 Mbps WAN link costs ~5.6 of this box's 32 cores
+//   - a real 7-person production meeting (2026-09-06 23:29-00:20) peaked at
+//     24.97 Mbps egress (4.0% of the link) and 1.42 cores of LiveKit CPU
+//
+// What actually binds first is CLIENT-side: VP8 software decode (16 tiles is
+// ~73.8 Mpixel/s), then the grid layout, then the WAN at N~82. See
+// ibconnect-planning/{MAX_ROOM_SIZE,ARCHITECTURE_scale}.md for the arithmetic.
 var maxRoomSize = func() int {
 	n, err := strconv.Atoi(os.Getenv("MAX_ROOM_SIZE"))
 	if err != nil || n < 0 {
