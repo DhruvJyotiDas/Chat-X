@@ -1453,7 +1453,13 @@ export default function ActiveMeetingView({ onLeaveMeeting, onMinimize }: Props)
         : tiles.some((t) => t.id === pinned.id);
       if (stillThere) return pinned;
     }
-    if (activeScreens.length > 0) return { kind: 'screen' as const, id: activeScreens[0].id };
+    // Auto-focus somebody ELSE's share, never your own. Putting your own
+    // screen on your own main stage renders your screen inside your screen —
+    // an infinite hall of mirrors the moment you share a whole display, and
+    // you did not ask for it. Your own share stays available in the carousel,
+    // and an explicit pin above still wins if you actually want to look at it.
+    const remoteScreen = activeScreens.find((sc) => sc.id !== 'local-screen');
+    if (remoteScreen) return { kind: 'screen' as const, id: remoteScreen.id };
     return null;
   }, [pinned, activeScreens, tiles]);
 

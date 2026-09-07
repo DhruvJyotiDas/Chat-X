@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   Room, RoomEvent, RemoteParticipant, RemoteTrack, RemoteTrackPublication,
   LocalTrackPublication, ConnectionState, ConnectionQuality, Participant, Track,
-  RemoteVideoTrack, RemoteAudioTrack,
+  RemoteVideoTrack, RemoteAudioTrack, ScreenSharePresets,
 } from 'livekit-client';
 import { describeMediaError } from '../lib/mediaErrors';
 import { api } from '../lib/api';
@@ -562,7 +562,43 @@ export function useWebRTC() {
       return;
     }
     try {
-      await room.localParticipant.setScreenShareEnabled(true);
+      await room.localParticipant.setScreenShareEnabled(
+        true,
+        {
+          // THE important one for shared code and text. Screen capture defaults
+          // to no content hint, which lets the encoder trade resolution away to
+          // hold framerate — the worst possible trade for text, and it happens
+          // silently. 'detail' inverts that: under CPU or bandwidth pressure the
+          // encoder drops FRAMES and keeps pixels, so a shared terminal stays
+          // legible while scrolling gets choppy. Choppy and readable beats smooth
+          // and illegible.
+          contentHint: 'detail',
+        },
+        {
+          // Screen share gets THREE simulcast rungs instead of two.
+          //
+          // With defaults, computeDefaultScreenShareSimulcastPresets returns a
+          // single half-resolution preset, so computeVideoEncodings falls to its
+          // `size >= 480` branch and publishes only [half, original]. That is a
+          // 4x jump in pixels between the two rungs: a viewer marginally below
+          // the top rung's threshold does not step down, they fall off it, all
+          // the way to half resolution. Naming both presets explicitly gives
+          // midPreset a value, which takes the `size >= 960 && midPreset` branch
+          // and yields 360p / 720p / native.
+          //
+          // Framerates stay at 15 on the lower rungs by design: encodingsFromPresets
+          // takes min(sourceFramerate, preset framerate) per rung.
+          screenShareSimulcastLayers: [
+            ScreenSharePresets.h360fps15,   // 640x360   @ 400 kbps
+            ScreenSharePresets.h720fps15,   // 1280x720  @ 1.5 Mbps
+          ],
+          // screenShareEncoding is deliberately left at its default
+          // (h1080fps15 — 1920x1080, 2.5 Mbps, 15 fps). See the commit message:
+          // raising it to h1080fps30 (5 Mbps) buys no legibility at all, because
+          // it is the same bits-per-frame, and it would more than double
+          // screen-share egress in a large room.
+        },
+      );
     } catch (err) {
       // A user dismissing the picker throws NotAllowedError — not an error
       // worth surfacing, same rule the old mesh implementation used.
