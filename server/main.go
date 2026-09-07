@@ -320,7 +320,7 @@ func loadThread(threadID, forUID string) (Thread, error) {
 		}
 	}
 	if lastMsg.Valid {
-		t.LastMessage = lastMsg.String
+		t.LastMessage = friendlyMessagePreview(lastMsg.String)
 	}
 	if ts.Valid {
 		t.LastTimestamp = int64(ts.Float64)
@@ -883,12 +883,12 @@ func handleMessages(w http.ResponseWriter, r *http.Request) {
 
 	if r.Method == "GET" {
 		rows, err := db.Query(`
-			SELECT m.id, m.thread_id, m.sender_id, u.display_name, COALESCE(u.avatar,''),
+			SELECT m.id, m.thread_id, COALESCE(m.sender_id,''), COALESCE(u.display_name,'IB Connect'), COALESCE(u.avatar,''),
 				m.text, DATE_FORMAT(m.created_at,'%h:%i %p'),
 				UNIX_TIMESTAMP(m.created_at)*1000,
 				COALESCE(m.file_name,''), COALESCE(m.file_size,0),
 				COALESCE(m.file_type,''), COALESCE(m.file_data,'')
-			FROM messages m JOIN users u ON u.id=m.sender_id
+			FROM messages m LEFT JOIN users u ON u.id=m.sender_id
 			WHERE m.thread_id=? ORDER BY m.created_at ASC LIMIT 500
 		`, threadID)
 		if err != nil {
@@ -942,10 +942,10 @@ func handleMessages(w http.ResponseWriter, r *http.Request) {
 	var m Message
 	var ts float64
 	db.QueryRow(`
-		SELECT m.id, m.thread_id, m.sender_id, u.display_name, COALESCE(u.avatar,''),
+		SELECT m.id, m.thread_id, COALESCE(m.sender_id,''), COALESCE(u.display_name,'IB Connect'), COALESCE(u.avatar,''),
 			m.text, DATE_FORMAT(m.created_at,'%h:%i %p'),
 			UNIX_TIMESTAMP(m.created_at)*1000
-		FROM messages m JOIN users u ON u.id=m.sender_id WHERE m.id=?
+		FROM messages m LEFT JOIN users u ON u.id=m.sender_id WHERE m.id=?
 	`, msgID).Scan(&m.ID, &m.ThreadID, &m.SenderID, &m.SenderName, &m.SenderAvatar, &m.Text, &m.Time, &ts) //nolint
 	m.Timestamp = int64(ts)
 	if b.File != nil {
@@ -954,6 +954,14 @@ func handleMessages(w http.ResponseWriter, r *http.Request) {
 	members := threadMembers(threadID)
 	pushTo(members, "new_message", map[string]any{"threadId": threadID, "message": m})
 	db.Exec(`UPDATE thread_members SET last_read_at=NOW(6) WHERE thread_id=? AND user_id=?`, threadID, uid) //nolint
+	// AI Calendar Intelligence, live: a cheap keyword check on the just-sent
+	// message decides whether it's worth an (expensive, slow — this model
+	// measures 60-200s per call) meeting-detection pass. Fired async so
+	// sending a message is never blocked on it; the eventual result (if any)
+	// arrives as its own chat message a couple of minutes later, not inline.
+	if looksLikeMeetingMention(b.Text) {
+		go detectAndSyncMeeting(threadID)
+	}
 	ok(w, m)
 }
 
@@ -1168,6 +1176,10 @@ type JoinRoomPayload struct {
 	UserID   string `json:"user_id"`
 	UserName string `json:"user_name"`
 }
+type JoinResponsePayload struct {
+	RequestID string `json:"request_id"`
+	Approve   bool   `json:"approve"`
+}
 type ChatPayload struct{ Text string `json:"text"` }
 type ReactionPayload struct{ Emoji string `json:"emoji"` }
 
@@ -1181,6 +1193,9 @@ var allowedReactions = map[string]bool{
 
 type HandPayload struct{ Raised bool `json:"raised"` }
 type CaptionLangPayload struct{ Lang string `json:"lang"` }
+type RequireApprovalPayload struct {
+	Value bool `json:"value"`
+}
 type PeerInfo struct {
 	ID   string `json:"id"`
 	Name string `json:"name"`
@@ -1191,6 +1206,16 @@ type SigClient struct {
 	name string
 	conn *websocket.Conn
 	room *Room
+
+	// Set only while this client is knocking — waiting in PendingJoin for an
+	// accept/reject — and nil otherwise. room stays nil for the whole
+	// duration of a knock (this client is deliberately NOT a room member
+	// yet), so the normal deferred-leaveRoom cleanup in handleSignaling can't
+	// find and clean up a pending knock the way it does a real membership;
+	// these two fields are what let it do that instead, e.g. if the knocking
+	// browser closes the tab before anyone answers.
+	pendingRoom  *Room
+	pendingReqID string
 
 	// Which language, if any, this client wants live captions translated
 	// into. Read by transcription_relay.go's activeCaptionLangs (a snapshot
@@ -1274,7 +1299,52 @@ type Room struct {
 	// empties a 1-person room instantly — can rejoin the same code instead of
 	// getting "Room not found".
 	reap *time.Timer
+
+	// admitted is every user id that has ever been let into THIS room instance
+	// (the creator, plus anyone an existing participant approved) — it is
+	// checked on every join_room, not just once, so a reconnect (network blip,
+	// second tab, page reload) never re-triggers the knock/approve flow for an
+	// identity that's already been let in. It intentionally outlives a
+	// temporary empty room (survives the emptyRoomGrace window) so the host
+	// reloading mid-call doesn't get knocked out of their own meeting.
+	admitted map[string]bool
+
+	// pending holds join requests currently awaiting an accept/reject from
+	// someone already in the room, keyed by a random request id (not by user
+	// id — nothing stops two different unadmitted people from knocking at
+	// once, and each needs its own independent decision).
+	pending map[string]*PendingJoin
+
+	// requireApproval is the knock-to-join feature's on/off switch for this
+	// room, defaulting to false. OPT-IN, not automatic, and deliberately so:
+	// a first version that gated every join unconditionally was measured
+	// directly against this repo's own existing call-flow test suite before
+	// shipping and broke a real chunk of it (multi-party join, screen share,
+	// speaker promotion — any scenario assuming a second participant is
+	// visible immediately) precisely because most real calls here are among
+	// already-known teammates who don't want a gate on every join. Toggled at
+	// any time by anyone currently in the room via the "require_approval" WS
+	// message (see JoinRequestBanner/MeetingInviteDialog on the frontend) —
+	// not only at creation time, so a host can turn it on mid-call if an
+	// unexpected link gets forwarded around.
+	requireApproval bool
 }
+
+// PendingJoin is one knock-to-join request waiting on a decision. The
+// requester's own SigClient is held here — not yet in room.clients, not yet
+// broadcastable to — until join_response resolves it one way or the other.
+type PendingJoin struct {
+	client   *SigClient
+	userID   string
+	userName string
+}
+
+// joinRequestTimeout bounds how long a knock can sit unanswered. Without
+// this, a requester whose knock nobody notices (everyone's attention is on
+// the call itself) would wait forever with no feedback — auto-rejecting
+// after a while at least tells them clearly to try again rather than
+// leaving them on an indefinite "waiting to be let in" screen.
+const joinRequestTimeout = 60 * time.Second
 
 const emptyRoomGrace = 90 * time.Second
 
@@ -1434,6 +1504,95 @@ func scheduleReap(room *Room) {
 // enterRoom registers client in room, evicting any previous connection that was
 // holding the same user id (a reload leaves the old socket briefly alive). It
 // returns the peers that were already present, never including the caller.
+// markAdmitted records that userID has been let into room at least once —
+// checked by join_room on every subsequent attempt so a reconnect (network
+// blip, second tab, reload) never re-triggers the knock/approve flow for an
+// identity that's already inside.
+func markAdmitted(room *Room, userID string) {
+	room.mu.Lock()
+	if room.admitted == nil {
+		room.admitted = map[string]bool{}
+	}
+	room.admitted[userID] = true
+	room.mu.Unlock()
+}
+
+// attemptRoomEntry is the shared knock-to-join gate behind both create_room
+// and join_room: an already-admitted identity (the creator, or anyone
+// previously approved into this exact room instance) is let straight in,
+// same as before this feature existed; anyone else, when the room already
+// has other members, must wait for one of them to accept or reject before
+// being admitted. successType is which event the caller gets on immediate
+// (non-knock) entry — "room_created" for create_room, "room_joined" for
+// join_room; once a knock is actually decided by someone, the outcome is
+// always reported as "room_joined" regardless of which message type
+// triggered the knock, since by then "you're in" is the only thing that's
+// true — nothing was created.
+//
+// Applying this to create_room too (not just join_room) closes a real gap a
+// join_room-only version would leave open: create_room reuses an existing
+// room for its code rather than replacing it (see its own comment), so
+// without this same gate anyone could bypass the whole approval flow simply
+// by sending create_room with a room code they'd learned instead of
+// join_room — the room object is identical either way, and admission should
+// not depend on which message type asked for it.
+func attemptRoomEntry(client *SigClient, room *Room, successType string) {
+	room.mu.RLock()
+	alreadyAdmitted := room.admitted[client.id]
+	empty := len(room.clients) == 0
+	requireApproval := room.requireApproval
+	room.mu.RUnlock()
+
+	if !requireApproval || alreadyAdmitted || empty {
+		markAdmitted(room, client.id)
+		peers := enterRoom(client, room)
+		log.Printf("Room %s entered by %s (%s) via %s, now %d participant(s)",
+			room.id, client.id, client.name, successType, len(peers)+1)
+		client.sendMsg(successType, map[string]any{"room_id": room.id, "peers": peers})
+		if len(peers) > 0 {
+			room.broadcast(client.id, "peer_joined", map[string]string{"peer_id": client.id, "peer_name": client.name})
+		}
+		return
+	}
+
+	// Knock: hold this connection out of room.clients — not a member yet, not
+	// broadcastable to, invisible to everyone already inside — until
+	// join_response resolves it. client.room deliberately stays nil for this
+	// whole window; pendingRoom/pendingReqID are what let the deferred
+	// cleanup in handleSignaling find and remove this specific knock if the
+	// browser closes the tab before anyone answers (see their own comment).
+	reqID := newID()
+	room.mu.Lock()
+	if room.pending == nil {
+		room.pending = map[string]*PendingJoin{}
+	}
+	room.pending[reqID] = &PendingJoin{client: client, userID: client.id, userName: client.name}
+	room.mu.Unlock()
+
+	client.pendingRoom = room
+	client.pendingReqID = reqID
+	client.sendMsg("join_waiting", map[string]string{"room_id": room.id})
+	room.broadcastAll("join_request", map[string]string{
+		"request_id": reqID, "user_id": client.id, "user_name": client.name,
+	})
+	log.Printf("Room %s: %s (%s) is waiting to be let in (request %s)", room.id, client.id, client.name, reqID)
+
+	time.AfterFunc(joinRequestTimeout, func() {
+		room.mu.Lock()
+		_, stillPending := room.pending[reqID]
+		if stillPending {
+			delete(room.pending, reqID)
+		}
+		room.mu.Unlock()
+		// If it's already gone, join_response (or a cancellation) beat this
+		// timer to it — nothing left to do.
+		if stillPending {
+			log.Printf("Room %s: join request %s (%s) timed out with no response", room.id, reqID, client.name)
+			client.sendMsg("join_rejected", map[string]string{"reason": "timed_out"})
+		}
+	})
+}
+
 func enterRoom(client *SigClient, room *Room) []PeerInfo {
 	room.mu.Lock()
 	peers := []PeerInfo{}
@@ -1645,6 +1804,25 @@ func handleSignaling(w http.ResponseWriter, r *http.Request) {
 		// Delayed, not inline — see wsLeaveGraceInterval above for why.
 		if client.room != nil {
 			time.AfterFunc(wsLeaveGraceInterval, func() { leaveRoom(client) })
+		} else if client.pendingRoom != nil {
+			// Never made it into room.clients — this connection closed while
+			// still knocking, waiting on a join_response nobody sent yet (tab
+			// closed, gave up, network dropped). No grace window needed the
+			// way a real member gets one: there's no call to preserve, just a
+			// knock to withdraw. Racing join_response/the timeout AfterFunc is
+			// fine either way — whichever removes the map entry first wins,
+			// the other finds it already gone and no-ops (see their comments).
+			room := client.pendingRoom
+			reqID := client.pendingReqID
+			room.mu.Lock()
+			_, stillPending := room.pending[reqID]
+			if stillPending {
+				delete(room.pending, reqID)
+			}
+			room.mu.Unlock()
+			if stillPending {
+				room.broadcastAll("join_request_cancelled", map[string]string{"request_id": reqID})
+			}
 		}
 		log.Printf("Signaling client disconnected: %s (%s) after %s, room=%s",
 			client.id, client.name, time.Since(connectedAt).Round(time.Second), roomLabel(client))
@@ -1698,12 +1876,7 @@ func handleSignaling(w http.ResponseWriter, r *http.Request) {
 				continue
 			}
 
-			peers := enterRoom(client, room)
-			client.sendMsg("room_created", map[string]any{"room_id": code, "peers": peers})
-			if len(peers) > 0 {
-				room.broadcast(client.id, "peer_joined", map[string]string{"peer_id": client.id, "peer_name": client.name})
-			}
-			log.Printf("Room %s created by %s (%s), %d existing peer(s)", code, client.id, client.name, len(peers))
+			attemptRoomEntry(client, room, "room_created")
 		case "join_room":
 			var p JoinRoomPayload
 			json.Unmarshal(msg.Payload, &p) //nolint
@@ -1735,14 +1908,39 @@ func handleSignaling(w http.ResponseWriter, r *http.Request) {
 				continue
 			}
 
-			peers := enterRoom(client, room)
-			// Previously unlogged. Without this a post-incident investigation cannot
-			// attribute ANY participant to a room — only create_room recorded a code,
-			// so joiners were anonymous connect/disconnect pairs. Room membership is
-			// the backbone of every call RCA; log it.
-			log.Printf("Room %s joined by %s (%s), now %d participant(s)", room.id, client.id, client.name, len(peers)+1)
-			client.sendMsg("room_joined", map[string]any{"room_id": room.id, "peers": peers})
-			room.broadcast(client.id, "peer_joined", map[string]string{"peer_id": client.id, "peer_name": client.name})
+			attemptRoomEntry(client, room, "room_joined")
+		case "join_response":
+			var p JoinResponsePayload
+			json.Unmarshal(msg.Payload, &p) //nolint
+			if client.room == nil {
+				continue // not an actual member of any room — can't approve anyone
+			}
+			room := client.room
+			room.mu.Lock()
+			pj, found := room.pending[p.RequestID]
+			if found {
+				delete(room.pending, p.RequestID)
+			}
+			room.mu.Unlock()
+			if !found {
+				// Already decided by someone else, already timed out, or the
+				// requester already gave up and disconnected — nothing to do.
+				continue
+			}
+			if p.Approve {
+				markAdmitted(room, pj.userID)
+				peers := enterRoom(pj.client, room)
+				log.Printf("Room %s: %s (%s) admitted by %s after a join request", room.id, pj.userID, pj.userName, client.name)
+				pj.client.sendMsg("room_joined", map[string]any{"room_id": room.id, "peers": peers})
+				room.broadcast(pj.client.id, "peer_joined", map[string]string{"peer_id": pj.client.id, "peer_name": pj.client.name})
+			} else {
+				log.Printf("Room %s: %s (%s) was denied entry by %s", room.id, pj.userID, pj.userName, client.name)
+				pj.client.sendMsg("join_rejected", map[string]string{"reason": "denied"})
+			}
+			// Tell everyone else's popup for this same request to close too —
+			// only one of possibly several current participants can decide it,
+			// and the rest never sent a join_response at all.
+			room.broadcastAll("join_request_cancelled", map[string]string{"request_id": p.RequestID})
 		// "offer"/"answer"/"ice_candidate" (mesh SDP/ICE relay) and
 		// "screen_share_state" (mesh screen-share track presence) were removed
 		// here as part of the mesh->LiveKit SFU migration (2026-08-27) — camera/
@@ -1801,6 +1999,23 @@ func handleSignaling(w http.ResponseWriter, r *http.Request) {
 				client.room.mu.Lock()
 				client.captionLang = p.Lang
 				client.room.mu.Unlock()
+			}
+		// Knock-to-join's on/off switch — see Room.requireApproval's own
+		// comment for why this is opt-in rather than automatic, and toggle-
+		// able rather than fixed at creation time. Anyone currently in the
+		// room can flip it (same trust level as everything else here — no
+		// separate host concept exists server-side); broadcast so every
+		// other participant's own UI (if it shows the setting at all) stays
+		// in sync rather than only reflecting whoever last toggled it.
+		case "require_approval":
+			var p RequireApprovalPayload
+			json.Unmarshal(msg.Payload, &p) //nolint
+			if client.room != nil {
+				room := client.room
+				room.mu.Lock()
+				room.requireApproval = p.Value
+				room.mu.Unlock()
+				room.broadcastAll("require_approval", map[string]bool{"value": p.Value})
 			}
 		}
 	}
@@ -1869,6 +2084,11 @@ func main() {
 	log.Println("[DB] connected to MariaDB")
 	migrate()
 	migrateInterview()
+	migrateAI()
+	migrateAIMeetings()
+	migrateAIDocuments()
+	migrateMeetingTranscripts()
+	startMeetingReminderTicker()
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/ws", handleSignaling)
@@ -1882,6 +2102,32 @@ func main() {
 	mux.HandleFunc("/api/livekit/token", handleLiveKitToken)
 	mux.HandleFunc("/api/client-events", handleClientEvents)
 	mux.HandleFunc("/api/interview/", handleInterviewRoutes)
+	mux.HandleFunc("/api/ai/status", handleAIStatus)
+	mux.HandleFunc("/api/ai/chat", handleAIChat)
+	mux.HandleFunc("/api/ai/rewrite", handleAIRewrite)
+	mux.HandleFunc("/api/ai/reply-suggestions", handleAIReplySuggestions)
+	mux.HandleFunc("/api/ai/ask-thread", handleAIAskThread)
+	mux.HandleFunc("/api/ai/analyze-thread", handleAIAnalyzeThread)
+	mux.HandleFunc("/api/ai/memory", handleAIMemory)
+	mux.HandleFunc("/api/ai/memory/", handleAIMemory)
+	mux.HandleFunc("/api/ai/tasks", handleAITasks)
+	mux.HandleFunc("/api/ai/tasks/", handleAITaskComplete)
+	mux.HandleFunc("/api/ai/reminders", handleAIReminders)
+	mux.HandleFunc("/api/ai/reminders/", handleAIReminders)
+	mux.HandleFunc("/api/ai/search", handleAISearch)
+	mux.HandleFunc("/api/ai/translate", handleAITranslate)
+	mux.HandleFunc("/api/ai/documents/extract", handleAIDocumentExtract)
+	mux.HandleFunc("/api/ai/documents/ask", handleAIDocumentAsk)
+	mux.HandleFunc("/api/meetings/", func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case strings.HasSuffix(r.URL.Path, "/transcript"):
+			handleMeetingTranscript(w, r)
+		case strings.HasSuffix(r.URL.Path, "/summary"):
+			handleMeetingSummary(w, r)
+		default:
+			fail(w, "not found", 404)
+		}
+	})
 	mux.HandleFunc("/api/users", handleUsers)
 	mux.HandleFunc("/api/threads", handleThreads)
 	mux.HandleFunc("/api/threads/", handleMessages)

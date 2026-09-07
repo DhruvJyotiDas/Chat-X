@@ -14,6 +14,14 @@ export interface CaptionEvent {
   /** Only present on finals, and only for languages someone in the room has
    *  actually selected — see activeCaptionLangs in transcription_relay.go. */
   translations?: Record<string, string>;
+  /** Correlates a final with the "caption_translation" event that may follow
+   *  it — see server/transcription_relay.go's handleASREvent. Translation
+   *  now runs after the original final is already broadcast (so translating
+   *  never delays the original caption every viewer sees), so it arrives as
+   *  its own later event rather than already attached; capId is how a
+   *  translation update finds the right line to attach itself to instead of
+   *  being mistaken for a new utterance. Only finals carry one. */
+  capId?: string;
   /** Wall-clock time this event was received, client-side — CaptionBar uses
    *  this to fade out a speaker's line once no new events have arrived for a
    *  while (they stopped talking), since the event stream itself carries no
@@ -29,6 +37,8 @@ export interface TranscriptLine {
   speaker: string;
   lang: string;
   translations?: Record<string, string>;
+  /** See CaptionEvent.capId. */
+  capId?: string;
 }
 
 /** What a viewer should actually see for one caption event, given their own
@@ -42,12 +52,11 @@ export function resolveCaptionText(evt: { text: string; lang: string; translatio
   return evt.translations?.[myLang] ?? evt.text;
 }
 
-// Curated for now — the plan calls for sourcing this from the GPU VM's
-// /healthz supported_languages instead so the picker can't claim a language
-// nothing actually produces, but there is nothing to source from until the
-// VM exists. Revisit once ASR_GPU_URL points at a real one; keep this list a
-// subset of gpu/asr_server.py's FLORES_CODE map in the meantime so a pick
-// here is never one NLLB can't actually translate into.
+// Used both by the chat "Translate" button (translating a message into any
+// of these, English included — a real, valid target there) and by live
+// captions' translate-target picker (English excluded there — see
+// CAPTION_TARGET_LANGUAGES below — since speech recognition itself only
+// produces English now, see gpu/ASR_CONTRACT.md's 2026-09 update).
 export const CAPTION_LANGUAGES: { code: string; label: string }[] = [
   { code: 'en', label: 'English' },
   { code: 'hi', label: 'Hindi' },
@@ -60,6 +69,11 @@ export const CAPTION_LANGUAGES: { code: string; label: string }[] = [
   { code: 'de', label: 'German' },
   { code: 'ja', label: 'Japanese' },
 ];
+
+// English excluded — live speech is always recognized as English now (the
+// GPU VM only runs nemotron for ASR), so "translate into English" is a
+// no-op there in a way it never is for the chat translate feature above.
+export const CAPTION_TARGET_LANGUAGES = CAPTION_LANGUAGES.filter((l) => l.code !== 'en');
 
 // Caption text size — a personal display preference, not something that
 // needs to sync between peers (unlike caption language, which affects what

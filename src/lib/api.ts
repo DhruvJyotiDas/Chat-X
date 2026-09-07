@@ -102,7 +102,67 @@ export const api = {
   // for under mesh.
   getTurnCredentials: () =>
     request<{ iceServers: RTCIceServer[]; ttlSeconds: number }>('GET', '/turn-credentials'),
+
+  // ── AI features (server/ai.go, gpu/AI_CONTRACT.md) ──────────────────────
+  getAIStatus: () => request<{ configured: boolean; detail?: string }>('GET', '/ai/status'),
+  aiRewrite: (text: string, mode: string) =>
+    request<{ result: string }>('POST', '/ai/rewrite', { text, mode }),
+  aiReplySuggestions: (threadId: string) =>
+    request<{ suggestions: { tone: string; text: string }[] }>('POST', '/ai/reply-suggestions', { threadId }),
+  aiAskThread: (threadId: string, question: string) =>
+    request<{ result: string }>('POST', '/ai/ask-thread', { threadId, question }),
+  aiAnalyzeThread: (threadId: string) =>
+    request<AIThreadAnalysis>('POST', '/ai/analyze-thread', { threadId }),
+  getAIMemory: (threadId?: string) =>
+    request<{ memory: AIMemoryItem[] }>('GET', `/ai/memory${threadId ? `?threadId=${encodeURIComponent(threadId)}` : ''}`),
+  deleteAIMemory: (id: string) => request<{ ok: boolean }>('DELETE', `/ai/memory/${id}`),
+  getAITasks: () => request<{ owedByMe: AITaskItem[]; owedToMe: AITaskItem[] }>('GET', '/ai/tasks'),
+  completeAITask: (id: string) => request<{ ok: boolean }>('POST', `/ai/tasks/${id}/complete`),
+  getAIReminders: () => request<{ reminders: AIReminderItem[] }>('GET', '/ai/reminders'),
+  completeAIReminder: (id: string) => request<{ ok: boolean }>('POST', `/ai/reminders/${id}/complete`),
+  deleteAIReminder: (id: string) => request<{ ok: boolean }>('DELETE', `/ai/reminders/${id}`),
+  aiSearch: (query: string, threadId?: string) =>
+    request<{ results: AISearchResult[] }>('POST', '/ai/search', { query, threadId }),
+  aiTranslate: (text: string, targetLang: string) =>
+    request<{ result: string }>('POST', '/ai/translate', { text, targetLang }),
+  aiExtractDocument: (messageId: string) =>
+    request<{ summary: string; textLength: number }>('POST', '/ai/documents/extract', { messageId }),
+  aiAskDocument: (messageId: string, question: string) =>
+    request<{ result: string }>('POST', '/ai/documents/ask', { messageId, question }),
+  // ── Meeting transcript + MOM (server/meeting_transcripts.go) ─────────────
+  getMeetingTranscript: (roomId: string) =>
+    request<{ roomId: string; lines: MeetingTranscriptLine[] }>('GET', `/meetings/${encodeURIComponent(roomId)}/transcript`),
+  getMeetingSummary: (roomId: string) =>
+    request<MeetingSummary>('POST', `/meetings/${encodeURIComponent(roomId)}/summary`),
 };
+
+// ── AI feature types (server/ai.go) ─────────────────────────────────────────
+
+export interface AIActionItem { description: string; assignee: string; due: string }
+export interface AIReminderSuggestion { text: string; when: string }
+export interface AIMeetingSuggestion { title: string; when: string }
+export interface AIThreadAnalysis {
+  summary: string;
+  keyPoints: string[];
+  decisions: string[];
+  questions: string[];
+  actionItems: AIActionItem[];
+  reminders: AIReminderSuggestion[];
+  meetingSuggestions: AIMeetingSuggestion[];
+}
+export interface AIMemoryItem { id: string; fact: string; threadId?: string; createdAt: string }
+export interface AITaskItem { id: string; threadId: string; description: string; createdAt: string }
+export interface AIReminderItem { id: string; threadId?: string; text: string; createdAt: string }
+export interface AISearchResult { messageId: string; threadId: string; threadName: string; senderName: string; text: string; createdAt: string }
+export interface MeetingTranscriptLine { speakerId: string; speakerName: string; text: string; lang: string; createdAt: string }
+export interface MeetingActionItem { description: string; owner: string }
+export interface MeetingSummary {
+  summary: string;
+  attendees: string[];
+  keyPoints: string[];
+  decisions: string[];
+  actionItems: MeetingActionItem[];
+}
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -167,7 +227,8 @@ export type ChatWSEvent =
   | { type: 'typing_stop'; payload: { threadId: string; userId: string } }
   | { type: 'call_invite'; payload: { fromId: string; fromName: string; roomId: string } }
   | { type: 'call_declined'; payload: { fromId: string } }
-  | { type: 'call_accepted'; payload: { fromId: string } };
+  | { type: 'call_accepted'; payload: { fromId: string } }
+  | { type: 'meeting_reminder'; payload: { threadId: string; meetingId: string; title: string; date: string; time: string } };
 
 export function connectChatWS(
   onEvent: (e: ChatWSEvent) => void,

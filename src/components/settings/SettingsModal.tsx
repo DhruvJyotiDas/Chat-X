@@ -222,6 +222,14 @@ function PreferencesTab() {
     const next = { ...notifs, [key]: value };
     setNotifs(next);
     if (currentUser) saveNotifications(currentUser.id, next);
+    // Browsers only grant Notification permission from a real user gesture —
+    // this toggle click is exactly that, and it's the one place in the app
+    // that has a genuine reason to ask (meeting_reminder events are otherwise
+    // silent OS-notification-wise, falling back to the in-app banner alone;
+    // see ChatContext's meeting_reminder handler and TopBar's banner).
+    if (key === 'meetingReminders' && value && typeof Notification !== 'undefined' && Notification.permission === 'default') {
+      Notification.requestPermission().catch(() => {});
+    }
   };
 
   const THEME_OPTIONS: { id: ThemePreference; label: string; Icon: React.ElementType }[] = [

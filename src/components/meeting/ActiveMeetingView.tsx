@@ -6,19 +6,19 @@ import {
   MoreVertical, Volume2, Lightbulb, Tag, Hash, HelpCircle,
   Activity, Zap, Mic2, ChevronDown, Link, ChevronLeft, ChevronRight,
   Pin, PinOff, Minimize2, ArrowLeft, AlertTriangle, Hand, Smile, Captions,
+  Loader2, Download,
 } from 'lucide-react';
 import { useMeeting } from '../../context/MeetingContext';
 import { PeerInfo } from '../../hooks/useWebRTC';
 import { useLiveCaptions } from '../../hooks/useLiveCaptions';
 import { isLiveCaptionsSupported } from '../../lib/liveCaptions';
 import {
-  resolveCaptionText, CAPTION_LANGUAGES, CAPTION_SIZES, loadCaptionSize, saveCaptionSize,
+  resolveCaptionText, CAPTION_TARGET_LANGUAGES, CAPTION_SIZES, loadCaptionSize, saveCaptionSize,
   type TranscriptLine, type KeyPoint, type CaptionSize,
 } from '../../lib/captions';
 import CaptionBar from './CaptionBar';
 import { useAuth } from '../../context/AuthContext';
 import { useGridLayout, computeTileSize } from '../../hooks/useGridLayout';
-import { useAudioLevels } from '../../hooks/useAudioLevels';
 import { usePagination, type Pagination } from '../../hooks/usePagination';
 import MeetingInviteDialog from './MeetingInviteDialog';
 import { registerAudioSink, isSpeakerSelectionSupported, setPreferredSpeaker } from '../../lib/audioOutput';
@@ -28,6 +28,7 @@ import type { PeerLink, LinkQuality } from '../../lib/connectionStats';
 import { useTileOrder } from '../../hooks/useTileOrder';
 import { useHasVideo } from '../../hooks/useHasVideo';
 import { useStalledVideoRecovery } from '../../hooks/useStalledVideoRecovery';
+import { api, type MeetingSummary } from '../../lib/api';
 import { useSilentMic } from '../../hooks/useSilentMic';
 import { useCallShortcuts, SHORTCUT_HINTS } from '../../hooks/useCallShortcuts';
 import { REACTIONS } from '../../lib/reactions';
@@ -78,24 +79,33 @@ function playWhenAllowed(el: HTMLMediaElement) {
 // audio was only audible for tiles that happened to be rendered. The grid
 // renders one page at a time (`gridPagination.tiles`) and `GRID_LAYOUTS` caps at
 // 16 tiles — 12 at a typical laptop width — so in a large call you could hear at
-// most 11 of the other participants, and paging changed *which* 11. The streams
-// were arriving the whole time: `useAudioLevels` runs an analyser over every
-// peer, so the app was measuring audio it never routed to an output.
+// most 11 of the other participants, and paging changed *which* 11.
 //
-// `RemoteTile`'s <video> is therefore `muted` now. If you ever un-mute it, every
-// on-screen peer will play twice (here and there) — which sounds like an echo,
-// not like a duplicate, so it is easy to misdiagnose.
+// This is also why every peer's audio subscribes unconditionally in
+// useWebRTC.ts regardless of the visible-tile set that gates camera video
+// (see setVisiblePeerIds) — an off-page peer still needs to be heard.
+//
+// `RemoteTile`'s <video> is `muted`, and since it now attaches the peer's
+// video Track directly (track.attach(), not a combined-stream srcObject —
+// see peer.videoTrack's comment in useWebRTC.ts) there is no audio track on
+// that element to begin with; this <audio> is structurally the only place
+// this peer's audio can come out of, not just "don't unmute it or it'll echo".
 function PeerAudio({ peer }: { peer: PeerInfo }) {
   const ref = useRef<HTMLAudioElement>(null);
 
-  const attach = useCallback((el: HTMLAudioElement | null) => {
-    ref.current = el;
-    if (!el || !peer.stream) return;
-    if (el.srcObject !== peer.stream) el.srcObject = peer.stream;
+  // track.attach() rather than a manual srcObject assignment — see peer.audioTrack's
+  // own comment in useWebRTC.ts. Attaches ONLY the audio track, so (unlike the old
+  // combined-MediaStream approach) there is no audio track riding along on RemoteTile's
+  // muted <video> to begin with — structurally, not just by convention, one place this
+  // peer's audio can ever come out of.
+  useEffect(() => {
+    const el = ref.current;
+    const track = peer.audioTrack;
+    if (!el || !track) return;
+    track.attach(el);
     playWhenAllowed(el);
-  }, [peer.stream]);
-
-  useEffect(() => { attach(ref.current); }, [attach]);
+    return () => { track.detach(el); };
+  }, [peer.audioTrack]);
 
   // Peers join and leave throughout a call, so each new element has to be pointed at
   // the chosen speaker as it mounts — a device selected earlier cannot reach an
@@ -110,7 +120,7 @@ function PeerAudio({ peer }: { peer: PeerInfo }) {
 
   return (
     <audio
-      ref={attach}
+      ref={ref}
       autoPlay
       // eslint-disable-next-line jsx-a11y/media-has-caption
       onCanPlay={ensurePlaying}
@@ -394,14 +404,23 @@ function RemoteTile({ peer }: { peer: PeerInfo }) {
   // paused on a black frame: the "I reloaded and now I can't see them" symptom.
   // Re-asserting playback whenever the element reports new data (and if it ever
   // ends up paused, which nothing in the UI does deliberately) is self-healing.
-  const attach = useCallback((vid: HTMLVideoElement | null) => {
-    ref.current = vid;
-    if (!vid || !peer.stream) return;
-    if (vid.srcObject !== peer.stream) vid.srcObject = peer.stream;
+  //
+  // track.attach() rather than a manual srcObject assignment — this is what wires
+  // this element into Room's adaptiveStream tracking (see peer.videoTrack's own
+  // comment in useWebRTC.ts): LiveKit watches attached elements' viewport
+  // visibility and size to request a lower simulcast layer, or none at all, for
+  // one that's off-screen or small — a manual srcObject assignment gives it
+  // nothing to observe. detach() on cleanup matters here specifically because
+  // this peer's video can be unsubscribed entirely (paginated away) while this
+  // component may still be mounted for one more render.
+  useEffect(() => {
+    const vid = ref.current;
+    const track = peer.videoTrack;
+    if (!vid || !track) return;
+    track.attach(vid);
     playWhenAllowed(vid);
-  }, [peer.stream]);
-
-  useEffect(() => { attach(ref.current); }, [attach]);
+    return () => { track.detach(vid); };
+  }, [peer.videoTrack]);
 
   const ensurePlaying = () => {
     const vid = ref.current;
@@ -445,7 +464,7 @@ function RemoteTile({ peer }: { peer: PeerInfo }) {
   return (
     <>
       <video
-        ref={attach}
+        ref={ref}
         autoPlay
         playsInline
         // Video only — this peer's audio comes out of the persistent <PeerAudio>
@@ -772,6 +791,7 @@ function RightPanel({
   links, raisedHands, isHandRaised,
   transcribing, captionsSupported, captionsUnavailable, transcriptLines, keyPoints, transcriptEndRef,
   myCaptionLang, onCaptionLangChange, captionSize, onCaptionSizeChange, onStartCaptions, onStopCaptions,
+  roomId,
 }: {
   tab: 'chat' | 'people' | 'captions'; onTabChange: (t: 'chat' | 'people' | 'captions') => void;
   chatMessages: { id: string; fromId: string; fromName: string; text: string; time: string; isSelf: boolean }[];
@@ -782,6 +802,7 @@ function RightPanel({
   myCaptionLang: string | null; onCaptionLangChange: (lang: string | null) => void;
   captionSize: CaptionSize; onCaptionSizeChange: (size: CaptionSize) => void;
   onStartCaptions: () => void; onStopCaptions: () => void;
+  roomId: string | null;
 }) {
   const [input, setInput] = useState('');
   const chatEndRef = useRef<HTMLDivElement>(null);
@@ -789,6 +810,51 @@ function RightPanel({
   useEffect(() => { if (tab === 'captions') transcriptEndRef.current?.scrollIntoView({ behavior: 'smooth' }); }, [transcriptLines, tab, transcriptEndRef]);
 
   const send = () => { if (!input.trim()) return; onSend(input.trim()); setInput(''); };
+
+  // ── Meeting transcript file + MOM summary (server/meeting_transcripts.go) ──
+  // The server saves every FINAL caption line as it's spoken, independent of
+  // whether anyone has this panel open — transcriptLines here is only this
+  // client's own local log (capped at 50, gone on refresh), so both actions
+  // below fetch the real, complete, durable record from the server rather
+  // than exporting/summarizing whatever happens to still be in memory here.
+  const [isDownloading, setIsDownloading] = useState(false);
+  const [isSummarizing, setIsSummarizing] = useState(false);
+  const [summary, setSummary] = useState<MeetingSummary | null>(null);
+  const [transcriptError, setTranscriptError] = useState<string | null>(null);
+
+  const handleDownloadTranscript = async () => {
+    if (!roomId || isDownloading) return;
+    setIsDownloading(true);
+    setTranscriptError(null);
+    try {
+      const { lines } = await api.getMeetingTranscript(roomId);
+      if (lines.length === 0) { setTranscriptError('No transcript saved yet — turn captions on and speak first.'); return; }
+      const text = lines.map((l) => `[${new Date(l.createdAt).toLocaleTimeString()}] ${l.speakerName}: ${l.text}`).join('\n');
+      const blob = new Blob([text], { type: 'text/plain' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url; a.download = `transcript-${roomId}.txt`;
+      document.body.appendChild(a); a.click(); a.remove();
+      URL.revokeObjectURL(url);
+    } catch (err) {
+      setTranscriptError(err instanceof Error ? err.message : 'Could not download the transcript');
+    } finally {
+      setIsDownloading(false);
+    }
+  };
+
+  const handleGenerateSummary = async () => {
+    if (!roomId || isSummarizing) return;
+    setIsSummarizing(true);
+    setTranscriptError(null);
+    try {
+      setSummary(await api.getMeetingSummary(roomId));
+    } catch (err) {
+      setTranscriptError(err instanceof Error ? err.message : 'Could not generate a summary');
+    } finally {
+      setIsSummarizing(false);
+    }
+  };
 
   return (
     <div className="w-full h-full flex flex-col bg-[#202124] overflow-hidden">
@@ -895,17 +961,36 @@ function RightPanel({
               </button>
             </div>
 
-            <label className="flex flex-col gap-1">
-              <span className="text-[9px] text-[#9aa0a6] font-semibold">Caption language</span>
-              <select
-                value={myCaptionLang ?? ''} onChange={(e) => onCaptionLangChange(e.target.value || null)}
-                className="bg-[#3c4043] text-[#e8eaed] text-[10px] rounded-lg px-2 py-1.5 border border-[#5f6368]/30 cursor-pointer"
-                title="Translate captions into"
-              >
-                <option value="">Original language</option>
-                {CAPTION_LANGUAGES.map((l) => <option key={l.code} value={l.code}>{l.label}</option>)}
-              </select>
-            </label>
+            <div className="flex flex-col gap-1.5">
+              {/* Speech recognition itself is English-only now (the GPU VM
+                  only runs nemotron — see gpu/ASR_CONTRACT.md's 2026-09
+                  update), so this is deliberately a plain ON/OFF toggle for
+                  translating that English into one other language, not a
+                  "pick your caption language from many" picker the way it
+                  used to be — captions are always English unless this is on. */}
+              <label className="flex items-center justify-between cursor-pointer select-none">
+                <span className="text-[9px] text-[#9aa0a6] font-semibold">Translate from English</span>
+                <button
+                  type="button"
+                  role="switch"
+                  aria-checked={myCaptionLang !== null}
+                  aria-label="Translate captions from English"
+                  onClick={() => onCaptionLangChange(myCaptionLang !== null ? null : (CAPTION_TARGET_LANGUAGES[0]?.code ?? null))}
+                  className={`relative shrink-0 w-8 h-[18px] rounded-full transition-colors ${myCaptionLang !== null ? 'bg-[#8ab4f8]' : 'bg-[#3c4043]'}`}
+                >
+                  <span className={`absolute top-0.5 w-[14px] h-[14px] rounded-full bg-white transition-transform ${myCaptionLang !== null ? 'translate-x-[17px]' : 'translate-x-0.5'}`} />
+                </button>
+              </label>
+              {myCaptionLang !== null && (
+                <select
+                  value={myCaptionLang} onChange={(e) => onCaptionLangChange(e.target.value)}
+                  className="bg-[#3c4043] text-[#e8eaed] text-[10px] rounded-lg px-2 py-1.5 border border-[#5f6368]/30 cursor-pointer"
+                  title="Translate captions into"
+                >
+                  {CAPTION_TARGET_LANGUAGES.map((l) => <option key={l.code} value={l.code}>{l.label}</option>)}
+                </select>
+              )}
+            </div>
 
             <div className="flex flex-col gap-1">
               <span className="text-[9px] text-[#9aa0a6] font-semibold">Caption size</span>
@@ -931,6 +1016,67 @@ function RightPanel({
                 : captionsUnavailable === 'loading' ? 'Captions are starting up — try again shortly.'
                 : 'Captions are temporarily unavailable.'}
             </p>
+          )}
+
+          {/* The server saves every final caption line as it's spoken,
+              independent of this panel even being open — these two actions
+              pull that durable record, not this client's own local log. */}
+          <div className="px-3 pt-2.5 shrink-0 flex flex-col gap-2">
+            <div className="flex gap-2">
+              <button
+                onClick={handleDownloadTranscript}
+                disabled={!roomId || isDownloading}
+                className="flex-1 flex items-center justify-center gap-1.5 bg-[#3c4043] hover:bg-[#4a4d51] disabled:opacity-40 text-[#e8eaed] text-[10px] font-semibold py-1.5 rounded-lg transition-colors cursor-pointer"
+              >
+                {isDownloading ? <Loader2 className="w-3 h-3 animate-spin" /> : <Download className="w-3 h-3" />}
+                Download transcript
+              </button>
+              <button
+                onClick={handleGenerateSummary}
+                disabled={!roomId || isSummarizing}
+                className="flex-1 flex items-center justify-center gap-1.5 bg-[#3c4043] hover:bg-[#4a4d51] disabled:opacity-40 text-[#e8eaed] text-[10px] font-semibold py-1.5 rounded-lg transition-colors cursor-pointer"
+              >
+                {isSummarizing ? <Loader2 className="w-3 h-3 animate-spin" /> : <Lightbulb className="w-3 h-3" />}
+                {isSummarizing ? 'Summarizing…' : 'Meeting summary'}
+              </button>
+            </div>
+            {transcriptError && <p className="text-[10px] text-[#f28b82]">{transcriptError}</p>}
+            {isSummarizing && <p className="text-[10px] text-[#9aa0a6]">This can take a couple of minutes for a long meeting.</p>}
+          </div>
+
+          {summary && (
+            <div className="border-b border-[#3c4043] p-3 shrink-0 flex flex-col gap-2.5 max-h-64 overflow-y-auto scrollbar-hide">
+              <div className="flex items-center justify-between">
+                <p className="text-[9px] font-bold uppercase tracking-wider text-[#9aa0a6]">Meeting Summary</p>
+                <button onClick={() => setSummary(null)} className="text-[#9aa0a6] hover:text-[#e8eaed] cursor-pointer"><X className="w-3 h-3" /></button>
+              </div>
+              <p className="text-[11px] text-[#e8eaed] leading-relaxed">{summary.summary}</p>
+              {summary.attendees.length > 0 && (
+                <p className="text-[10px] text-[#9aa0a6]"><span className="font-semibold text-[#c7c9cc]">Attendees: </span>{summary.attendees.join(', ')}</p>
+              )}
+              {summary.keyPoints.length > 0 && (
+                <div>
+                  <p className="text-[9px] font-bold uppercase tracking-wider text-[#9aa0a6] mb-1">Key points</p>
+                  <ul className="space-y-0.5">{summary.keyPoints.map((p, i) => <li key={i} className="text-[10px] text-[#e8eaed] pl-3 relative before:content-['•'] before:absolute before:left-0 before:text-[#9aa0a6]">{p}</li>)}</ul>
+                </div>
+              )}
+              {summary.decisions.length > 0 && (
+                <div>
+                  <p className="text-[9px] font-bold uppercase tracking-wider text-[#9aa0a6] mb-1">Decisions</p>
+                  <ul className="space-y-0.5">{summary.decisions.map((d, i) => <li key={i} className="text-[10px] text-[#81c995] pl-3 relative before:content-['✓'] before:absolute before:left-0">{d}</li>)}</ul>
+                </div>
+              )}
+              {summary.actionItems.length > 0 && (
+                <div>
+                  <p className="text-[9px] font-bold uppercase tracking-wider text-[#9aa0a6] mb-1">Action items</p>
+                  <ul className="space-y-0.5">{summary.actionItems.map((a, i) => (
+                    <li key={i} className="text-[10px] text-[#e8eaed] pl-3 relative before:content-['→'] before:absolute before:left-0">
+                      {a.description}{a.owner && a.owner.toLowerCase() !== 'unclear' && <span className="text-[#9aa0a6]"> — {a.owner}</span>}
+                    </li>
+                  ))}</ul>
+                </div>
+              )}
+            </div>
           )}
 
           {keyPoints.length > 0 && (
@@ -985,7 +1131,7 @@ const KP_COLORS: Record<string, string> = {
 };
 
 export default function ActiveMeetingView({ onLeaveMeeting, onMinimize }: Props) {
-  const { user, roomId, localStream, peers, isMuted, isVideoOff, isScreenSharing, screenStream, screenPeers, toggleMic, setMicMuted, toggleCamera, toggleScreenShare, switchCamera, switchMic, leaveMeeting, chatMessages, sendChatMessage, showInviteDialog, dismissInviteDialog, evictedNotice, dismissEvictedNotice, mediaNotice, dismissMediaNotice, linkQuality, reactions, sendReaction, raisedHands, isHandRaised, toggleHand, liveCaptions, captionLog, captionKeyPoints, myCaptionLang, setCaptionLang } = useMeeting();
+  const { user, roomId, localStream, peers, isMuted, isVideoOff, isScreenSharing, screenStream, screenPeers, toggleMic, setMicMuted, toggleCamera, toggleScreenShare, switchCamera, switchMic, leaveMeeting, chatMessages, sendChatMessage, showInviteDialog, dismissInviteDialog, evictedNotice, dismissEvictedNotice, mediaNotice, dismissMediaNotice, linkQuality, activeSpeakerIds, setVisiblePeerIds, reactions, sendReaction, raisedHands, isHandRaised, toggleHand, liveCaptions, captionLog, captionKeyPoints, myCaptionLang, setCaptionLang } = useMeeting();
 
   // Per-peer link grades — LiveKit's own SFU-computed participant.connectionQuality,
   // pushed via events (see useWebRTC.ts), not polled here. `links` keeps its
@@ -1184,18 +1330,12 @@ export default function ActiveMeetingView({ onLeaveMeeting, onMinimize }: Props)
   ];
   const sharingPeerIds = new Set(screenPeers.map((p) => p.id));
 
-  // Client-side active-speaker detection (mesh WebRTC has no SFU to compute this for us —
-  // see src/hooks/useAudioLevels.ts). Feeds the highlight ring AND the tile ordering
-  // below; note it covers every peer, not only the rendered ones, which is what makes
-  // ranking off-page speakers possible without a server.
-  const audioLevelSources = useMemo(
-    () => [
-      { id: user.id, stream: localStream },
-      ...peers.map((p) => ({ id: p.id, stream: p.stream })),
-    ],
-    [user.id, localStream, peers],
-  );
-  const speakingIds = useAudioLevels(audioLevelSources);
+  // Active-speaker detection is server-computed by the SFU (RoomEvent.ActiveSpeakersChanged,
+  // see useWebRTC.ts) — replaces the old client-side Web Audio AnalyserNode polling loop.
+  // Feeds the highlight ring AND the tile ordering below; it covers every peer, not only
+  // the rendered ones (LiveKit pushes it regardless of subscription state), which is what
+  // makes ranking off-page speakers possible.
+  const speakingIds = activeSpeakerIds;
 
   // Container-size + orientation aware grid (see src/lib/gridLayout.ts), replacing the old
   // tile-count-only breakpoint table — a wide desktop window and a narrow phone no longer
@@ -1291,6 +1431,22 @@ export default function ActiveMeetingView({ onLeaveMeeting, onMinimize }: Props)
   const carouselScreens = activeScreens.filter((s) => s.id !== focusedScreen?.id);
   const carouselTiles = orderedTiles.filter((t) => t.id !== focusedTile?.id);
 
+  // Which remote peers currently have a mounted tile — in focus mode that's the
+  // focused participant plus everyone in the carousel (nobody is paginated away
+  // there), in grid mode it's exactly the current page. Tells useWebRTC which
+  // peers' camera video to keep subscribed (see setVisiblePeerIds's own comment
+  // in MeetingContext/useWebRTC) — audio is unaffected, PeerAudio below stays
+  // mounted for every peer regardless of this set.
+  const visiblePeerIds = useMemo(() => {
+    if (focus) {
+      const ids = new Set<string>();
+      if (focusedTile) ids.add(focusedTile.id);
+      carouselTiles.forEach((t) => ids.add(t.id));
+      return ids;
+    }
+    return new Set(gridPagination.tiles.map((t) => t.id));
+  }, [focus, focusedTile, carouselTiles, gridPagination.tiles]);
+  useEffect(() => { setVisiblePeerIds(visiblePeerIds); }, [visiblePeerIds, setVisiblePeerIds]);
 
   const meetingContent = (
     <div className="fixed inset-0 z-[9999] flex flex-col lg:flex-row bg-[#111] overflow-hidden select-none text-[#e8eaed]">
@@ -1362,6 +1518,12 @@ export default function ActiveMeetingView({ onLeaveMeeting, onMinimize }: Props)
           </button>
         </div>
       )}
+
+      {/* Knock-to-join requests render globally in App.tsx (JoinRequestBanner),
+          not here — this call screen can be minimized to a floating window
+          while browsing the rest of the app, and a knock still needs to be
+          answerable during that time, not only while ActiveMeetingView is
+          actually mounted full-screen. */}
 
       {showInviteDialog && (
         <MeetingInviteDialog onClose={dismissInviteDialog} onAddPeople={handleAddPeople} />
@@ -1564,9 +1726,19 @@ export default function ActiveMeetingView({ onLeaveMeeting, onMinimize }: Props)
             <ReactionBar onPick={sendReaction} onClose={() => setReactionBarOpen(false)} />
           )}
 
-          {transcribing && (
-            <CaptionBar liveCaptions={liveCaptions} myLang={myCaptionLang} size={captionSize} />
-          )}
+          {/* Room-wide, not gated on this participant's OWN `transcribing` toggle —
+              that flag only means "my mic is being captured for ASR", a per-speaker
+              privacy choice. Whether to DISPLAY captions is a separate question:
+              `liveCaptions` already arrives over the signalling socket's broadcast
+              path for every participant regardless of their own toggle (see
+              MeetingContext's "caption" handler), so gating the bar on `transcribing`
+              meant only the person who turned captions on ever saw the on-screen
+              subtitle bar — everyone else in the room saw nothing, even while that
+              speaker's captions were actively being broadcast to them. CaptionBar
+              already renders null when there's nothing current to show, so this is
+              safe to mount unconditionally: it appears for everyone the moment
+              anyone's speech produces a caption, and disappears again on its own. */}
+          <CaptionBar liveCaptions={liveCaptions} myLang={myCaptionLang} size={captionSize} />
 
           {/* FLOATING CONTROLS */}
           <div className="absolute bottom-3 md:bottom-6 left-1/2 -translate-x-1/2 flex items-center gap-1.5 md:gap-2 bg-[#202124]/90 backdrop-blur-xl border border-[#5f6368]/40 rounded-2xl p-1.5 md:p-2 shadow-2xl z-20 w-[max-content] max-w-[95vw] overflow-x-auto scrollbar-hide">
@@ -1673,6 +1845,7 @@ export default function ActiveMeetingView({ onLeaveMeeting, onMinimize }: Props)
               myCaptionLang={myCaptionLang} onCaptionLangChange={setCaptionLang}
               captionSize={captionSize} onCaptionSizeChange={setCaptionSize}
               onStartCaptions={() => void startTranscription()} onStopCaptions={stopTranscription}
+              roomId={roomId}
             />
           </div>
         )}

@@ -10,14 +10,10 @@ interface MeetingInviteDialogProps {
    * (e.g. opening the People panel) — this component itself stays a clean,
    * unopinionated placeholder and never assumes one exists. */
   onAddPeople?: () => void;
-  /** Whether anyone holding the link can join without host approval. Defaults
-   * to true because that's this app's actual current behavior — there's no
-   * lobby/approval-gate feature yet. Pass this explicitly once one exists. */
-  anyoneCanJoin?: boolean;
 }
 
-export default function MeetingInviteDialog({ onClose, onAddPeople, anyoneCanJoin = true }: MeetingInviteDialogProps) {
-  const { roomId } = useMeeting();
+export default function MeetingInviteDialog({ onClose, onAddPeople }: MeetingInviteDialogProps) {
+  const { roomId, requireApproval, setRequireApproval } = useMeeting();
   const { currentUser } = useAuth();
 
   const [copied, setCopied] = useState(false);
@@ -113,14 +109,26 @@ export default function MeetingInviteDialog({ onClose, onAddPeople, anyoneCanJoi
           </div>
         </div>
 
-        <div className="flex items-start gap-2 text-[11px] leading-relaxed text-[#9aa0a6]">
-          <Lock className="w-3.5 h-3.5 mt-0.5 shrink-0" />
-          <span>
-            {anyoneCanJoin
-              ? 'Anyone with this meeting link can join.'
-              : 'People using this meeting link may need permission to join.'}
+        <label className="flex items-start gap-3 cursor-pointer select-none">
+          <button
+            type="button"
+            role="switch"
+            aria-checked={requireApproval}
+            aria-label="Require approval to join"
+            onClick={() => setRequireApproval(!requireApproval)}
+            className={`relative shrink-0 mt-0.5 w-9 h-5 rounded-full transition-colors ${requireApproval ? 'bg-[#8ab4f8]' : 'bg-[#3c4043]'}`}
+          >
+            <span className={`absolute top-0.5 w-4 h-4 rounded-full bg-white transition-transform ${requireApproval ? 'translate-x-[18px]' : 'translate-x-0.5'}`} />
+          </button>
+          <span className="flex items-start gap-2 text-[11px] leading-relaxed text-[#9aa0a6]">
+            <Lock className="w-3.5 h-3.5 mt-0.5 shrink-0" />
+            <span>
+              {requireApproval
+                ? "Someone in the meeting has to let people in — you'll see a prompt when they knock."
+                : 'Anyone with this meeting link can join. Turn this on to approve people before they enter.'}
+            </span>
           </span>
-        </div>
+        </label>
 
         {hostLabel && (
           <div className="pt-3 border-t border-[#3c4043]/70 text-[11px] text-[#9aa0a6]">

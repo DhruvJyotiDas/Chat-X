@@ -19,7 +19,6 @@ package main
 // both feature's error semantics through one shared function.
 
 import (
-	"bytes"
 	"context"
 	"crypto/sha256"
 	"crypto/tls"
@@ -28,7 +27,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"log"
 	"net/http"
 	"net/url"
@@ -245,73 +243,103 @@ func asrDialStream(ctx context.Context, roomID, userID string) (*websocket.Conn,
 
 // ─── Translation ─────────────────────────────────────────────────────────────
 //
-// Stateless, called only for a final segment's distinct set of currently-
-// requested viewer languages (never for partials — see transcription_relay.go).
-// Retries once on a transport error or 5xx, same "don't hammer a struggling
-// GPU" reasoning as interview_gpu.go's gpuPost.
+// UPDATE, 2026-09: the GPU VM's own NLLB model (which used to serve
+// /v1/translate — the original version of this function POSTed there) was
+// removed alongside whisper_lid/indic_conformer when the VM was trimmed down
+// to nemotron-only for English-only ASR. Confirmed directly: /v1/translate
+// now 404s. There is no fast, purpose-built translation model left on that
+// box, so this now routes through the OTHER GPU VM's Qwen chat model
+// (AI_GPU_URL, server/ai_gpu.go) instead — the same model reply-suggestions
+// and Ask AIPA already use, with the same lessons already learned there
+// baked in (lightAIMaxTokens/lightAITimeout, trimEcho, no role-based multi-
+// turn history — see ai.go's comments on all three).
+//
+// REAL, DISCLOSED TRADEOFF: this makes translated captions noticeably
+// slower than before. NLLB was a dedicated seq2seq model, sub-second per
+// call; Qwen is a full reasoning chat model with the same largely-fixed
+// per-call overhead documented throughout ai.go — a single short sentence
+// can take anywhere from ~3s to over a minute. The ORIGINAL, untranslated
+// caption is completely unaffected (it never went through NLLB or Qwen —
+// see handleASREvent in transcription_relay.go, which broadcasts the
+// original text immediately and attaches translations only once/if they
+// finish); only a viewer who has picked a different caption language sees
+// their translated line arrive late. If a genuinely "live" translated-
+// caption experience matters, the real fix is restoring a fast translation
+// model (NLLB or similar) on the GPU VM — plenty of headroom for it
+// (nemotron alone measured using 2.6GB of the box's 23.7GB VRAM).
+//
+// Called only for a final segment's distinct set of currently-requested
+// viewer languages (never for partials — see transcription_relay.go), one
+// language at a time — translating N languages for one final costs N
+// sequential Qwen calls, not one batched call, since asking Qwen for
+// several languages in one structured response is exactly the kind of
+// multi-field formatting request that measurably becomes unreliable under
+// this model's own echo-loop tendency (see replyLineRe's comment in ai.go).
+// One call per language keeps each one small and independently recoverable:
+// a failure or slow response for one target language never blocks or
+// corrupts another.
+var languageNames = map[string]string{
+	"en": "English", "hi": "Hindi", "bn": "Bengali", "ta": "Tamil", "te": "Telugu",
+	"mr": "Marathi", "es": "Spanish", "fr": "French", "de": "German", "ja": "Japanese",
+}
+
+func languageDisplayName(code string) string {
+	if name, ok := languageNames[code]; ok {
+		return name
+	}
+	return code
+}
+
+// translateConcurrency bounds how many caption-translation calls can be
+// in-flight against the shared Qwen GPU at once, system-wide across every
+// room. Added after a real incident during this feature's own testing, not
+// speculatively: each "final" spawns its own detached goroutine (see
+// transcription_relay.go's handleASREvent — deliberately detached from the
+// speaker's own connection lifetime), and with enough of those piling up
+// concurrently — several rooms translating, or just a stream of finals in
+// one active conversation — the shared Qwen GPU (also used by reply-
+// suggestions/Ask AIPA/analyze-thread/the chat Translate button) was
+// measured going fully unresponsive for several minutes, /health included,
+// until the backlog drained on its own. A hard cap here means this
+// feature's own translation load can never again be the thing that does
+// that, regardless of how many finals arrive close together — excess
+// requests wait their turn for a free slot rather than firing all at once.
+// 2 was chosen deliberately conservative given this app's real usage
+// (~12 users, small rooms) and that the SAME GPU already serves several
+// other features; revisit only with real evidence this is too tight.
+var translateSem = make(chan struct{}, 2)
 
 func asrTranslate(ctx context.Context, text, sourceLang string, targetLangs []string) (map[string]string, error) {
-	if !asrConfigured() {
-		return nil, ErrASRNotConfigured
-	}
 	if len(targetLangs) == 0 {
 		return map[string]string{}, nil
 	}
-	body, _ := json.Marshal(map[string]any{
-		"text": text, "source_language": sourceLang, "target_languages": targetLangs,
-	})
-
-	var lastErr error
-	for attempt := 0; attempt < 2; attempt++ {
-		if attempt > 0 {
-			select {
-			case <-time.After(750 * time.Millisecond):
-			case <-ctx.Done():
-				return nil, ctx.Err()
-			}
-		}
-		rctx, cancel := context.WithTimeout(ctx, asrTimeout)
-		req, _ := http.NewRequestWithContext(rctx, "POST", asrURL+"/v1/translate", bytes.NewReader(body))
-		req.Header.Set("Content-Type", "application/json")
-		if asrToken != "" {
-			req.Header.Set("Authorization", "Bearer "+asrToken)
-		}
-		res, err := asrHTTPClient.Do(req)
-		if err != nil {
-			cancel()
-			lastErr = ErrASRUnreachable
-			continue
-		}
-		payload, readErr := io.ReadAll(io.LimitReader(res.Body, 1*1024*1024))
-		res.Body.Close()
-		cancel()
-		switch {
-		case res.StatusCode == 401 || res.StatusCode == 403:
-			return nil, ErrASRUnauthorized
-		case res.StatusCode >= 500:
-			lastErr = ErrASRUnreachable
-			continue
-		case res.StatusCode >= 400:
-			return nil, fmt.Errorf("captions engine rejected the translate request (%d)", res.StatusCode)
-		}
-		if readErr != nil {
-			lastErr = ErrASRUnreachable
-			continue
-		}
-		var out struct {
-			Translations map[string]string `json:"translations"`
-			Errors       map[string]string `json:"errors"`
-		}
-		if err := json.Unmarshal(payload, &out); err != nil {
-			return nil, fmt.Errorf("captions engine returned an unreadable reply")
-		}
-		if len(out.Errors) > 0 {
-			// Per-language failures (e.g. one target lang errored) — log and
-			// still return whatever DID translate rather than losing the
-			// whole final over one bad target.
-			log.Printf("[ASR] translate partial failure: %v", out.Errors)
-		}
-		return out.Translations, nil
+	if !aiGPUConfigured() {
+		return nil, ErrASRNotConfigured
 	}
-	return nil, lastErr
+	translations := map[string]string{}
+	var lastErr error
+	for _, lang := range targetLangs {
+		select {
+		case translateSem <- struct{}{}:
+		case <-ctx.Done():
+			return translations, ctx.Err()
+		}
+		system := fmt.Sprintf(
+			"You are a translation tool. Translate the given %s text into %s. "+
+				"Output ONLY the translated text — no notes, no quotes, no explanation, nothing else.",
+			languageDisplayName(sourceLang), languageDisplayName(lang),
+		)
+		result, err := aiChatBudgetedTimed(ctx, system, nil, text, nil, lightAIMaxTokens, lightAITimeout)
+		<-translateSem
+		if err != nil {
+			log.Printf("[ASR] translate to %s failed: %v", lang, err)
+			lastErr = err
+			continue
+		}
+		translations[lang] = result
+	}
+	if len(translations) == 0 && lastErr != nil {
+		return nil, lastErr
+	}
+	return translations, nil
 }

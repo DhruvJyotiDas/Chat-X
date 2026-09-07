@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   Room, RoomEvent, RemoteParticipant, RemoteTrack, RemoteTrackPublication,
   LocalTrackPublication, ConnectionState, ConnectionQuality, Participant, Track,
+  RemoteVideoTrack, RemoteAudioTrack,
 } from 'livekit-client';
 import { describeMediaError } from '../lib/mediaErrors';
 import { api } from '../lib/api';
@@ -52,6 +53,17 @@ export interface PeerInfo {
   id: string;
   name: string;
   stream: MediaStream | null;
+  /** The peer's own camera track object, or null/absent if unpublished or
+   *  unsubscribed — used by RemoteTile to call track.attach()/detach()
+   *  directly instead of assigning a combined MediaStream to srcObject,
+   *  which is what lets Room's adaptiveStream option observe the attached
+   *  element's visibility and size to decide which simulcast layer (or
+   *  none) to request. Optional because refreshScreenPeer below builds a
+   *  PeerInfo for a screen-share tile, which has no camera track at all. */
+  videoTrack?: RemoteVideoTrack | null;
+  /** Same idea for the peer's mic track, attached directly to PeerAudio's
+   *  <audio> element rather than via a combined-stream srcObject. */
+  audioTrack?: RemoteAudioTrack | null;
 }
 
 const getFallbackName = (id: string) => {
@@ -60,9 +72,12 @@ const getFallbackName = (id: string) => {
 };
 
 /** Every subscribed track (audio + video) for one participant, combined into
- *  the same single-MediaStream-per-peer shape the UI already expects
- *  (tile <video>, useAudioLevels, etc.) — LiveKit gives tracks individually,
- *  this is the seam that keeps that an internal detail. */
+ *  the same single-MediaStream-per-peer shape most of the UI still expects
+ *  (useHasVideo's track-presence watch, tileOrder's hasVideo tiebreak, the
+ *  `!peer.stream` "still connecting" gate) — LiveKit gives tracks
+ *  individually, this is the seam that keeps that an internal detail for
+ *  everything except the actual <video>/<audio> elements, which attach the
+ *  individual track objects below directly (see PeerInfo's own comment). */
 function buildParticipantStream(participant: RemoteParticipant): MediaStream | null {
   const tracks: MediaStreamTrack[] = [];
   participant.videoTrackPublications.forEach((pub) => {
@@ -77,11 +92,29 @@ function buildParticipantStream(participant: RemoteParticipant): MediaStream | n
   return tracks.length ? new MediaStream(tracks) : null;
 }
 
+function cameraVideoTrackFor(participant: RemoteParticipant): RemoteVideoTrack | null {
+  let found: RemoteVideoTrack | null = null;
+  participant.videoTrackPublications.forEach((pub) => {
+    if (pub.source !== Track.Source.ScreenShare && pub.videoTrack) found = pub.videoTrack as RemoteVideoTrack;
+  });
+  return found;
+}
+
+function micAudioTrackFor(participant: RemoteParticipant): RemoteAudioTrack | null {
+  let found: RemoteAudioTrack | null = null;
+  participant.audioTrackPublications.forEach((pub) => {
+    if (pub.audioTrack) found = pub.audioTrack as RemoteAudioTrack;
+  });
+  return found;
+}
+
 function peerInfoFor(participant: RemoteParticipant): PeerInfo {
   return {
     id: participant.identity,
     name: participant.name?.trim() || getFallbackName(participant.identity),
     stream: buildParticipantStream(participant),
+    videoTrack: cameraVideoTrackFor(participant),
+    audioTrack: micAudioTrackFor(participant),
   };
 }
 
@@ -121,6 +154,22 @@ export function useWebRTC() {
   const [screenStream, setScreenStream] = useState<MediaStream | null>(null);
   const [screenPeers, setScreenPeers] = useState<PeerInfo[]>([]);
   const [linkQuality, setLinkQuality] = useState<ReadonlyMap<string, PeerLink>>(new Map());
+
+  // LiveKit's SFU already computes who is currently speaking (server-side audio
+  // level detection, pushed to every participant including the speaker) — this
+  // replaces the old client-side Web Audio AnalyserNode polling loop
+  // (useAudioLevels.ts, deleted) that ran an RMS calculation every 120ms per
+  // peer on the main thread purely to reinvent what the SFU already knows.
+  const [activeSpeakerIds, setActiveSpeakerIds] = useState<Set<string>>(new Set());
+
+  // Which remote peers currently have a mounted, visible tile — the grid only
+  // renders one page at a time (usePagination) and the rest genuinely have no
+  // <RemoteTile> in the DOM at all, so their camera video is unsubscribed
+  // entirely rather than just hidden (see applyVideoSubscription below).
+  // Audio is a separate concern and is never gated by this: PeerAudio mounts
+  // one <audio> per peer for the whole call regardless of page, matching this
+  // app's existing "hear everyone, see one page" design.
+  const visiblePeerIdsRef = useRef<Set<string>>(new Set());
 
   const setQualityFor = useCallback((identity: string, quality: ConnectionQuality) => {
     setLinkQuality((prev) => {
@@ -188,6 +237,36 @@ export function useWebRTC() {
     });
   }, []);
 
+  // Audio always subscribes (see visiblePeerIdsRef's own comment); camera
+  // video only subscribes for a participant currently in the visible set.
+  // Screen share is a separate concern from the paginated camera grid —
+  // `activeScreens` in ActiveMeetingView renders every active share
+  // unconditionally, so its video always subscribes too, regardless of the
+  // camera-grid visible set.
+  const applyVideoSubscription = useCallback((participant: RemoteParticipant) => {
+    const visible = visiblePeerIdsRef.current;
+    participant.videoTrackPublications.forEach((pub) => {
+      if (pub.source === Track.Source.ScreenShare) {
+        if (!pub.isSubscribed) pub.setSubscribed(true);
+        return;
+      }
+      const shouldSubscribe = visible.has(participant.identity);
+      if (pub.isSubscribed !== shouldSubscribe) pub.setSubscribed(shouldSubscribe);
+    });
+  }, []);
+
+  // Called from ActiveMeetingView whenever which peers are actually on-screen
+  // changes (pagination, focus/carousel swap, a tileOrder promotion). Applied
+  // to every current remote participant, not just ones that changed — cheap
+  // (setSubscribed no-ops when already in the requested state, checked above)
+  // and avoids tracking a separate diff.
+  const setVisiblePeerIds = useCallback((ids: Iterable<string>) => {
+    visiblePeerIdsRef.current = new Set(ids);
+    const room = roomRef.current;
+    if (!room) return;
+    room.remoteParticipants.forEach(applyVideoSubscription);
+  }, [applyVideoSubscription]);
+
   // Connects to the LiveKit room and publishes camera/mic per the lobby's
   // choice. Called by MeetingContext AFTER the existing /ws create_room/
   // join_room round trip succeeds and a LiveKit token has been minted for
@@ -203,12 +282,27 @@ export function useWebRTC() {
       roomRef.current = null;
     }
 
-    const room = new Room();
+    // adaptiveStream: watches each subscribed video track's ATTACHED element
+    // (see RemoteTile/PeerAudio, which call track.attach() rather than
+    // assigning a combined MediaStream to srcObject — attach() is what wires
+    // an element into this observation in the first place) and requests a
+    // lower simulcast layer, or pauses entirely, for one that's off-screen or
+    // small. dynacast stops the local publisher from encoding/sending a
+    // simulcast layer nobody in the room currently needs, independent of
+    // adaptiveStream. Both are additive — neither changes anything for a
+    // track nobody has ever attached to an element.
+    const room = new Room({ adaptiveStream: true, dynacast: true });
     roomRef.current = room;
 
     room.on(RoomEvent.ParticipantConnected, (participant: RemoteParticipant) => {
       refreshPeer(participant);
       setQualityFor(participant.identity, participant.connectionQuality);
+      // Audio always subscribes regardless of visibility (see
+      // visiblePeerIdsRef's comment) — a publication can already exist on
+      // ParticipantConnected (a peer who was mid-publish when we joined), so
+      // this can't wait for TrackPublished alone to cover it.
+      participant.audioTrackPublications.forEach((pub) => { if (!pub.isSubscribed) pub.setSubscribed(true); });
+      applyVideoSubscription(participant);
     });
     room.on(RoomEvent.ParticipantDisconnected, (participant: RemoteParticipant) => {
       setPeers((prev) => prev.filter((p) => p.id !== participant.identity));
@@ -225,6 +319,15 @@ export function useWebRTC() {
     // People panel only ever looks up OTHER participants' ids.
     room.on(RoomEvent.ConnectionQualityChanged, (quality: ConnectionQuality, participant: Participant) => {
       setQualityFor(participant.identity, quality);
+    });
+    // With autoSubscribe:false (below), a freshly published track does not
+    // subscribe on its own — this is what applies the same
+    // audio-always/video-if-visible rule from applyVideoSubscription to a
+    // track that appears mid-call (e.g. someone turning their camera on for
+    // the first time), not just to the participant's already-published set.
+    room.on(RoomEvent.TrackPublished, (pub: RemoteTrackPublication, participant: RemoteParticipant) => {
+      if (pub.kind === Track.Kind.Audio) { if (!pub.isSubscribed) pub.setSubscribed(true); return; }
+      applyVideoSubscription(participant);
     });
     room.on(RoomEvent.TrackSubscribed, (_track: RemoteTrack, pub: RemoteTrackPublication, participant: RemoteParticipant) => {
       if (pub.source === Track.Source.ScreenShare) refreshScreenPeer(participant);
@@ -265,6 +368,14 @@ export function useWebRTC() {
       setScreenStream(null);
       setIsScreenSharing(false);
       setLinkQuality(new Map());
+      setActiveSpeakerIds(new Set());
+    });
+    // Fires for every participant currently judged to be speaking, local
+    // participant included — server-computed, replaces useAudioLevels.ts's
+    // client-side AnalyserNode polling entirely (see activeSpeakerIds' own
+    // comment above).
+    room.on(RoomEvent.ActiveSpeakersChanged, (speakers: Participant[]) => {
+      setActiveSpeakerIds(new Set(speakers.map((p) => p.identity)));
     });
 
     // ICE fallback for participants whose network can't reach the SFU's
@@ -280,8 +391,15 @@ export function useWebRTC() {
       console.warn('[LiveKit] TURN credentials unavailable, continuing without ICE fallback', err);
     }
 
+    // autoSubscribe:false — pairs with applyVideoSubscription/TrackPublished/
+    // ParticipantConnected above to keep camera video unsubscribed for any
+    // peer with no mounted tile, instead of downloading every participant's
+    // video regardless of what the grid is actually paginated to. Audio is
+    // explicitly subscribed by hand everywhere a publication can appear
+    // (ParticipantConnected, TrackPublished, and the existingRemotes seed
+    // just below) specifically so this flag does not silently mute anyone.
     try {
-      await room.connect(livekitUrl, token, iceServers ? { rtcConfig: { iceServers } } : undefined);
+      await room.connect(livekitUrl, token, { autoSubscribe: false, ...(iceServers ? { rtcConfig: { iceServers } } : {}) });
     } catch (err) {
       roomRef.current = null;
       throw err;
@@ -290,8 +408,16 @@ export function useWebRTC() {
     // Participants already in the room when we connect do NOT fire
     // ParticipantConnected (that event is only for joins after ours) — seed
     // them from the room's own snapshot instead, same job addPeers() used to
-    // do from the /ws room_created/room_joined peer list.
+    // do from the /ws room_created/room_joined peer list. Also the third
+    // place (besides ParticipantConnected and TrackPublished) that has to
+    // apply the audio-always/video-if-visible subscription rule, since none
+    // of those events fire for a publication that already existed before we
+    // connected.
     const existingRemotes = Array.from(room.remoteParticipants.values());
+    existingRemotes.forEach((p) => {
+      p.audioTrackPublications.forEach((pub) => { if (!pub.isSubscribed) pub.setSubscribed(true); });
+      applyVideoSubscription(p);
+    });
     setPeers(existingRemotes.map(peerInfoFor));
     setLinkQuality(new Map(existingRemotes.map((p) => [p.identity, { quality: mapConnectionQuality(p.connectionQuality), stats: null }])));
 
@@ -310,7 +436,7 @@ export function useWebRTC() {
     setIsMuted(!wantAudio);
     setIsVideoOff(!wantVideo);
     rebuildLocalStream();
-  }, [refreshPeer, refreshScreenPeer, rebuildLocalStream, rebuildScreenStream]);
+  }, [refreshPeer, refreshScreenPeer, rebuildLocalStream, rebuildScreenStream, applyVideoSubscription]);
 
   const toggleMic = useCallback(() => {
     const room = roomRef.current;
@@ -462,6 +588,8 @@ export function useWebRTC() {
     setIsVideoOff(false);
     setMediaNotice(null);
     setLinkQuality(new Map());
+    setActiveSpeakerIds(new Set());
+    visiblePeerIdsRef.current = new Set();
   }, []);
 
   useEffect(() => () => cleanup(), [cleanup]);
@@ -477,6 +605,8 @@ export function useWebRTC() {
     screenStream,
     screenPeers,
     linkQuality,
+    activeSpeakerIds,
+    setVisiblePeerIds,
     connect,
     isMediaConnected,
     toggleMic,

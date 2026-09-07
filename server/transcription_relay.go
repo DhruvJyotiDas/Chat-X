@@ -252,25 +252,65 @@ func handleASREvent(ctx context.Context, room *Room, hs asrHandshake, evtType, t
 		if text == "" {
 			return
 		}
-		targets := activeCaptionLangs(room, lang)
-		var translations map[string]string
-		if len(targets) > 0 {
-			tctx, tcancel := context.WithTimeout(ctx, asrTimeout)
-			// Best-effort: a translate failure (GPU busy, timeout) still
-			// delivers the original-language final rather than losing the
-			// caption entirely.
-			out, err := asrTranslate(tctx, text, lang, targets)
-			tcancel()
-			if err != nil {
-				log.Printf("[ASR] translate failed for room=%s: %v", hs.RoomID, err)
-			} else {
-				translations = out
-			}
-		}
+		// capID correlates this final with whatever translation follows it —
+		// see the broadcast split below for why the two are no longer one
+		// synchronous step.
+		capID := newID()
+		saveTranscriptLine(hs.RoomID, hs.UserID, hs.UserName, text, lang)
 		room.broadcastAll("caption", map[string]any{
 			"peer_id": hs.UserID, "peer_name": hs.UserName,
 			"text": text, "lang": lang, "is_final": true,
-			"confidence": confidence, "translations": translations,
+			"confidence": confidence, "cap_id": capID,
 		})
+
+		targets := activeCaptionLangs(room, lang)
+		if len(targets) == 0 {
+			return
+		}
+		// Translation now runs AFTER the original final has already been
+		// broadcast, not before it, and in its own goroutine rather than
+		// blocking this one — load-bearing, not a style choice. Before this
+		// split, a translate call sat in the middle of this function, ahead
+		// of the broadcast above: fine when it was the OLD fast NLLB call
+		// (well under a second), but asrTranslate now routes through the
+		// Qwen chat model (NLLB was removed from the GPU VM along with the
+		// other ASR models — see asrTranslate's own comment), where even ONE
+		// target language can take anywhere from a few seconds to over a
+		// minute, and multiple requested languages multiply that
+		// sequentially. Leaving the old synchronous order would have delayed
+		// the ORIGINAL English caption — which every viewer sees, translating
+		// or not — by however long translation happened to take, breaking
+		// "live" captions entirely rather than just slowing down the
+		// translated line for the (usually smaller) set of viewers reading
+		// one. Running it in its own goroutine, after the real-time-critical
+		// broadcast, means a slow or failed translation can never hold up
+		// the thing every single viewer is waiting on.
+		// Deliberately NOT ctx (this speaker's ASR session context) — a real
+		// bug, caught by testing, not by inspection: ctx is cancelled the
+		// moment this speaker's underlying /v1/stream connection ends or
+		// redials (runASRSession/pumpASRSession share it), which happens
+		// routinely and has nothing to do with whether a translation that's
+		// already in flight should be abandoned. Confirmed directly — a real
+		// run showed SIX translate calls all fail with "context canceled" at
+		// the exact same instant the session's connection cycled, well
+		// before any of them could plausibly have timed out on their own.
+		// The text to translate was already fully captured when this
+		// goroutine started; it has no remaining dependency on that specific
+		// connection staying open. context.Background() here is safe, not a
+		// leak risk, because asrTranslate still bounds each language's own
+		// call via lightAITimeout internally regardless of what's passed in.
+		go func() {
+			out, err := asrTranslate(context.Background(), text, lang, targets)
+			if err != nil {
+				log.Printf("[ASR] translate failed for room=%s: %v", hs.RoomID, err)
+				return
+			}
+			if len(out) == 0 {
+				return
+			}
+			room.broadcastAll("caption_translation", map[string]any{
+				"peer_id": hs.UserID, "cap_id": capID, "translations": out,
+			})
+		}()
 	}
 }

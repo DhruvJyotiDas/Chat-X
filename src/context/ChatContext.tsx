@@ -2,6 +2,8 @@ import React, { createContext, useContext, useState, useEffect, useCallback, use
 import { RealChatMessage, RealChatThread } from '../types';
 import { useAuth } from './AuthContext';
 import { api, connectChatWS, ChatWSEvent, sendCallInvite, sendCallDeclined, sendCallAccepted } from '../lib/api';
+import { syncMeetingCardsToCalendar, friendlyMessagePreview } from '../lib/aiMeetingCard';
+import { loadNotifications } from '../lib/preferences';
 
 interface TypingState {
   [threadId: string]: { userId: string; userName: string }[];
@@ -113,13 +115,17 @@ export function ChatProvider({ children }: { children: React.ReactNode }) {
           if (!existing.find(m => m.id === msg.id)) {
             msgCache.current.set(threadId, [...existing, msg]);
           }
+          // A meeting card arrives as a plain message — sync it into this
+          // viewer's own local calendar the instant it's seen, same as a
+          // history replay does in loadMessages above.
+          if (currentUser) syncMeetingCardsToCalendar([msg], currentUser.id);
           // Update thread last message
           setThreads(prev => {
             const found = prev.find(t => t.id === threadId);
             if (found) {
               return prev.map(t => t.id === threadId ? {
                 ...t,
-                lastMessage: msg.text || (msg.fileAttachment ? `📎 ${msg.fileAttachment.name}` : ''),
+                lastMessage: friendlyMessagePreview(msg.text) || (msg.fileAttachment ? `📎 ${msg.fileAttachment.name}` : ''),
                 lastTimestamp: msg.timestamp,
                 unreadCount: activeThreadRef.current === threadId ? 0 : (t.unreadCount ?? 0) + 1,
               } : t).sort((a, b) => b.lastTimestamp - a.lastTimestamp);
@@ -171,6 +177,24 @@ export function ChatProvider({ children }: { children: React.ReactNode }) {
           window.dispatchEvent(new CustomEvent('ibconnect_call_response', { detail: event }));
           break;
         }
+        case 'meeting_reminder': {
+          // This app has no push-notification infrastructure (no service
+          // worker/VAPID) — see ai_meetings.go's own note on this — so this
+          // only ever reaches a participant who currently has the app open
+          // and connected. Respects the existing (previously dormant)
+          // meetingReminders preference in Settings, same toggle used
+          // nowhere else until now.
+          if (!currentUser || !loadNotifications(currentUser.id).meetingReminders) break;
+          const { title, time } = event.payload;
+          const body = `${title} at ${time}`;
+          if (typeof Notification !== 'undefined' && Notification.permission === 'granted') {
+            new Notification('Meeting starting in 5 minutes', { body });
+          }
+          // In-app fallback/companion regardless of OS Notification support —
+          // TopBar listens for this to show a banner.
+          window.dispatchEvent(new CustomEvent('ibconnect_meeting_reminder', { detail: event.payload }));
+          break;
+        }
       }
     }, (ws) => { wsRef.current = ws; }); // reuse the same WS for typing — avoids opening a second connection
 
@@ -205,8 +229,15 @@ export function ChatProvider({ children }: { children: React.ReactNode }) {
     const msgs = await api.getMessages(threadId);
     const realMsgs = msgs.map(toRealMessage);
     msgCache.current.set(threadId, realMsgs);
+    // A meeting card is a normal persisted message — replaying history (e.g.
+    // after being offline when it was first posted) must sync the calendar
+    // exactly the same way the live "new_message" event below does, or a
+    // participant who wasn't connected at the time never gets the event at
+    // all. syncMeetingCardsToCalendar is idempotent, so re-running it here on
+    // every load of an already-synced thread is harmless.
+    if (currentUser) syncMeetingCardsToCalendar(realMsgs, currentUser.id);
     return realMsgs;
-  }, []);
+  }, [currentUser]);
 
   const sendMessage = useCallback(async (
     threadId: string,

@@ -11,6 +11,8 @@ import { config } from '../config';
 export interface AppUser { id: string; name: string; isGuest: boolean; }
 export interface LiveChatMessage { id: string; fromId: string; fromName: string; text: string; time: string; isSelf: boolean; }
 export interface ScheduledMeeting { id: string; title: string; date: string; time: string; code: string; }
+/** One knock-to-join request, as seen by someone already in the call. */
+export interface JoinRequest { requestId: string; userId: string; userName: string; }
 
 interface MeetingContextType {
   user: AppUser;
@@ -32,6 +34,29 @@ interface MeetingContextType {
   dismissEvictedNotice: () => void;
   createMeeting: (customCode?: string, title?: string) => Promise<string>;
   joinMeeting: (code: string, title?: string, allowRecreate?: boolean, prefs?: MediaPrefs) => Promise<string>;
+  /** True from the moment join_room/create_room is sent until either an
+   *  existing participant lets this one in (isInMeeting flips true) or
+   *  rejects/times it out (joinDeniedReason gets set) — a room that already
+   *  has other people in it doesn't admit a new, never-before-seen identity
+   *  on the spot any more; see the knock-to-join flow in server/main.go. */
+  awaitingApproval: boolean;
+  /** Set once a knock is turned down — either an explicit reject or nobody
+   *  responding within the server's own timeout. Cleared on the next join
+   *  attempt. Distinguishing this from meetingError lets the UI show a
+   *  specific "you weren't let in" screen rather than a generic failure. */
+  joinDeniedReason: 'denied' | 'timed_out' | null;
+  clearJoinDenied: () => void;
+  /** Knock requests currently awaiting a decision from THIS participant (or
+   *  anyone else already in the call — whoever answers first wins, see
+   *  server/main.go's join_response). Rendered as an accept/reject popup. */
+  pendingJoinRequests: JoinRequest[];
+  respondToJoinRequest: (requestId: string, approve: boolean) => void;
+  /** Whether this room currently requires approval to join — off by default
+   *  for every room; see server/main.go's Room.requireApproval for why this
+   *  is opt-in rather than automatic. Toggleable at any point during the
+   *  call, by anyone currently in it, not fixed at creation time. */
+  requireApproval: boolean;
+  setRequireApproval: (value: boolean) => void;
   /** Non-fatal media problem to show the user (camera blocked, device busy…). */
   mediaNotice: string | null;
   dismissMediaNotice: () => void;
@@ -59,6 +84,13 @@ interface MeetingContextType {
   /** Per-peer connection quality, pushed by LiveKit's own SFU-computed
    *  participant.connectionQuality — see useWebRTC.ts. */
   linkQuality: ReadonlyMap<string, PeerLink>;
+  /** Ids currently judged to be speaking, local participant included —
+   *  server-computed by the SFU (RoomEvent.ActiveSpeakersChanged). */
+  activeSpeakerIds: ReadonlySet<string>;
+  /** Tells useWebRTC which remote peers currently have a mounted tile, so it
+   *  can subscribe/unsubscribe their camera video accordingly — see
+   *  useWebRTC.ts's visiblePeerIdsRef for the full reasoning. */
+  setVisiblePeerIds: (ids: Iterable<string>) => void;
   /** Forces fresh ICE + a follow-up offer on one peer's camera connection. Used to
    *  recover a link that is 'connected' but has quietly stopped decoding frames. */
   restartPeerConnection: (peerId: string) => void;
@@ -156,6 +188,10 @@ export function MeetingProvider({ children }: { children: React.ReactNode }) {
   const [myCaptionLang, setMyCaptionLang] = useState<string | null>(null);
   const [scheduledMeetings, setScheduledMeetings] = useState<ScheduledMeeting[]>([]);
   const [meetingError, setMeetingError] = useState<string | null>(null);
+  const [awaitingApproval, setAwaitingApproval] = useState(false);
+  const [joinDeniedReason, setJoinDeniedReason] = useState<'denied' | 'timed_out' | null>(null);
+  const [pendingJoinRequests, setPendingJoinRequests] = useState<JoinRequest[]>([]);
+  const [requireApproval, setRequireApprovalState] = useState(false);
   const [showGuestModal, setShowGuestModal] = useState(false);
   const [pendingJoinCode, setPendingJoinCode] = useState<string | null>(null);
 
@@ -344,7 +380,7 @@ export function MeetingProvider({ children }: { children: React.ReactNode }) {
         peerId: p.peer_id, peerName: p.peer_name ?? 'Someone',
         text: p.text ?? '', lang: p.lang ?? 'en', isFinal: !!p.is_final,
         confidence: p.confidence, translations: p.translations ?? undefined,
-        receivedAt: Date.now(),
+        capId: p.cap_id, receivedAt: Date.now(),
       };
       setLiveCaptions((prev) => {
         const next = new Map(prev);
@@ -355,14 +391,78 @@ export function MeetingProvider({ children }: { children: React.ReactNode }) {
         const line: TranscriptLine = {
           id: `cap-${Date.now()}-${Math.random()}`, text: evt.text, isFinal: true,
           timestamp: new Date().toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' }),
-          speaker: evt.peerName, lang: evt.lang, translations: evt.translations,
+          speaker: evt.peerName, lang: evt.lang, translations: evt.translations, capId: evt.capId,
         };
         setCaptionLog((prev) => [...prev, line].slice(-50));
         const kps = extractKeyPoints(evt.text);
         if (kps.length) setCaptionKeyPoints((prev) => [...prev, ...kps].slice(-20));
       }
     });
+    // Arrives separately from — and after — the "caption" final it belongs
+    // to, since translation now runs asynchronously server-side rather than
+    // blocking the original caption every viewer sees (see
+    // handleASREvent's own comment in transcription_relay.go for why that
+    // changed: translation moved off the old fast NLLB model onto the much
+    // slower Qwen chat model once NLLB was removed from the GPU VM). Matched
+    // by cap_id, not peer_id alone — a peer's live caption entry may already
+    // have moved on to a NEWER utterance by the time this arrives, and
+    // attaching a stale translation to the wrong line would show the wrong
+    // text translated. If the peer's current entry has moved on, this is
+    // simply dropped for the live bar (too late to matter there) but the
+    // matching transcript log line is still updated — that's for the
+    // written record, which cares about eventual correctness, not timing.
+    s.on('caption_translation', (p: any) => {
+      const capId = p?.cap_id;
+      const translations = p?.translations;
+      if (!capId || !translations) return;
+      setLiveCaptions((prev) => {
+        const current = prev.get(p.peer_id);
+        if (!current || current.capId !== capId) return prev;
+        const next = new Map(prev);
+        next.set(p.peer_id, { ...current, translations });
+        return next;
+      });
+      setCaptionLog((prev) => {
+        const idx = prev.findIndex((line) => line.capId === capId);
+        if (idx === -1) return prev;
+        const next = [...prev];
+        next[idx] = { ...next[idx], translations };
+        return next;
+      });
+    });
     s.on('error', (p: any) => setMeetingError(p.message));
+
+    // ── Knock-to-join (see server/main.go's attemptRoomEntry) ──────────────
+    // join_waiting: sent to US when the room we're entering already has other
+    // people in it and we haven't been admitted before — createMeeting/
+    // joinMeeting's own promises deliberately do NOT resolve/reject on this;
+    // it just flips a flag so the UI can show a "waiting to be let in" screen
+    // in the meantime. Cleared again by room_joined/join_rejected below.
+    s.on('join_waiting', () => { setAwaitingApproval(true); setJoinDeniedReason(null); });
+    s.on('join_rejected', (p: any) => {
+      setAwaitingApproval(false);
+      setJoinDeniedReason(p?.reason === 'timed_out' ? 'timed_out' : 'denied');
+    });
+    // join_request: sent to everyone ALREADY in the room when someone new
+    // knocks. Several people can see the same request; whoever answers it
+    // first wins (server/main.go removes it from room.pending on the first
+    // join_response and tells everyone else's popup to close via
+    // join_request_cancelled below) — so this list can only ever be added to
+    // or fully cleared of one entry, never partially "claimed" client-side.
+    s.on('join_request', (p: any) => {
+      setPendingJoinRequests((prev) => {
+        if (prev.some((r) => r.requestId === p.request_id)) return prev;
+        return [...prev, { requestId: p.request_id, userId: p.user_id, userName: p.user_name ?? 'Someone' }];
+      });
+    });
+    s.on('join_request_cancelled', (p: any) => {
+      setPendingJoinRequests((prev) => prev.filter((r) => r.requestId !== p?.request_id));
+    });
+    // Broadcast rather than local-only, so this reflects whoever most
+    // recently toggled it (including from a different tab/device of the
+    // same account) rather than going stale the moment someone else changes it.
+    s.on('require_approval', (p: any) => setRequireApprovalState(!!p?.value));
+
     await s.connect();
     socketRef.current = s; setSocketInstance(s); return s;
   }, []);
@@ -421,6 +521,8 @@ export function MeetingProvider({ children }: { children: React.ReactNode }) {
     try {
       setMeetingError(null);
       setEvictedNotice(null);
+      setAwaitingApproval(false);
+      setJoinDeniedReason(null);
       // Drop any peers/messages left over from a previous room on this tab —
       // otherwise the last call's participants linger as blank tiles in the new one.
       webrtc.resetPeers();
@@ -428,13 +530,19 @@ export function MeetingProvider({ children }: { children: React.ReactNode }) {
       const s = await connectSocket();
       const roomId = await new Promise<string>((resolve, reject) => {
         const unsub = s.on('room_created', (p: any) => {
-          unsub(); setRoomId(p.room_id); setIsHost(true); setIsInMeeting(true); setIsMinimized(false);
+          done(); setRoomId(p.room_id); setIsHost(true); setIsInMeeting(true); setIsMinimized(false); setAwaitingApproval(false);
           activeRoomRef.current = { code: p.room_id, isHost: true };
           setShowInviteDialog((p.peers ?? []).length === 0);
           persistActiveMeeting(p.room_id, true, title);
           saveMeetingRecord(p.room_id, true, title); resolve(p.room_id);
         });
-        const errUnsub = s.on('error', (p: any) => { errUnsub(); unsub(); reject(new Error(p.message)); });
+        const errUnsub = s.on('error', (p: any) => { done(); reject(new Error(p.message)); });
+        // Reaching this rare path at all means create_room resolved into an
+        // existing, already-populated room (see attemptRoomEntry's own
+        // comment on why create_room is gated the same as join_room) — a
+        // brand-new room is always empty, so it never knocks.
+        const rejUnsub = s.on('join_rejected', (p: any) => { done(); reject(new Error(p?.reason === 'timed_out' ? 'Nobody let you in in time.' : 'You were not let into this meeting.')); });
+        const done = () => { unsub(); errUnsub(); rejUnsub(); };
         s.send('create_room', { room_id: customCode, user_id: userIdRef.current, user_name: nameRef.current, meeting_title: title });
       });
       // Media (LiveKit) is connected AFTER /ws admission, not before — the
@@ -453,6 +561,8 @@ export function MeetingProvider({ children }: { children: React.ReactNode }) {
     try {
       setMeetingError(null);
       setEvictedNotice(null);
+      setAwaitingApproval(false);
+      setJoinDeniedReason(null);
       if (trimmedCode.startsWith('SCHED-') && !user.isGuest) {
         try { await api.validateRoomCode(trimmedCode); }
         catch (e) { throw new Error('Meeting code is invalid, deleted, or has not started yet.'); }
@@ -462,14 +572,20 @@ export function MeetingProvider({ children }: { children: React.ReactNode }) {
       const s = await connectSocket();
       await new Promise<void>((resolve, reject) => {
         const unsub = s.on('room_joined', (p: any) => {
-          unsub(); setRoomId(p.room_id); setIsHost(false); setIsInMeeting(true); setIsMinimized(false);
+          done(); setRoomId(p.room_id); setIsHost(false); setIsInMeeting(true); setIsMinimized(false); setAwaitingApproval(false);
           activeRoomRef.current = { code: trimmedCode, isHost: false };
           const resolvedTitle = knownTitle || scheduledMeetings.find(m => m.code === trimmedCode)?.title;
           persistActiveMeeting(trimmedCode, false, resolvedTitle);
           saveMeetingRecord(trimmedCode, false, resolvedTitle);
           resolve();
         });
-        const errUnsub = s.on('error', (p: any) => { errUnsub(); unsub(); reject(new Error(p.message)); });
+        const errUnsub = s.on('error', (p: any) => { done(); reject(new Error(p.message)); });
+        // The common case for a room with other people already in it: this
+        // rejects the promise (so the caller's `await joinMeeting(...)`
+        // fails cleanly) while the global join_rejected handler above sets
+        // joinDeniedReason for the UI to render a specific screen from.
+        const rejUnsub = s.on('join_rejected', (p: any) => { done(); reject(new Error(p?.reason === 'timed_out' ? 'Nobody let you in in time.' : 'You were not let into this meeting.')); });
+        const done = () => { unsub(); errUnsub(); rejUnsub(); };
         s.send('join_room', { room_id: trimmedCode, user_id: userIdRef.current, user_name: nameRef.current });
       });
       // Same ordering as createMeeting — see its comment. `prefs` (the
@@ -508,6 +624,7 @@ export function MeetingProvider({ children }: { children: React.ReactNode }) {
     setReactions([]); setRaisedHands(new Set()); setIsHandRaised(false);
     setLiveCaptions(new Map()); setCaptionLog([]); setCaptionKeyPoints([]); setMyCaptionLang(null);
     setIsRejoining(false);
+    setAwaitingApproval(false); setJoinDeniedReason(null); setPendingJoinRequests([]); setRequireApprovalState(false);
   }, [webrtc, updateMeetingRecord]);
 
   // Redials the room after a page reload. Kept separate from joinMeeting so the UI
@@ -599,10 +716,24 @@ export function MeetingProvider({ children }: { children: React.ReactNode }) {
   const setPendingAction = useCallback((code: string | null) => { setPendingJoinCode(code); setShowGuestModal(true); }, []);
   const dismissGuestModal = useCallback(() => { setShowGuestModal(false); setPendingJoinCode(null); }, []);
   const clearMeetingError = useCallback(() => setMeetingError(null), []);
+  const clearJoinDenied = useCallback(() => setJoinDeniedReason(null), []);
+  // Removes it from OUR OWN popup list immediately, optimistically — don't
+  // wait for the server's own join_request_cancelled broadcast to arrive.
+  // Harmless if someone else already answered first (see server/main.go's
+  // join_response: a request not found in room.pending is silently a no-op).
+  const respondToJoinRequest = useCallback((requestId: string, approve: boolean) => {
+    setPendingJoinRequests((prev) => prev.filter((r) => r.requestId !== requestId));
+    socketRef.current?.send('join_response', { request_id: requestId, approve });
+  }, []);
+  const setRequireApproval = useCallback((value: boolean) => {
+    setRequireApprovalState(value); // optimistic — the broadcast above also confirms it
+    socketRef.current?.send('require_approval', { value });
+  }, []);
 
   return (
     <MeetingContext.Provider value={{
       user, setUserName, isInMeeting, isMinimized, minimizeMeeting, expandMeeting, roomId, isHost, showInviteDialog, dismissInviteDialog, evictedNotice, dismissEvictedNotice, createMeeting, joinMeeting, rejoinMeeting, isRejoining, leaveMeeting,
+      awaitingApproval, joinDeniedReason, clearJoinDenied, pendingJoinRequests, respondToJoinRequest, requireApproval, setRequireApproval,
       scheduledMeetings, refreshScheduledMeetings, scheduleMeeting, deleteScheduledMeeting,
       localStream: webrtc.localStream, peers: webrtc.peers, isMuted: webrtc.isMuted, isVideoOff: webrtc.isVideoOff, isScreenSharing: webrtc.isScreenSharing,
       mediaNotice: webrtc.mediaNotice, dismissMediaNotice: webrtc.dismissMediaNotice,
@@ -610,6 +741,8 @@ export function MeetingProvider({ children }: { children: React.ReactNode }) {
       toggleMic: webrtc.toggleMic, setMicMuted: webrtc.setMicMuted, toggleCamera: webrtc.toggleCamera, toggleScreenShare: webrtc.toggleScreenShare,
       switchCamera: webrtc.switchCamera, switchMic: webrtc.switchMic,
       linkQuality: webrtc.linkQuality,
+      activeSpeakerIds: webrtc.activeSpeakerIds,
+      setVisiblePeerIds: webrtc.setVisiblePeerIds,
       restartPeerConnection: webrtc.restartPeerConnection,
       reactions, sendReaction, raisedHands, isHandRaised, toggleHand,
       chatMessages, sendChatMessage, showGuestModal, pendingJoinCode, setPendingAction, dismissGuestModal, meetingError, clearMeetingError,

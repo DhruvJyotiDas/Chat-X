@@ -1,5 +1,5 @@
-import React, { useState } from 'react';
-import { Search, Bell, HelpCircle, Plus, Sparkles, Phone, Calendar, Command } from 'lucide-react';
+import React, { useState, useEffect } from 'react';
+import { Search, Bell, HelpCircle, Plus, Sparkles, Phone, Calendar, Command, X } from 'lucide-react';
 import { AppView } from '../../types';
 import { useAuth } from '../../context/AuthContext';
 import { useChat } from '../../context/ChatContext';
@@ -35,6 +35,26 @@ export default function TopBar({ currentView, onViewChange, searchFilter, onSear
   const notifsEnabled = currentUser ? loadNotifications(currentUser.id).messageAlerts : true;
   const showNotifDot = notifsEnabled && unreadTotal > 0;
 
+  // In-app companion to the OS Notification ChatContext already tries to show
+  // for a meeting_reminder ws event — this fires regardless of whether that
+  // succeeded (no permission granted, browser doesn't support it, etc.), so
+  // there's always at least one visible signal while the app is open.
+  const [reminderBanner, setReminderBanner] = useState<{ title: string; time: string } | null>(null);
+  useEffect(() => {
+    let dismissTimer: ReturnType<typeof setTimeout> | null = null;
+    const handler = (e: Event) => {
+      const detail = (e as CustomEvent).detail as { title: string; time: string };
+      setReminderBanner(detail);
+      if (dismissTimer) window.clearTimeout(dismissTimer);
+      dismissTimer = setTimeout(() => setReminderBanner(null), 20000);
+    };
+    window.addEventListener('ibconnect_meeting_reminder', handler);
+    return () => {
+      window.removeEventListener('ibconnect_meeting_reminder', handler);
+      if (dismissTimer) window.clearTimeout(dismissTimer);
+    };
+  }, []);
+
   const actionLabel = currentView === 'calls' ? 'New Call' : currentView === 'calendar' ? 'New Event' : 'New Chat';
 
   const handleAction = () => {
@@ -44,8 +64,21 @@ export default function TopBar({ currentView, onViewChange, searchFilter, onSear
   };
 
   return (
-    // THE FIX: Changed 'px-5' to 'pl-16 pr-5 md:px-5' to clear the hamburger button on mobile
-    <header className="h-14 w-full flex justify-between items-center pl-16 pr-5 md:px-5 border-b border-[#424655] bg-[#131313]/90 backdrop-blur-xl z-40 sticky top-0 shrink-0 select-none">
+    <>
+      {/* In-app companion to the OS Notification (which may not have permission,
+          or may not be supported at all) — always shown regardless, so a meeting
+          reminder is never silently invisible while the app is open. */}
+      {reminderBanner && (
+        <div className="fixed top-3 left-1/2 -translate-x-1/2 z-[110] flex items-center gap-2.5 bg-[#1c1b1b] border border-[#568dff]/40 shadow-2xl rounded-xl px-4 py-2.5 max-w-[92vw]">
+          <Bell className="w-4 h-4 text-[#b0c6ff] flex-shrink-0" />
+          <span className="text-xs text-[#e5e2e1] truncate">
+            <strong className="font-bold">{reminderBanner.title}</strong> starts at {reminderBanner.time} — in 5 minutes
+          </span>
+          <button onClick={() => setReminderBanner(null)} className="text-[#8c90a1] hover:text-[#e5e2e1] flex-shrink-0"><X className="w-3.5 h-3.5" /></button>
+        </div>
+      )}
+      {/* THE FIX: Changed 'px-5' to 'pl-16 pr-5 md:px-5' to clear the hamburger button on mobile */}
+      <header className="h-14 w-full flex justify-between items-center pl-16 pr-5 md:px-5 border-b border-[#424655] bg-[#131313]/90 backdrop-blur-xl z-40 sticky top-0 shrink-0 select-none">
       <div className="flex items-center gap-3 min-w-0">
         <h1
           className="font-bold text-base tracking-tight text-[#e5e2e1] cursor-pointer whitespace-nowrap"
@@ -112,5 +145,6 @@ export default function TopBar({ currentView, onViewChange, searchFilter, onSear
         </button>
       </div>
     </header>
+    </>
   );
 }

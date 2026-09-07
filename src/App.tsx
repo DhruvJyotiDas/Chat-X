@@ -25,6 +25,7 @@ import InterviewView from './components/views/InterviewView';
 // Meeting
 import ActiveMeetingView from './components/meeting/ActiveMeetingView';
 import FloatingCallWindow from './components/meeting/FloatingCallWindow';
+import JoinRequestBanner from './components/meeting/JoinRequestBanner';
 
 // Context
 import { MeetingProvider, useMeeting, readActiveMeeting } from './context/MeetingContext';
@@ -45,6 +46,7 @@ function AppContent({ pendingRoomCode }: { pendingRoomCode?: string }) {
     isInMeeting, joinMeeting, rejoinMeeting, isRejoining,
     setUserName, meetingError, clearMeetingError,
     isMinimized, minimizeMeeting, expandMeeting,
+    awaitingApproval, joinDeniedReason, clearJoinDenied,
   } = useMeeting();
   const { incomingCall, dismissIncomingCall, notifyCallAccepted, notifyCallDeclined } = useChat();
 
@@ -211,7 +213,12 @@ function AppContent({ pendingRoomCode }: { pendingRoomCode?: string }) {
   // the product is available to them. Rendering the meeting bare also keeps the
   // app shell's currentUser assumptions (avatars, compliance log actor) intact.
   if (!currentUser && isInMeeting) {
-    return <ActiveMeetingView onLeaveMeeting={() => { window.location.href = '/'; }} />;
+    return (
+      <>
+        <ActiveMeetingView onLeaveMeeting={() => { window.location.href = '/'; }} />
+        <JoinRequestBanner />
+      </>
+    );
   }
 
   // Redialling the room a reload interrupted.
@@ -222,6 +229,44 @@ function AppContent({ pendingRoomCode }: { pendingRoomCode?: string }) {
         <p className="text-sm text-[#9aa0a6]">
           Rejoining <span className="font-mono font-bold text-[#8ab4f8]">{rejoinTarget}</span>…
         </p>
+      </div>
+    );
+  }
+
+  // Knock-to-join (server/main.go's attemptRoomEntry): a room that already has
+  // other people in it doesn't admit a new, never-before-seen identity on the
+  // spot any more — someone already inside has to accept them first. Same
+  // screen regardless of guest vs signed-in, since the knock itself doesn't
+  // distinguish the two. isInMeeting flips true the moment someone accepts,
+  // which naturally falls through past this block on the next render.
+  if (!isInMeeting && awaitingApproval) {
+    return (
+      <div className="min-h-screen bg-[#111] flex flex-col items-center justify-center gap-3 text-[#e8eaed] px-4 text-center">
+        <div className="w-10 h-10 rounded-full border-2 border-[#8ab4f8] border-t-transparent animate-spin" />
+        <p className="text-base font-semibold">Waiting to be let in…</p>
+        <p className="text-sm text-[#9aa0a6] max-w-xs">Someone in the meeting needs to accept you before you can join.</p>
+      </div>
+    );
+  }
+
+  if (!isInMeeting && joinDeniedReason) {
+    return (
+      <div className="min-h-screen bg-[#111] flex flex-col items-center justify-center gap-3 text-[#e8eaed] px-4 text-center">
+        <div className="w-12 h-12 rounded-full bg-[#3c1f1f] flex items-center justify-center text-2xl">🚫</div>
+        <p className="text-base font-semibold">
+          {joinDeniedReason === 'timed_out' ? 'Nobody let you in' : "You weren't let into this meeting"}
+        </p>
+        <p className="text-sm text-[#9aa0a6] max-w-xs">
+          {joinDeniedReason === 'timed_out'
+            ? 'Nobody in the meeting responded in time. Ask them to expect your request, then try again.'
+            : 'Someone in the meeting turned down your request to join.'}
+        </p>
+        <button
+          onClick={clearJoinDenied}
+          className="mt-2 px-4 py-2 rounded-lg bg-[#8ab4f8] text-[#062e6f] font-semibold text-sm hover:bg-[#aecbfa] transition-colors"
+        >
+          Try again
+        </button>
       </div>
     );
   }
@@ -335,6 +380,7 @@ function AppContent({ pendingRoomCode }: { pendingRoomCode?: string }) {
     </div>
 
     {isInMeeting && isMinimized && <FloatingCallWindow onExpand={handleExpandMeeting} />}
+    {isInMeeting && <JoinRequestBanner />}
 
     {incomingCall && !isInMeeting && (
       <IncomingCallModal
