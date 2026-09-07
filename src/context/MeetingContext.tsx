@@ -493,9 +493,24 @@ export function MeetingProvider({ children }: { children: React.ReactNode }) {
     try {
       await requestRoomEntry(s, 'join_room', payload);
     } catch (err) {
-      // Room reaped while we were gone. Reopen it if it's ours, same rule the
-      // post-reload redial uses; otherwise say so rather than fake a live call.
-      if (!active.isHost) { setMeetingError('Lost connection to the meeting. Rejoin to continue.'); return; }
+      // The room is gone: reaped after emptying, or erased by a backend restart
+      // (rooms is an in-memory map, server/main.go). Reopen it under the same
+      // code — for ANYONE, not just the host.
+      //
+      // This used to bail out here unless active.isHost. That made a backend
+      // restart asymmetric in the worst possible way: every socket reconnects
+      // at once, the host silently recreates the room, and everyone else is
+      // told 'Lost connection to the meeting. Rejoin to continue.' while their
+      // media is still flowing perfectly — LiveKit's connection is independent
+      // of this one and never noticed. So the call looked alive and was not.
+      //
+      // Letting anyone recreate is safe because 'host' is a purely CLIENT-side
+      // notion: the Go backend has no host concept at all (no hostID field
+      // anywhere in server/main.go), and create_room reuses an existing room
+      // for the code rather than replacing it. When several clients race here
+      // after a restart, roomsMu serialises them: the first creates the room,
+      // the rest reuse it, and attemptRoomEntry admits them all. Recreating
+      // confers no privilege — it just means arriving first.
       try { await requestRoomEntry(s, 'create_room', payload); }
       catch { setMeetingError('Lost connection to the meeting. Rejoin to continue.'); return; }
     }
@@ -628,13 +643,18 @@ export function MeetingProvider({ children }: { children: React.ReactNode }) {
   }, [webrtc, updateMeetingRecord]);
 
   // Redials the room after a page reload. Kept separate from joinMeeting so the UI
-  // can show a "Rejoining…" state rather than the normal join spinner, and so the
-  // host of a room that emptied out on reload recreates it under the same code.
+  // can show a "Rejoining…" state rather than the normal join spinner, and so a
+  // room that emptied out on reload is recreated under the same code.
+  //
+  // allowRecreate was `saved?.isHost === true && ...`, which left a non-host who
+  // reloaded after a backend restart with no way back in — the same asymmetry
+  // reenterRoom above had, on the other recovery path. Same reasoning applies:
+  // the backend has no host concept, so recreating grants nothing.
   const rejoinMeeting = useCallback(async (code: string): Promise<void> => {
     const saved = readActiveMeeting();
     setIsRejoining(true);
     try {
-      await joinMeeting(code, saved?.title, saved?.isHost === true && saved.roomId === code);
+      await joinMeeting(code, saved?.title, saved?.roomId === code);
     } finally {
       setIsRejoining(false);
     }
