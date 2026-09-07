@@ -195,6 +195,34 @@ export function useWebRTC() {
   // plain grid mode. Exempt from GRID_MAX_DIMS — see its comment at the top.
   const stagePeerIdRef = useRef<string | null>(null);
 
+  // Which peers' audio to subscribe. **null means everyone**, which is the
+  // behaviour for every meeting small enough not to need a cap and is what the
+  // caller passes below the tier threshold — so nothing about a normal call
+  // changes.
+  //
+  // Above that threshold audio is the dominant cost, not video: each
+  // participant subscribes N-1 audio streams, so the total is N*(N-1)*48kbps
+  // and grows quadratically. At 76 people that is 295 Mbps — 47% of this
+  // host's 625 Mbps link — for audio alone, against 4 Mbps of video per
+  // subscriber under the video tier. Capping audio is worth more than capping
+  // video, which is why it exists.
+  //
+  // Safe to cap because LiveKit computes active speakers SERVER-side from the
+  // published tracks and reports them to everyone regardless of who is
+  // subscribed (RoomEvent.ActiveSpeakersChanged below). So a peer nobody is
+  // subscribed to still shows up the moment they talk, and the caller can
+  // promote them. The cost is that the first ~1 signalling RTT of their speech
+  // is missed, which is why this stays off entirely for small calls.
+  const audioPeerIdsRef = useRef<Set<string> | null>(null);
+
+  const applyAudioSubscription = useCallback((participant: RemoteParticipant) => {
+    const allowed = audioPeerIdsRef.current;
+    const want = allowed === null || allowed.has(participant.identity);
+    participant.audioTrackPublications.forEach((pub) => {
+      if (pub.isSubscribed !== want) pub.setSubscribed(want);
+    });
+  }, []);
+
   const setQualityFor = useCallback((identity: string, quality: ConnectionQuality) => {
     setLinkQuality((prev) => {
       const next = new Map(prev);
@@ -297,13 +325,22 @@ export function useWebRTC() {
   // to every current remote participant, not just ones that changed — cheap
   // (setSubscribed no-ops when already in the requested state, checked above)
   // and avoids tracking a separate diff.
-  const setVisiblePeerIds = useCallback((ids: Iterable<string>, stagePeerId?: string | null) => {
+  const setVisiblePeerIds = useCallback((
+    ids: Iterable<string>,
+    stagePeerId?: string | null,
+    audioIds?: Iterable<string> | null,
+  ) => {
     visiblePeerIdsRef.current = new Set(ids);
     stagePeerIdRef.current = stagePeerId ?? null;
+    // undefined/null means "no cap" — subscribe everyone, today's behaviour.
+    audioPeerIdsRef.current = audioIds ? new Set(audioIds) : null;
     const room = roomRef.current;
     if (!room) return;
-    room.remoteParticipants.forEach(applyVideoSubscription);
-  }, [applyVideoSubscription]);
+    room.remoteParticipants.forEach((p) => {
+      applyVideoSubscription(p);
+      applyAudioSubscription(p);
+    });
+  }, [applyVideoSubscription, applyAudioSubscription]);
 
   // Connects to the LiveKit room and publishes camera/mic per the lobby's
   // choice. Called by MeetingContext AFTER the existing /ws create_room/
@@ -335,11 +372,13 @@ export function useWebRTC() {
     room.on(RoomEvent.ParticipantConnected, (participant: RemoteParticipant) => {
       refreshPeer(participant);
       setQualityFor(participant.identity, participant.connectionQuality);
-      // Audio always subscribes regardless of visibility (see
+      // Audio subscribes independently of tile visibility (see
       // visiblePeerIdsRef's comment) — a publication can already exist on
       // ParticipantConnected (a peer who was mid-publish when we joined), so
-      // this can't wait for TrackPublished alone to cover it.
-      participant.audioTrackPublications.forEach((pub) => { if (!pub.isSubscribed) pub.setSubscribed(true); });
+      // this can't wait for TrackPublished alone to cover it. Below the tier
+      // threshold applyAudioSubscription subscribes unconditionally, exactly
+      // as the unconditional call it replaces did.
+      applyAudioSubscription(participant);
       applyVideoSubscription(participant);
     });
     room.on(RoomEvent.ParticipantDisconnected, (participant: RemoteParticipant) => {
@@ -364,7 +403,9 @@ export function useWebRTC() {
     // track that appears mid-call (e.g. someone turning their camera on for
     // the first time), not just to the participant's already-published set.
     room.on(RoomEvent.TrackPublished, (pub: RemoteTrackPublication, participant: RemoteParticipant) => {
-      if (pub.kind === Track.Kind.Audio) { if (!pub.isSubscribed) pub.setSubscribed(true); return; }
+      // Audio goes through the same tier gate as everywhere else — a peer who
+      // publishes while capped out must NOT be silently subscribed here.
+      if (pub.kind === Track.Kind.Audio) { applyAudioSubscription(participant); return; }
       applyVideoSubscription(participant);
     });
     room.on(RoomEvent.TrackSubscribed, (_track: RemoteTrack, pub: RemoteTrackPublication, participant: RemoteParticipant) => {
@@ -453,7 +494,7 @@ export function useWebRTC() {
     // connected.
     const existingRemotes = Array.from(room.remoteParticipants.values());
     existingRemotes.forEach((p) => {
-      p.audioTrackPublications.forEach((pub) => { if (!pub.isSubscribed) pub.setSubscribed(true); });
+      applyAudioSubscription(p);
       applyVideoSubscription(p);
     });
     setPeers(existingRemotes.map(peerInfoFor));
@@ -474,7 +515,7 @@ export function useWebRTC() {
     setIsMuted(!wantAudio);
     setIsVideoOff(!wantVideo);
     rebuildLocalStream();
-  }, [refreshPeer, refreshScreenPeer, rebuildLocalStream, rebuildScreenStream, applyVideoSubscription]);
+  }, [refreshPeer, refreshScreenPeer, rebuildLocalStream, rebuildScreenStream, applyVideoSubscription, applyAudioSubscription]);
 
   const toggleMic = useCallback(() => {
     const room = roomRef.current;
@@ -629,6 +670,7 @@ export function useWebRTC() {
     setActiveSpeakerIds(new Set());
     visiblePeerIdsRef.current = new Set();
     stagePeerIdRef.current = null;
+    audioPeerIdsRef.current = null;
   }, []);
 
   useEffect(() => () => cleanup(), [cleanup]);

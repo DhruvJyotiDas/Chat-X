@@ -392,7 +392,50 @@ function LocalTile({ stream, isVideoOff, name, bgMode }: { stream: MediaStream |
 
 // ─── Remote tile ─────────────────────────────────────────────────────────────
 
-function RemoteTile({ peer }: { peer: PeerInfo }) {
+// ─── Subscription tiers ──────────────────────────────────────────────────────
+//
+// Above TIER_THRESHOLD participants a client stops subscribing to everyone and
+// takes only the top-ranked few. Below it nothing changes at all, which is
+// deliberate: the caps buy nothing in a small call and cost real
+// responsiveness (see audioPeerIdsRef in useWebRTC for the round-trip a capped
+// speaker pays), so they stay off where they would only do harm.
+//
+// Sizing, from the measured egress model (ibconnect-planning/model2.py):
+//   video only, 16/page   -> one room caps out at N=58 on this host's link
+//   video 9               -> N=75
+//   video 9 + audio 12    -> N=125
+// Audio is worth more than video because it is quadratic and uncapped:
+// N*(N-1)*48kbps is 295 Mbps at N=76, 47% of the link, for audio alone.
+const VIDEO_TIER_THRESHOLD = 16;
+const VIDEO_TIER_CAP = 9;
+
+// The audio cap is deliberately set ABOVE the current MAX_ROOM_SIZE (24), so it
+// is dormant in every room this deployment can create today. That is not
+// caution for its own sake — it rests on one assumption that has not been
+// verified on this deployment:
+//
+//   LiveKit must report RoomEvent.ActiveSpeakersChanged for participants whose
+//   audio you are NOT subscribed to. If it does, an unsubscribed speaker is
+//   detected and promoted into the subscribed set within a round trip. If it
+//   does NOT, they are inaudible and stay inaudible, with no way back.
+//
+// The SDK side is confirmed to support it: handleActiveSpeakersUpdate resolves
+// speakers via getRemoteParticipantBySid against room.remoteParticipants, which
+// holds every participant regardless of subscription, with no subscription
+// filter anywhere in the path. The SERVER side is not confirmed here.
+//
+// Failure mode if the assumption is wrong: in a 20-person meeting, 8 people are
+// silently inaudible — exactly the meetings this exists to enable. That is not
+// a gamble worth taking on an unverified premise, so it stays dormant until the
+// test below passes. To verify: drop AUDIO_TIER_THRESHOLD to 2 in a dev build,
+// join with three tabs, confirm the third participant is NOT audio-subscribed
+// (chrome://webrtc-internals shows no inbound-rtp audio for them), have them
+// speak, and confirm they appear in activeSpeakerIds and become audible.
+// Three browser tabs — ordinary use, not a load test.
+const AUDIO_TIER_THRESHOLD = 24;
+const AUDIO_TIER_CAP = 12;
+
+function RemoteTile({ peer, videoWithheld = false }: { peer: PeerInfo; videoWithheld?: boolean }) {
   const ref = useRef<HTMLVideoElement>(null);
 
   // A one-shot play() on mount isn't enough. The element is created the moment a
@@ -492,7 +535,10 @@ function RemoteTile({ peer }: { peer: PeerInfo }) {
           <div className="w-14 h-14 md:w-16 md:h-16 rounded-full bg-[#c0c1ff]/10 flex items-center justify-center border border-[#c0c1ff]/20">
             <span className="text-xl md:text-2xl font-bold text-[#c0c1ff]">{peer.name.charAt(0).toUpperCase()}</span>
           </div>
-          {stillConnecting ? (
+          {/* A tile whose video we deliberately did not subscribe (see the
+              subscription tiers above) is neither connecting nor camera-off —
+              claiming either would be a lie. Show the avatar and say nothing. */}
+          {videoWithheld ? null : stillConnecting ? (
             <span className="text-[9px] md:text-[10px] text-[#8ab4f8] animate-pulse">Connecting…</span>
           ) : (
             <span className="text-[9px] md:text-[10px] text-[#9aa0a6] flex items-center gap-1">
@@ -605,12 +651,14 @@ interface ParticipantTileProps {
   quality?: LinkQuality;
   relayed?: boolean;
   handRaised?: boolean;
+  /** Tile is mounted but its camera video was intentionally not subscribed. */
+  videoWithheld?: boolean;
 }
 
 function ParticipantTile({
   name, isLocal, localStream, peer, isVideoOff, isMuted, bgMode,
   isSpeaking, isPresenting, isFocused, onToggleFocus, compact = false,
-  quality = 'unknown', relayed = false, handRaised = false,
+  quality = 'unknown', relayed = false, handRaised = false, videoWithheld = false,
 }: ParticipantTileProps) {
   return (
     <div
@@ -620,7 +668,7 @@ function ParticipantTile({
     >
       {isLocal
         ? <LocalTile stream={localStream} isVideoOff={isVideoOff} name={name} bgMode={bgMode} />
-        : <RemoteTile peer={peer!} />}
+        : <RemoteTile peer={peer!} videoWithheld={videoWithheld} />}
 
       <div
         className={`absolute bg-[#111]/70 backdrop-blur-sm rounded-md md:rounded-lg font-semibold text-white truncate shadow-sm flex items-center gap-1 ${
@@ -1449,7 +1497,40 @@ export default function ActiveMeetingView({ onLeaveMeeting, onMinimize }: Props)
   // The stage tile keeps its full-resolution layer; grid tiles are capped to
   // 640x360 (see GRID_MAX_DIMS in useWebRTC).
   const stagePeerId = focusedTile && !('isLocal' in focusedTile) ? focusedTile.id : null;
-  useEffect(() => { setVisiblePeerIds(visiblePeerIds, stagePeerId); }, [visiblePeerIds, stagePeerId, setVisiblePeerIds]);
+
+  // ── Subscription tiers (see TIER_THRESHOLD above) ─────────────────────────
+  //
+  // orderedIds is every participant ranked by useTileOrder: presenting first,
+  // then currently speaking, then most recently spoken, then has-video, then
+  // join order. That ranking already exists and already covers EVERYONE, not
+  // just the current page — which is what makes both caps cheap to build and
+  // is why an off-page speaker is promoted onto page 1 today.
+  const rankOf = useMemo(() => new Map(orderedIds.map((id, i) => [id, i])), [orderedIds]);
+
+  // Video: of the tiles actually mounted, subscribe only the top VIDEO_TIER_CAP.
+  // The rest still render — as avatars, via videoWithheld — so the layout and
+  // the pager are untouched. The local tile is always kept: it is your own
+  // camera and costs no bandwidth.
+  const videoPeerIds = useMemo(() => {
+    if (tiles.length <= VIDEO_TIER_THRESHOLD) return visiblePeerIds;
+    const mounted = [...visiblePeerIds];
+    const ranked = mounted
+      .filter((id) => id !== user.id)
+      .sort((a, b) => (rankOf.get(a) ?? Number.MAX_SAFE_INTEGER) - (rankOf.get(b) ?? Number.MAX_SAFE_INTEGER))
+      .slice(0, VIDEO_TIER_CAP);
+    return new Set([...ranked, ...(visiblePeerIds.has(user.id) ? [user.id] : [])]);
+  }, [tiles.length, visiblePeerIds, rankOf, user.id]);
+
+  // Audio: independent of tiles entirely — you hear people you cannot see, and
+  // that stays true. undefined means "no cap", which is what small calls get.
+  const audioPeerIds = useMemo(() => {
+    if (tiles.length <= AUDIO_TIER_THRESHOLD) return undefined;
+    return orderedIds.filter((id) => id !== user.id).slice(0, AUDIO_TIER_CAP);
+  }, [tiles.length, orderedIds, user.id]);
+
+  useEffect(() => {
+    setVisiblePeerIds(videoPeerIds, stagePeerId, audioPeerIds);
+  }, [videoPeerIds, stagePeerId, audioPeerIds, setVisiblePeerIds]);
 
   const meetingContent = (
     <div className="fixed inset-0 z-[9999] flex flex-col lg:flex-row bg-[#111] overflow-hidden select-none text-[#e8eaed]">
@@ -1603,6 +1684,7 @@ export default function ActiveMeetingView({ onLeaveMeeting, onMinimize }: Props)
                     bgMode={bgMode}
                     isSpeaking={speakingIds.has(focusedTile.id)}
                     isPresenting={'isLocal' in focusedTile ? isScreenSharing : sharingPeerIds.has(focusedTile.id)}
+                    videoWithheld={!videoPeerIds.has(focusedTile.id)}
                     isFocused
                     onToggleFocus={() => toggleFocus('participant', focusedTile.id)}
                     quality={links.get(focusedTile.id)?.quality}
@@ -1640,6 +1722,7 @@ export default function ActiveMeetingView({ onLeaveMeeting, onMinimize }: Props)
                           bgMode={bgMode}
                           isSpeaking={speakingIds.has(tile.id)}
                           isPresenting={isLocal ? isScreenSharing : sharingPeerIds.has(tile.id)}
+                          videoWithheld={!videoPeerIds.has(tile.id)}
                           isFocused={false}
                           onToggleFocus={() => toggleFocus('participant', tile.id)}
                           quality={links.get(tile.id)?.quality}
@@ -1682,6 +1765,7 @@ export default function ActiveMeetingView({ onLeaveMeeting, onMinimize }: Props)
                         bgMode={bgMode}
                         isSpeaking={speakingIds.has(tile.id)}
                         isPresenting={isLocal ? isScreenSharing : sharingPeerIds.has(tile.id)}
+                        videoWithheld={!videoPeerIds.has(tile.id)}
                         isFocused={false}
                         onToggleFocus={() => toggleFocus('participant', tile.id)}
                         quality={links.get(tile.id)?.quality}
