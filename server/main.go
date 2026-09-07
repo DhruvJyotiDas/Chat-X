@@ -174,20 +174,88 @@ func bearerUID(r *http.Request) (string, error) {
 const (
 	chatPongWait   = 30 * time.Second
 	chatPingPeriod = (chatPongWait * 8) / 10
+	// Mirrors sigWriteWait/sigSendBuffer on the signaling side — see the
+	// comment on ChatConn.send for why chat now uses the same shape.
+	chatWriteWait  = 10 * time.Second
+	chatSendBuffer = 256
 )
 
 type ChatConn struct {
 	uid  string
 	conn *websocket.Conn
-	mu   sync.Mutex
+
+	// Outbound queue — the same fix SigClient already carries (see its own
+	// comment), ported here because the chat socket had both halves of the bug
+	// the signaling socket was fixed for:
+	//
+	//   1. push() held c.mu across conn.WriteMessage with NO write deadline, so
+	//      one client that stopped reading blocked that goroutine forever while
+	//      holding the mutex. Callers spawned `go c.push(...)`, so every
+	//      subsequent message to that connection parked another goroutine on the
+	//      same mutex, without bound.
+	//   2. Because delivery was one detached goroutine per message and goroutine
+	//      scheduling is not FIFO, two messages sent microseconds apart could
+	//      arrive at the client in either order.
+	//
+	// A single writePump draining an ordered channel fixes both: ordering
+	// becomes structural rather than incidental, and a client that will not
+	// drain is dropped instead of accumulating goroutines.
+	send      chan []byte
+	done      chan struct{}
+	closeOnce sync.Once
 }
 
+// kill tears the connection down from the writer side. Closing the socket makes
+// the read loop's ReadMessage fail, so handleChatWS's existing deferred
+// chatDisconnect still runs — there is no second cleanup path to keep in sync.
+func (c *ChatConn) kill() {
+	c.closeOnce.Do(func() {
+		close(c.done)
+		c.conn.Close()
+	})
+}
+
+// writePump is the ONLY goroutine that writes to this socket. Gorilla requires a
+// single writer, and folding the keepalive ping in here (rather than the separate
+// ping goroutine handleChatWS used to start, which needed c.mu to coordinate with
+// push) is what makes that true with no locking at all.
+func (c *ChatConn) writePump() {
+	ticker := time.NewTicker(chatPingPeriod)
+	defer ticker.Stop()
+	for {
+		select {
+		case msg := <-c.send:
+			c.conn.SetWriteDeadline(time.Now().Add(chatWriteWait)) //nolint
+			if err := c.conn.WriteMessage(websocket.TextMessage, msg); err != nil {
+				c.kill()
+				return
+			}
+		case <-ticker.C:
+			if err := c.conn.WriteControl(websocket.PingMessage, nil, time.Now().Add(chatWriteWait)); err != nil {
+				c.kill()
+				return
+			}
+		case <-c.done:
+			return
+		}
+	}
+}
+
+// push enqueues; it never blocks and never touches the socket. Callers therefore
+// no longer need (and must no longer use) a `go` prefix — that was what made
+// delivery unordered.
 func (c *ChatConn) push(msgType string, payload any) {
 	data, _ := json.Marshal(payload)
 	msg, _ := json.Marshal(map[string]any{"type": msgType, "payload": json.RawMessage(data)})
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	c.conn.WriteMessage(websocket.TextMessage, msg) //nolint
+	select {
+	case c.send <- msg:
+	case <-c.done:
+	default:
+		// Queue full: this client is not draining its socket. Drop it rather
+		// than let it accumulate — same call the signaling path already makes.
+		log.Printf("[ChatWS] send queue full for %s — dropping connection", c.uid)
+		c.kill()
+	}
 }
 
 var (
@@ -243,7 +311,7 @@ func broadcastStatus(uid, status string) {
 	payload := map[string]string{"id": uid, "status": status}
 	for _, conns := range chatClients {
 		for c := range conns {
-			go c.push("user_status", payload)
+			c.push("user_status", payload)
 		}
 	}
 }
@@ -253,7 +321,7 @@ func pushTo(uids []string, msgType string, payload any) {
 	defer chatMu.RUnlock()
 	for _, uid := range uids {
 		for c := range chatClients[uid] {
-			go c.push(msgType, payload)
+			c.push(msgType, payload)
 		}
 	}
 }
@@ -622,7 +690,7 @@ func handleUpdateMe(w http.ResponseWriter, r *http.Request) {
 	chatMu.RLock()
 	for _, conns := range chatClients {
 		for c := range conns {
-			go c.push("user_updated", u)
+			c.push("user_updated", u)
 		}
 	}
 	chatMu.RUnlock()
@@ -1014,7 +1082,13 @@ func handleChatWS(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		return
 	}
-	c := &ChatConn{uid: claims.UserID, conn: conn}
+	c := &ChatConn{
+		uid:  claims.UserID,
+		conn: conn,
+		send: make(chan []byte, chatSendBuffer),
+		done: make(chan struct{}),
+	}
+	go c.writePump()
 	chatConnect(claims.UserID, c)
 
 	// Without a keepalive, a connection that dies without a clean close frame
@@ -1029,29 +1103,13 @@ func handleChatWS(w http.ResponseWriter, r *http.Request) {
 		conn.SetReadDeadline(time.Now().Add(chatPongWait)) //nolint
 		return nil
 	})
-	pingDone := make(chan struct{})
-	go func() {
-		ticker := time.NewTicker(chatPingPeriod)
-		defer ticker.Stop()
-		for {
-			select {
-			case <-ticker.C:
-				c.mu.Lock()
-				err := conn.WriteControl(websocket.PingMessage, nil, time.Now().Add(10*time.Second))
-				c.mu.Unlock()
-				if err != nil {
-					return
-				}
-			case <-pingDone:
-				return
-			}
-		}
-	}()
+	// The ping ticker that used to live here as its own goroutine (taking c.mu
+	// to coordinate with push) is now inside writePump, which is the single
+	// writer. Nothing else may write to this socket.
 
 	defer func() {
-		close(pingDone)
 		chatDisconnect(claims.UserID, c)
-		conn.Close()
+		c.kill()
 	}()
 
 	rows, _ := db.Query(`SELECT id,username,display_name,email,COALESCE(avatar,''),COALESCE(bio,''),status,created_at FROM users ORDER BY display_name`)
@@ -2099,6 +2157,15 @@ func main() {
 	}
 	log.Println("[DB] connected to MariaDB")
 	migrate()
+	// Presence is only ever cleared by chatDisconnect's deferred cleanup, which
+	// a crash or `kill -9` skips — leaving those rows reading 'online' forever,
+	// with no live connection behind them. Nothing is connected yet at this
+	// point in startup, so every 'online' row is by definition stale.
+	if res, err := db.Exec(`UPDATE users SET status='offline' WHERE status<>'offline'`); err == nil {
+		if n, _ := res.RowsAffected(); n > 0 {
+			log.Printf("[DB] cleared %d stale 'online' status row(s) left by a previous run", n)
+		}
+	}
 	migrateInterview()
 	migrateAI()
 	migrateAIMeetings()
