@@ -90,7 +90,7 @@ interface MeetingContextType {
   /** Tells useWebRTC which remote peers currently have a mounted tile, so it
    *  can subscribe/unsubscribe their camera video accordingly — see
    *  useWebRTC.ts's visiblePeerIdsRef for the full reasoning. */
-  setVisiblePeerIds: (ids: Iterable<string>) => void;
+  setVisiblePeerIds: (ids: Iterable<string>, stagePeerId?: string | null) => void;
   /** Forces fresh ICE + a follow-up offer on one peer's camera connection. Used to
    *  recover a link that is 'connected' but has quietly stopped decoding frames. */
   restartPeerConnection: (peerId: string) => void;

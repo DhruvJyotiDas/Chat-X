@@ -1446,7 +1446,10 @@ export default function ActiveMeetingView({ onLeaveMeeting, onMinimize }: Props)
     }
     return new Set(gridPagination.tiles.map((t) => t.id));
   }, [focus, focusedTile, carouselTiles, gridPagination.tiles]);
-  useEffect(() => { setVisiblePeerIds(visiblePeerIds); }, [visiblePeerIds, setVisiblePeerIds]);
+  // The stage tile keeps its full-resolution layer; grid tiles are capped to
+  // 640x360 (see GRID_MAX_DIMS in useWebRTC).
+  const stagePeerId = focusedTile && !('isLocal' in focusedTile) ? focusedTile.id : null;
+  useEffect(() => { setVisiblePeerIds(visiblePeerIds, stagePeerId); }, [visiblePeerIds, stagePeerId, setVisiblePeerIds]);
 
   const meetingContent = (
     <div className="fixed inset-0 z-[9999] flex flex-col lg:flex-row bg-[#111] overflow-hidden select-none text-[#e8eaed]">

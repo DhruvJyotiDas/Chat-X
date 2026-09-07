@@ -8,6 +8,26 @@ import { describeMediaError } from '../lib/mediaErrors';
 import { api } from '../lib/api';
 import type { PeerLink, LinkQuality } from '../lib/connectionStats';
 
+// Ceiling on the simulcast layer a GRID tile is allowed to request.
+//
+// The publish ladder is 320x180 (q, 160 kbps) / 640x360 (h, 450 kbps) /
+// 1280x720 (f, 1.7 Mbps), and the SFU forwards the LOWEST layer whose width
+// covers what the subscriber asked for. adaptiveStream asks for the video
+// element's measured size, so a 4-up grid on a 1080p window (~728 px per
+// tile) clears 640 and pulls the f layer — 1.7 Mbps per stream where 450 kbps
+// is indistinguishable at 728 px. The jump is discontinuous: a 6-person call
+// costs LESS egress than a 4-person one.
+//
+// This is a CEILING, not an override, despite what setVideoDimensions's own
+// docstring says: RemoteTrackPublication.emitTrackUpdate sends
+// min(requestedVideoDimensions, adaptiveStream's measured size), so a tile
+// smaller than 640 still drops to q on its own and an off-screen tile still
+// pauses. All this removes is the top layer, and only for grid tiles — the
+// stage tile (focus/pin) is exempt, since that is the one place the extra
+// resolution is actually visible.
+const GRID_MAX_DIMS = { width: 640, height: 360 } as const;
+const STAGE_MAX_DIMS = { width: 1280, height: 720 } as const;
+
 // ─── Mesh -> LiveKit SFU migration, Stage 3 (2026-08-27) ─────────────────────
 //
 // This file used to build and negotiate one RTCPeerConnection per remote
@@ -171,6 +191,10 @@ export function useWebRTC() {
   // app's existing "hear everyone, see one page" design.
   const visiblePeerIdsRef = useRef<Set<string>>(new Set());
 
+  // The one participant on the main stage (focus or explicit pin), or null in
+  // plain grid mode. Exempt from GRID_MAX_DIMS — see its comment at the top.
+  const stagePeerIdRef = useRef<string | null>(null);
+
   const setQualityFor = useCallback((identity: string, quality: ConnectionQuality) => {
     setLinkQuality((prev) => {
       const next = new Map(prev);
@@ -245,13 +269,26 @@ export function useWebRTC() {
   // camera-grid visible set.
   const applyVideoSubscription = useCallback((participant: RemoteParticipant) => {
     const visible = visiblePeerIdsRef.current;
+    // visiblePeerIds includes the LOCAL tile — ActiveMeetingView builds it from
+    // `tiles`, which appends self — so this is the on-screen tile count, which
+    // is what decides the tile width, not the remote-participant count.
+    const capGridTiles = visible.size >= 3;
     participant.videoTrackPublications.forEach((pub) => {
       if (pub.source === Track.Source.ScreenShare) {
+        // Screen share is deliberately NOT capped: it is text, it lives on the
+        // main stage, and 960x540 (its own lower layer) is unreadable.
         if (!pub.isSubscribed) pub.setSubscribed(true);
         return;
       }
       const shouldSubscribe = visible.has(participant.identity);
       if (pub.isSubscribed !== shouldSubscribe) pub.setSubscribed(shouldSubscribe);
+      if (!shouldSubscribe) return;
+      // Must come AFTER setSubscribed: setVideoDimensions logs a warning and
+      // no-ops on a publication the client has not asked for. It also early-
+      // returns when the dimensions are unchanged, so re-running this on every
+      // visible-set change costs nothing.
+      const onStage = stagePeerIdRef.current === participant.identity;
+      pub.setVideoDimensions(capGridTiles && !onStage ? GRID_MAX_DIMS : STAGE_MAX_DIMS);
     });
   }, []);
 
@@ -260,8 +297,9 @@ export function useWebRTC() {
   // to every current remote participant, not just ones that changed — cheap
   // (setSubscribed no-ops when already in the requested state, checked above)
   // and avoids tracking a separate diff.
-  const setVisiblePeerIds = useCallback((ids: Iterable<string>) => {
+  const setVisiblePeerIds = useCallback((ids: Iterable<string>, stagePeerId?: string | null) => {
     visiblePeerIdsRef.current = new Set(ids);
+    stagePeerIdRef.current = stagePeerId ?? null;
     const room = roomRef.current;
     if (!room) return;
     room.remoteParticipants.forEach(applyVideoSubscription);
@@ -590,6 +628,7 @@ export function useWebRTC() {
     setLinkQuality(new Map());
     setActiveSpeakerIds(new Set());
     visiblePeerIdsRef.current = new Set();
+    stagePeerIdRef.current = null;
   }, []);
 
   useEffect(() => () => cleanup(), [cleanup]);
