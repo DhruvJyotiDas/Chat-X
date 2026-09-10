@@ -1,18 +1,7 @@
-import React, { useState } from 'react';
-import { 
-  ShieldCheck, 
-  Lock, 
-  Trash2, 
-  Download, 
-  CheckCircle, 
-  AlertTriangle, 
-  RefreshCw, 
-  Globe, 
-  Timer, 
-  CheckSquare, 
-  BellRing,
-  ExternalLink,
-  ShieldAlert
+import React from 'react';
+import {
+  Activity, CheckCircle2, Clock3, ExternalLink, Fingerprint,
+  KeyRound, LockKeyhole, Server, ShieldCheck,
 } from 'lucide-react';
 import { ComplianceLog } from '../../types';
 
@@ -23,316 +12,79 @@ interface SecurityViewProps {
   searchFilter: string;
 }
 
-export default function SecurityView({
-  logs,
-  onAddLog,
-  onClearLogs,
-  searchFilter
-}: SecurityViewProps) {
-  // Stateful client configurations
-  const [dataSovereignty, setDataSovereignty] = useState(true);
-  const [mandatoryConsent, setMandatoryConsent] = useState(true);
-  const [retentionPeriod, setRetentionPeriod] = useState('7');
-  const [purgeConfirmOpen, setPurgeConfirmOpen] = useState(false);
-  const [isPurging, setIsPurging] = useState(false);
+const safeguards = [
+  { icon: Fingerprint, title: 'IB Account sign-in', detail: 'Authorization code flow with PKCE and nonce validation.', state: 'Active' },
+  { icon: KeyRound, title: 'Password protection', detail: 'Passwords are salted and hashed with PBKDF2 before storage.', state: 'Active' },
+  { icon: LockKeyhole, title: 'Short-lived media access', detail: 'LiveKit room tokens expire after the initial connection window.', state: 'Active' },
+  { icon: Server, title: 'Private service credentials', detail: 'Database, identity, media and AI secrets are provided at runtime.', state: 'Active' },
+];
 
-  const handleSovereigntyToggle = () => {
-    const newState = !dataSovereignty;
-    setDataSovereignty(newState);
-    onAddLog(
-      newState 
-        ? "Data Sovereignty toggled ON (Swiss Data Center Enclaves)" 
-        : "Data Sovereignty toggled OFF (Fallback Global Servers)",
-      newState ? "SUCCESS" : "FLAGGED"
-    );
-  };
+const planned = [
+  'Device and session management',
+  'Workspace roles and permission policies',
+  'Configurable transcript retention',
+  'Audited data export and deletion',
+];
 
-  const handleConsentToggle = () => {
-    const newState = !mandatoryConsent;
-    setMandatoryConsent(newState);
-    onAddLog(
-      newState 
-        ? "Consent Enforcement Rule initialized for all sessions" 
-        : "Consent Enforcement bypassed (Requires fallback logs)",
-      newState ? "SUCCESS" : "FLAGGED"
-    );
-  };
-
-  const handleRetentionChange = (val: string) => {
-    setRetentionPeriod(val);
-    onAddLog(`Retention period setting updated to: ${val} days`, "SUCCESS");
-  };
-
-  const executePurge = () => {
-    setIsPurging(true);
-    setTimeout(() => {
-      onClearLogs();
-      onAddLog("Manual Purge Executed: All static transcripts deleted from cache disk.", "SUCCESS");
-      setIsPurging(false);
-      setPurgeConfirmOpen(false);
-      alert("Sanitization complete. Encrypted logs cleared. Swiss backup vaults reported clean.");
-    }, 1500);
-  };
-
-  // Filter logs via search text if any
+export default function SecurityView({ logs, onClearLogs, searchFilter }: SecurityViewProps) {
   const filteredLogs = logs.filter(log =>
     log.event.toLowerCase().includes(searchFilter.toLowerCase()) ||
     log.actor.toLowerCase().includes(searchFilter.toLowerCase()) ||
-    log.status.toLowerCase().includes(searchFilter.toLowerCase())
+    log.status.toLowerCase().includes(searchFilter.toLowerCase()),
   );
 
   return (
-    <div className="flex-1 overflow-y-auto p-6 flex flex-col gap-6 scrollbar-hide select-none relative">
-      
-      {/* Purge Confirmation Modal */}
-      {purgeConfirmOpen && (
-        <div className="fixed inset-0 bg-[#0e0e0e]/85 backdrop-blur-md flex items-center justify-center z-50 p-4">
-          <div className="bg-[#1c1b1b] border border-[#ffb4ab]/30 rounded-2xl max-w-md w-full p-6 shadow-2xl relative overflow-hidden">
-            <div className="absolute top-0 left-0 right-0 h-1 bg-gradient-to-r from-red-500 to-amber-500"></div>
-            
-            <div className="flex items-start gap-4 mb-4">
-              <div className="w-10 h-10 rounded-xl bg-[#93000a]/20 flex items-center justify-center shrink-0 text-[#ffb4ab]">
-                <ShieldAlert className="w-5 h-5" />
-              </div>
-              <div>
-                <h3 className="font-bold text-sm text-[#e5e2e1]">Destructive Action Warning</h3>
-                <p className="text-xs text-[#c2c6d8] mt-1 leading-relaxed">
-                  You are about to securely wipe all local chat sessions, downloaded meeting transcripts, and compliance diagnostic records. This action cannot be undone.
-                </p>
-              </div>
+    <div className="dashboard-surface flex-1 overflow-y-auto p-4 sm:p-6">
+      <div className="relative z-10 mx-auto flex max-w-6xl flex-col gap-5">
+        <section className="relative overflow-hidden rounded-[28px] border border-white/[0.08] bg-gradient-to-br from-[#13201d] via-[#11171a] to-[#0d1014] p-6 sm:p-8">
+          <div className="pointer-events-none absolute -right-20 -top-24 h-64 w-64 rounded-full bg-emerald-400/10 blur-3xl" />
+          <div className="relative max-w-2xl">
+            <div className="mb-3 flex items-center gap-2 text-[10px] font-bold uppercase tracking-[.18em] text-emerald-300"><ShieldCheck className="h-4 w-4" /> Security center</div>
+            <h1 className="text-2xl font-semibold tracking-tight text-white sm:text-3xl">Clear, verifiable protection</h1>
+            <p className="mt-3 text-sm leading-6 text-[#9ba5ad]">This page describes safeguards that are active in IB Connect today. Features still being built are labeled clearly so you can make informed privacy decisions.</p>
+          </div>
+        </section>
+
+        <section>
+          <div className="mb-3 flex items-end justify-between">
+            <div><h2 className="text-sm font-semibold text-white">Active safeguards</h2><p className="mt-1 text-[11px] text-[#747d8e]">Controls backed by the current application</p></div>
+            <span className="rounded-full border border-emerald-400/20 bg-emerald-400/[0.07] px-2.5 py-1 text-[9px] font-bold uppercase tracking-wider text-emerald-300">4 active</span>
+          </div>
+          <div className="grid gap-3 sm:grid-cols-2">
+            {safeguards.map(({ icon: Icon, title, detail, state }) => (
+              <article key={title} className="group rounded-2xl border border-white/[0.07] bg-white/[0.025] p-5 transition hover:-translate-y-0.5 hover:border-emerald-300/20 hover:bg-white/[0.04]">
+                <div className="flex items-start gap-4">
+                  <span className="grid h-10 w-10 shrink-0 place-items-center rounded-2xl bg-emerald-400/[0.08] text-emerald-300"><Icon className="h-5 w-5" /></span>
+                  <div className="min-w-0 flex-1"><div className="flex items-center justify-between gap-3"><h3 className="text-sm font-semibold text-[#e8ebef]">{title}</h3><span className="flex items-center gap-1 text-[9px] font-semibold text-emerald-300"><CheckCircle2 className="h-3 w-3" />{state}</span></div><p className="mt-1.5 text-[11px] leading-5 text-[#818a99]">{detail}</p></div>
+                </div>
+              </article>
+            ))}
+          </div>
+        </section>
+
+        <section className="grid gap-4 lg:grid-cols-[1.2fr_.8fr]">
+          <div className="rounded-2xl border border-white/[0.07] bg-white/[0.025] p-5">
+            <div className="flex items-start justify-between gap-4">
+              <div><h2 className="flex items-center gap-2 text-sm font-semibold text-white"><Activity className="h-4 w-4 text-[#91a5ff]" />This session</h2><p className="mt-1 text-[11px] text-[#747d8e]">Local UI activity for this browser tab; this is not an immutable compliance audit.</p></div>
+              {logs.length > 0 && <button onClick={onClearLogs} className="rounded-xl border border-white/[0.08] px-3 py-1.5 text-[10px] font-semibold text-[#9ba3b3] hover:bg-white/[0.05] hover:text-white">Clear</button>}
             </div>
-
-            <div className="flex justify-end gap-3 pt-2">
-              <button 
-                onClick={() => setPurgeConfirmOpen(false)}
-                disabled={isPurging}
-                className="px-4 py-2 bg-[#201f1f] text-[#e5e2e1] hover:bg-[#2a2a2a] rounded-lg text-xs font-semibold cursor-pointer border border-[#424655] transition-colors"
-              >
-                Cancel
-              </button>
-              <button 
-                onClick={executePurge}
-                disabled={isPurging}
-                className="px-4 py-2 bg-[#93000a] text-white hover:bg-[#93000a]/90 rounded-lg text-xs font-bold cursor-pointer transition-colors flex items-center gap-1.5"
-              >
-                {isPurging ? (
-                  <>
-                    <RefreshCw className="w-3.5 h-3.5 animate-spin" />
-                    <span>Purging Disks...</span>
-                  </>
-                ) : (
-                  <>
-                    <Trash2 className="w-3.5 h-3.5" />
-                    <span>Confirm Purge</span>
-                  </>
-                )}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Hero Security Overview banner */}
-      <section className="bg-[#1c1b1b] p-6 rounded-2xl border border-[#424655] relative overflow-hidden flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
-        <div className="accent-glow"></div>
-        <div className="relative z-10 flex-1">
-          <div className="flex items-center gap-2 mb-2 select-none">
-            <Lock className="w-4 h-4 text-[#70ffba]" />
-            <span className="text-[10px] font-black tracking-widest text-[#70ffba] uppercase">DURESS-PROOF ENCLAVE INITIALIZED</span>
-          </div>
-          <h2 className="text-xl font-bold text-[#e5e2e1] leading-tight font-headline-sm">Operational Security Dashboard</h2>
-          <p className="text-xs text-[#c2c6d8] mt-1 max-w-2xl leading-relaxed">
-            Configure geographic compliance regulations, automated system shredders, and audit trails. Decryption relies entirely on active ephemeral tokens.
-          </p>
-        </div>
-        
-        <button 
-          onClick={() => {
-            alert("Security status report compiled. Key strength: RSA-4096. Active Swiss proxy servers report 100% normal.");
-          }}
-          className="bg-[#201f1f] text-[#b0c6ff] border border-[#b0c6ff]/35 hover:bg-[#b0c6ff]/15 px-4 py-2 rounded-xl text-xs font-semibold relative z-10 cursor-pointer transition-all self-stretch md:self-auto text-center"
-        >
-          Check System Integrity
-        </button>
-      </section>
-
-      {/* Grid of controllers: Sovereignty, Consent, Purge rules */}
-      <section className="grid grid-cols-1 md:grid-cols-3 gap-6">
-        
-        {/* Sovereignty Card */}
-        <div className="bg-[#1c1b1b] border border-[#424655] p-5 rounded-2xl flex flex-col justify-between h-[180px]">
-          <div className="flex items-start justify-between">
-            <div className="flex flex-col gap-1">
-              <div className="flex items-center gap-1 text-[10px] font-extrabold tracking-wider text-[#b0c6ff] uppercase">
-                <Globe className="w-3.5 h-3.5" />
-                <span>Geographic Guard</span>
-              </div>
-              <h3 className="font-bold text-xs text-[#e5e2e1] mt-0.5">Swiss Sovereignty</h3>
-              <p className="text-[11px] text-[#c2c6d8] leading-normal mt-1.5">
-                Route files and transcription layers exclusively through secure enclaves in Switzerland.
-              </p>
-            </div>
-          </div>
-          
-          <div className="flex items-center justify-between pt-3 border-t border-[#424655]/20">
-            <span className="text-[10px] font-medium text-[#8c90a1]">Status: {dataSovereignty ? 'FORCE ACTIVE' : 'BYPASS ACTIVE'}</span>
-            <button 
-              onClick={handleSovereigntyToggle}
-              className={`w-12 h-8 sm:h-6.5 rounded-full p-1 transition-all shrink-0 cursor-pointer ${
-                dataSovereignty ? 'bg-[#568dff]' : 'bg-[#201f1f] border border-[#424655]'
-              }`}
-            >
-              <div className={`w-4.5 h-4.5 rounded-full bg-[#131313] transition-all transform ${
-                dataSovereignty ? 'translate-x-5.5' : 'translate-x-0'
-              }`}></div>
-            </button>
-          </div>
-        </div>
-
-        {/* Consent Card */}
-        <div className="bg-[#1c1b1b] border border-[#424655] p-5 rounded-2xl flex flex-col justify-between h-[180px]">
-          <div className="flex items-start justify-between">
-            <div className="flex flex-col gap-1">
-              <div className="flex items-center gap-1 text-[10px] font-extrabold tracking-wider text-[#c0c1ff] uppercase">
-                <CheckSquare className="w-3.5 h-3.5" />
-                <span>Enforcement Protocol</span>
-              </div>
-              <h3 className="font-bold text-xs text-[#e5e2e1] mt-0.5">Mandatory Recording Consent</h3>
-              <p className="text-[11px] text-[#c2c6d8] leading-normal mt-1.5">
-                Block call connection if sync participants fail to acknowledge encryption compliance.
-              </p>
-            </div>
-          </div>
-
-          <div className="flex items-center justify-between pt-3 border-t border-[#424655]/20">
-            <span className="text-[10px] font-medium text-[#8c90a1]">Status: {mandatoryConsent ? 'ENFORCED' : 'OPTIONAL'}</span>
-            <button 
-              onClick={handleConsentToggle}
-              className={`w-12 h-8 sm:h-6.5 rounded-full p-1 transition-all shrink-0 cursor-pointer ${
-                mandatoryConsent ? 'bg-[#c0c1ff]' : 'bg-[#201f1f] border border-[#424655]'
-              }`}
-            >
-              <div className={`w-4.5 h-4.5 rounded-full bg-[#131313] transition-all transform ${
-                mandatoryConsent ? 'translate-x-5.5' : 'translate-x-0'
-              }`}></div>
-            </button>
-          </div>
-        </div>
-
-        {/* Retention / Purge Card */}
-        <div className="bg-[#1c1b1b] border border-[#424655] p-5 rounded-2xl flex flex-col justify-between h-[180px]">
-          <div className="flex items-start justify-between">
-            <div className="flex flex-col gap-1 w-full">
-              <div className="flex items-center gap-1 text-[10px] font-extrabold tracking-wider text-[#ffb4ab] uppercase">
-                <Timer className="w-3.5 h-3.5" />
-                <span>Disk Sanitization</span>
-              </div>
-              <h3 className="font-bold text-xs text-[#e5e2e1] mt-0.5">Transcript Auto-Purge</h3>
-              <div className="flex items-center justify-between mt-2.5 bg-[#131313] border border-[#424655] rounded-lg px-2.5 py-1.5">
-                <span className="text-[11px] text-[#c2c6d8] font-medium">Keep data for:</span>
-                <select 
-                  value={retentionPeriod}
-                  onChange={(e) => handleRetentionChange(e.target.value)}
-                  className="bg-transparent border-none focus:ring-0 text-xs text-[#b0c6ff] font-bold outline-none cursor-pointer"
-                >
-                  <option value="1">24 Hours</option>
-                  <option value="7">7 Days</option>
-                  <option value="30">30 Days</option>
-                  <option value="0">Never (Manual Only)</option>
-                </select>
-              </div>
-            </div>
-          </div>
-
-          <div className="flex items-center justify-between pt-3 border-t border-[#424655]/20">
-            <span className="text-[10px] font-medium text-[#8c90a1]">Destructive Wipe:</span>
-            <button 
-              onClick={() => setPurgeConfirmOpen(true)}
-              className="flex items-center gap-1 bg-[#93000a]/20 text-[#ffb4ab] border border-[#ffb4ab]/35 hover:bg-[#93000a]/35 px-3 py-2 sm:py-1 min-h-[36px] sm:min-h-0 rounded-lg text-[10px] font-black tracking-wider uppercase transition-colors cursor-pointer"
-            >
-              <Trash2 className="w-3 h-3" />
-              <span>PURGE NOW</span>
-            </button>
-          </div>
-        </div>
-
-      </section>
-
-      {/* Audit Log Data Grid */}
-      <section className="bg-[#1c1b1b] border border-[#424655] rounded-2xl p-5 shadow-lg flex flex-col flex-grow min-h-[300px]">
-        <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3 mb-4 pb-3 border-b border-[#424655]/30">
-          <div>
-            <h3 className="font-semibold text-sm text-[#e5e2e1]">Compliance Audit Trail</h3>
-            <p className="text-[10px] text-[#8c90a1] mt-0.5">Immutable workspace operations logs synced with Splunk connector</p>
-          </div>
-          
-          <div className="flex items-center gap-2">
-            <button 
-              onClick={() => {
-                alert("Downloading audit logs CSV...");
-              }}
-              className="flex items-center gap-1 text-[11px] text-[#c2c6d8] bg-[#201f1f] border border-[#424655] hover:border-[#b0c6ff] hover:text-[#b0c6ff] px-3 py-2 sm:py-1.5 min-h-[36px] sm:min-h-0 rounded-lg cursor-pointer transition-colors"
-            >
-              <Download className="w-3.5 h-3.5" />
-              <span>Export CSV</span>
-            </button>
-            <button 
-              onClick={() => {
-                onClearLogs();
-                onAddLog("Audit logs reset manually.", "SUCCESS");
-              }}
-              className="text-[11px] text-[#ffb4ab] hover:text-white px-3 py-2 sm:py-1.5 min-h-[36px] sm:min-h-0 rounded cursor-pointer"
-            >
-              Reset Area
-            </button>
-          </div>
-        </div>
-
-        {/* Responsive Audit Logs Scrollable box */}
-        <div className="flex-1 overflow-x-auto">
-          <table className="w-full text-left text-xs border-collapse">
-            <thead>
-              <tr className="border-b border-[#424655]/40 text-[#8c90a1] font-bold select-none h-9 uppercase tracking-wider text-[10px]">
-                <th className="py-2.5 px-3">Timestamp / Date</th>
-                <th className="py-2.5 px-3">Security Event Target</th>
-                <th className="py-2.5 px-3">Actor context</th>
-                <th className="py-2.5 px-3 text-right">Verification Status</th>
-              </tr>
-            </thead>
-            <tbody>
-              {filteredLogs.map((log) => (
-                <tr 
-                  key={log.id} 
-                  className="border-b border-[#424655]/20 hover:bg-[#201f1f]/40 transition-colors h-10"
-                >
-                  <td className="py-2.5 px-3 text-[#8c90a1] font-mono whitespace-nowrap">{log.timestamp}</td>
-                  <td className="py-2.5 px-3 font-semibold text-[#e5e2e1]">{log.event}</td>
-                  <td className="py-2.5 px-3 text-[#c2c6d8] font-mono">{log.actor}</td>
-                  <td className="py-2.5 px-3 text-right whitespace-nowrap">
-                    <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded text-[9px] font-black tracking-wide ${
-                      log.status === 'SUCCESS' 
-                        ? 'bg-[#00e598]/10 text-[#70ffba] border border-[#00e296]/20' 
-                        : 'bg-[#93000a]/20 text-[#ffb4ab] border border-[#ffb4ab]/20'
-                    }`}>
-                      <span className={`w-1 h-1 rounded-full ${log.status === 'SUCCESS' ? 'bg-[#70ffba]' : 'bg-[#ffb4ab]'}`}></span>
-                      {log.status}
-                    </span>
-                  </td>
-                </tr>
+            <div className="mt-4 space-y-2">
+              {filteredLogs.length === 0 ? (
+                <div className="rounded-2xl border border-dashed border-white/[0.08] px-4 py-8 text-center text-[11px] text-[#687184]">No local activity to show.</div>
+              ) : filteredLogs.slice(0, 20).map(log => (
+                <div key={log.id} className="flex items-center gap-3 rounded-xl bg-white/[0.025] px-3 py-2.5"><span className={`h-2 w-2 rounded-full ${log.status === 'SUCCESS' ? 'bg-emerald-400' : 'bg-amber-300'}`} /><span className="min-w-0 flex-1 truncate text-[11px] text-[#c6cad3]">{log.event}</span><time className="text-[9px] text-[#626b7c]">{log.timestamp}</time></div>
               ))}
+            </div>
+          </div>
 
-              {filteredLogs.length === 0 && (
-                <tr>
-                  <td colSpan={4} className="py-12 text-center text-[#8c90a1] opacity-75">
-                    No matching compliance logs recorded.
-                  </td>
-                </tr>
-              )}
-            </tbody>
-          </table>
-        </div>
-      </section>
-
+          <div className="rounded-2xl border border-[#718cff]/15 bg-[#718cff]/[0.045] p-5">
+            <h2 className="flex items-center gap-2 text-sm font-semibold text-white"><Clock3 className="h-4 w-4 text-[#aebaff]" />Planned controls</h2>
+            <p className="mt-1 text-[11px] leading-5 text-[#7f8798]">These capabilities are on the security roadmap and are not active yet.</p>
+            <div className="mt-4 space-y-2.5">{planned.map(item => <div key={item} className="flex items-center gap-2 text-[11px] text-[#b8bdc8]"><span className="h-1.5 w-1.5 rounded-full bg-[#718cff]" />{item}</div>)}</div>
+            <a href="/auth/account" className="mt-5 flex items-center justify-between rounded-xl border border-[#718cff]/20 bg-[#718cff]/10 px-3 py-2.5 text-[11px] font-semibold text-[#bcc6ff] hover:bg-[#718cff]/15">Manage your IB Account <ExternalLink className="h-3.5 w-3.5" /></a>
+          </div>
+        </section>
+      </div>
     </div>
   );
 }

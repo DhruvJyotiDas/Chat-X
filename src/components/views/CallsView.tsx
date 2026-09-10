@@ -41,8 +41,8 @@ export default function CallsView({ onJoinMeeting }: { onJoinMeeting: () => void
     if (!currentUser) return;
     setCalling(user.id);
     try {
-      const roomId = await createMeeting();
-      notifyCallInvite(user.id, roomId, currentUser.displayName);
+      const roomId = await createMeeting(undefined, undefined, type === 'audio' ? { muted: false, videoOff: true } : undefined);
+      notifyCallInvite(user.id, roomId, currentUser.displayName, type);
       // Log call record
       const record: CallRecord = {
         id: `call-${Date.now()}`,

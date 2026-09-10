@@ -32,6 +32,15 @@ type App struct {
 }
 
 func main() {
+	if len(os.Args) == 2 && os.Args[1] == "-healthcheck" {
+		client := &http.Client{Timeout: 2 * time.Second}
+		resp, err := client.Get("http://127.0.0.1:8090/auth/healthz")
+		if err != nil || resp.StatusCode != http.StatusOK {
+			os.Exit(1)
+		}
+		resp.Body.Close()
+		return
+	}
 	log.SetFlags(log.LstdFlags | log.Lmsgprefix)
 	log.SetPrefix("[ib-account] ")
 

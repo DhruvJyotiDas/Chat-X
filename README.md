@@ -7,21 +7,62 @@ Secure messaging, video calling, and calendar web app, live at **https://meet.ic
 - **Frontend**: React 19 + TypeScript, Vite 6, Tailwind CSS v4, `lucide-react` icons, `motion` for animation.
 - **Backend**: Go (`server/main.go`) — REST API + WebSocket signaling/chat, JWT auth, MariaDB via `go-sql-driver/mysql`.
 - **DB**: MariaDB 10.11, local (`ibconnect_app` user, `lolafire_IBConnect` schema).
-- **ASR**: separate Python Whisper transcription server (`server/transcription_server.py`), proxied at `/asr`.
-- **WebRTC**: mesh topology (one `RTCPeerConnection` per remote peer), TURN server at `meet.icebrkr.space`, screen sharing runs on its own parallel peer connections so it never interrupts the camera feed.
+- **AI**: Go adapters for an external Qwen service, English Nemotron ASR, and the virtual-interview GPU service. The browser never receives GPU credentials.
+- **WebRTC**: LiveKit SFU with simulcast, adaptive stream, dynacast, screen sharing, reconnection, and optional coturn relay.
+
+## Run the complete stack with Docker
+
+The Compose stack contains the frontend/Nginx gateway, main API, IB Account,
+separate application and account MariaDB instances, Redis, and LiveKit.
+
+```bash
+cp deploy/docker/env.example .env
+# Replace every replace-with-* value before exposing the stack.
+docker compose up --build -d --wait
+# Visit http://localhost:8088
+```
+
+The example uses plain HTTP for local development and therefore enables
+non-Secure IB Account cookies. For an HTTPS deployment set
+`PUBLIC_ORIGIN=https://your-domain`, `LIVEKIT_PUBLIC_URL=wss://your-domain/livekit`,
+and `IB_ACCOUNT_INSECURE_COOKIES=0`. Put a TLS load balancer/reverse proxy in
+front of loopback port 8088 (the example binds there by default; see
+`deploy/docker/host-nginx-compose.conf`). LiveKit also publishes TCP 7881 and UDP 50000–50100; those
+ports must reach the media node directly.
+
+If `https://your-domain` shows `PR_CONNECT_RESET_ERROR`, check the layers in
+this order: DNS A/AAAA records point to the host; ports 80 and 443 are open in
+the cloud/security-group firewall; host Nginx has a valid certificate and is
+running; host Nginx proxies to `127.0.0.1:8088`; then `docker compose ps` shows
+the frontend healthy. Compose does not bind HTTPS or obtain certificates by
+itself. A direct local check is `curl -I http://127.0.0.1:8088/` on the server.
+
+Useful commands:
+
+```bash
+docker compose ps
+docker compose logs -f backend account livekit
+docker compose down                 # keeps database/key volumes
+docker compose down --volumes       # destructive local reset
+```
+
+AI, ASR, interview, email, and coturn remain external integrations. Configure
+their URLs and workload credentials in `.env`; core messaging and meetings
+start without the optional AI services. Production secrets should come from a
+secret manager or container-orchestrator secret facility rather than a file.
 
 ## Run locally
 
 ```bash
 npm install
-npm run dev        # vite on :3000, proxies /api, /ws, /chat-ws to :8080, /asr to :8765
+npm run dev        # vite on :3000, proxies /api, /ws, /chat-ws and /asr to :8080
 npm run server      # Go backend directly (go run .)
 npm run dev:all     # both concurrently
 npm run lint        # tsc --noEmit — run before calling frontend work done
 ```
 
-Production runs independently of local dev: `ibconnect-backend.service` (Go binary + MariaDB) and
-`ibconnect-transcription.service` (ASR), both managed via systemd.
+The legacy production deployment uses systemd units. Compose is the reproducible
+full-stack path for new environments.
 
 ## Deploy (frontend)
 

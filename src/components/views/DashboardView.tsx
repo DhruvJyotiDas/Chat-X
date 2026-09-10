@@ -1,13 +1,14 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import {
   MessageSquare, Video, CalendarPlus, CalendarDays, Sparkles,
-  Phone, Users, ChevronRight, PlusCircle,
+  Phone, Users, ChevronRight, PlusCircle, Target, AlertTriangle,
+  RefreshCw, ArrowRight, WandSparkles, Check, Clock3, ListTodo,
 } from 'lucide-react';
 import { AppView, ExtractedItem } from '../../types';
 import { useAuth } from '../../context/AuthContext';
 import { useChat } from '../../context/ChatContext';
 import { useMeeting } from '../../context/MeetingContext';
-import { api } from '../../lib/api';
+import { api, type AIDailyBrief, type AITaskItem, type AIReminderItem } from '../../lib/api';
 import { extractIntelligence, ITEM_ICONS, ITEM_COLORS } from '../../lib/intelligence';
 import { loadCalendarEvents } from '../../lib/calendarLocal';
 import { loadCalls } from '../../lib/callsLocal';
@@ -33,7 +34,7 @@ function greeting(): string {
 
 function StatTile({ icon: Icon, label, value, tint }: { icon: React.ElementType; label: string; value: number | string; tint: string }) {
   return (
-    <div className="bg-[#1c1b1b] border border-[#424655] rounded-2xl p-4 flex items-center gap-3">
+    <div className="group flex items-center gap-3 rounded-2xl border border-white/[0.07] bg-white/[0.025] p-4 transition hover:-translate-y-0.5 hover:border-white/[0.12] hover:bg-white/[0.04]">
       <div className={`w-10 h-10 rounded-xl flex items-center justify-center shrink-0 ${tint}`}>
         <Icon className="w-5 h-5" />
       </div>
@@ -49,7 +50,7 @@ function QuickAction({ icon: Icon, label, onClick, tint }: { icon: React.Element
   return (
     <button
       onClick={onClick}
-      className="flex-1 min-w-[140px] flex items-center gap-3 bg-[#1c1b1b] border border-[#424655] hover:border-[#568dff]/60 rounded-2xl p-4 transition-all hover:bg-[#1c1b1b]/80 text-left cursor-pointer group"
+      className="group flex min-w-[140px] flex-1 items-center gap-3 rounded-2xl border border-white/[0.07] bg-white/[0.025] p-4 text-left transition-all hover:-translate-y-0.5 hover:border-[#718cff]/35 hover:bg-[#718cff]/[0.055]"
     >
       <div className={`w-10 h-10 rounded-xl flex items-center justify-center shrink-0 ${tint}`}>
         <Icon className="w-5 h-5" />
@@ -70,6 +71,11 @@ export default function DashboardView({ onNavigate, onJoinMeeting }: Props) {
   const [isStarting, setIsStarting] = useState(false);
   const [showSchedule, setShowSchedule] = useState(false);
   const [actionItems, setActionItems] = useState<ExtractedItem[]>([]);
+  const [brief, setBrief] = useState<AIDailyBrief | null>(null);
+  const [briefLoading, setBriefLoading] = useState(false);
+  const [briefError, setBriefError] = useState('');
+  const [aiTasks, setAITasks] = useState<AITaskItem[]>([]);
+  const [aiReminders, setAIReminders] = useState<AIReminderItem[]>([]);
 
   const today = todayStr();
 
@@ -112,6 +118,32 @@ export default function DashboardView({ onNavigate, onJoinMeeting }: Props) {
     return () => { cancelled = true; };
   }, [threads]);
 
+  // Keep the dashboard useful even when the user has not opened Chats. These
+  // are already permissioned AI records; loading them here turns extracted
+  // commitments into an actionable surface instead of a hidden feature.
+  useEffect(() => {
+    if (!currentUser) return;
+    let cancelled = false;
+    Promise.all([api.getAITasks(), api.getAIReminders()]).then(([taskResult, reminderResult]) => {
+      if (cancelled) return;
+      setAITasks([...(taskResult.owedByMe ?? []), ...(taskResult.owedToMe ?? [])].slice(0, 8));
+      setAIReminders((reminderResult.reminders ?? []).slice(0, 6));
+    }).catch(() => {
+      if (!cancelled) { setAITasks([]); setAIReminders([]); }
+    });
+    return () => { cancelled = true; };
+  }, [currentUser]);
+
+  const completeTask = (id: string) => {
+    setAITasks(previous => previous.filter(task => task.id !== id));
+    void api.completeAITask(id).catch(() => api.getAITasks().then(result => setAITasks([...(result.owedByMe ?? []), ...(result.owedToMe ?? [])].slice(0, 8))).catch(() => {}));
+  };
+
+  const completeReminder = (id: string) => {
+    setAIReminders(previous => previous.filter(reminder => reminder.id !== id));
+    void api.completeAIReminder(id).catch(() => api.getAIReminders().then(result => setAIReminders((result.reminders ?? []).slice(0, 6))).catch(() => {}));
+  };
+
   const activity: ActivityEntry[] = useMemo(() => {
     const chatEntries: ActivityEntry[] = threads
       .filter(t => t.lastTimestamp)
@@ -136,22 +168,46 @@ export default function DashboardView({ onNavigate, onJoinMeeting }: Props) {
     try { await createMeeting(); onJoinMeeting(); } catch {} finally { setIsStarting(false); }
   };
 
+  const generateBrief = async () => {
+    if (briefLoading) return;
+    setBriefLoading(true);
+    setBriefError('');
+    try {
+      setBrief(await api.aiDailyBrief());
+    } catch (error) {
+      setBriefError(error instanceof Error ? error.message : 'AIPA could not create your brief right now.');
+    } finally {
+      setBriefLoading(false);
+    }
+  };
+
   const initials = currentUser
     ? currentUser.displayName.split(' ').map(w => w[0]).join('').toUpperCase().slice(0, 2)
     : 'IB';
 
   return (
-    <div className="flex-1 overflow-y-auto p-4 sm:p-6 select-none">
+    <div className="dashboard-surface flex-1 overflow-y-auto p-4 sm:p-6 select-none">
       {showSchedule && <ScheduleMeetingModal onClose={() => setShowSchedule(false)} />}
-      <div className="max-w-5xl mx-auto flex flex-col gap-5">
+      <div className="relative z-10 max-w-6xl mx-auto flex flex-col gap-5">
         {/* Header */}
-        <div className="flex items-center gap-3">
-          <div className="w-11 h-11 rounded-full bg-[#568dff]/15 flex items-center justify-center shrink-0 overflow-hidden">
-            {currentUser?.avatar ? <img src={currentUser.avatar} className="w-full h-full object-cover" /> : <span className="text-sm font-bold text-[#b0c6ff]">{initials}</span>}
-          </div>
-          <div>
-            <h1 className="text-lg sm:text-xl font-bold text-[#e5e2e1]">{greeting()}, {currentUser?.displayName?.split(' ')[0] ?? 'there'}</h1>
-            <p className="text-xs text-[#8c90a1]">{new Date().toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' })}</p>
+        <div className="relative overflow-hidden rounded-[28px] border border-white/[0.08] bg-gradient-to-br from-[#151925] via-[#101219] to-[#0d0f14] p-5 sm:p-7 shadow-[0_24px_80px_rgba(0,0,0,.22)]">
+          <div className="pointer-events-none absolute -right-24 -top-28 h-72 w-72 rounded-full bg-[#6d7fff]/15 blur-3xl" />
+          <div className="pointer-events-none absolute -bottom-24 left-1/3 h-48 w-48 rounded-full bg-[#8b5cf6]/10 blur-3xl" />
+          <div className="relative flex flex-col gap-5 sm:flex-row sm:items-end sm:justify-between">
+            <div className="flex items-center gap-4">
+              <div className="w-12 h-12 rounded-2xl border border-white/10 bg-[#718cff]/15 flex items-center justify-center shrink-0 overflow-hidden shadow-[0_8px_30px_rgba(96,116,255,.18)]">
+                {currentUser?.avatar ? <img src={currentUser.avatar} alt="" className="w-full h-full object-cover" /> : <span className="text-sm font-bold text-[#b9c4ff]">{initials}</span>}
+              </div>
+              <div>
+                <div className="mb-1 flex items-center gap-2 text-[10px] font-bold uppercase tracking-[.18em] text-[#778096]"><span className="h-1.5 w-1.5 rounded-full bg-emerald-400 shadow-[0_0_10px_#34d399]" /> Your workspace</div>
+                <h1 className="text-xl sm:text-2xl font-semibold tracking-tight text-white">{greeting()}, {currentUser?.displayName?.split(' ')[0] ?? 'there'}</h1>
+                <p className="mt-1 text-xs text-[#8991a4]">{new Date().toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' })}</p>
+              </div>
+            </div>
+            <button onClick={() => void generateBrief()} disabled={briefLoading} className="group flex items-center justify-center gap-2 rounded-2xl border border-[#8294ff]/30 bg-[#718cff]/15 px-4 py-3 text-xs font-semibold text-[#c6ceff] transition hover:border-[#8294ff]/55 hover:bg-[#718cff]/25 hover:text-white disabled:opacity-60">
+              {briefLoading ? <RefreshCw className="h-4 w-4 animate-spin" /> : <WandSparkles className="h-4 w-4 transition-transform group-hover:rotate-12" />}
+              {briefLoading ? 'Building your focus…' : brief ? 'Refresh daily focus' : 'Build my daily focus'}
+            </button>
           </div>
         </div>
 
@@ -164,6 +220,61 @@ export default function DashboardView({ onNavigate, onJoinMeeting }: Props) {
           <QuickAction icon={CalendarPlus} label="Schedule Event" tint="bg-[#c0c1ff]/10 text-[#c0c1ff]" onClick={() => setShowSchedule(true)} />
           <QuickAction icon={CalendarDays} label="Open Calendar" tint="bg-[#ffd60a]/10 text-[#ffd60a]" onClick={() => onNavigate('calendar')} />
         </div>
+
+        {(brief || briefLoading || briefError) && (
+          <section className="overflow-hidden rounded-[24px] border border-[#718cff]/20 bg-gradient-to-br from-[#151827] to-[#101117] shadow-[0_20px_70px_rgba(0,0,0,.2)]">
+            <div className="flex items-center justify-between border-b border-white/[0.07] px-5 py-4">
+              <div className="flex items-center gap-2.5">
+                <span className="grid h-8 w-8 place-items-center rounded-xl bg-[#718cff]/15 text-[#aebaff]"><Sparkles className="h-4 w-4" /></span>
+                <div><h2 className="text-sm font-semibold text-white">Daily focus</h2><p className="text-[10px] text-[#747d92]">Grounded in your recent IB Connect activity</p></div>
+              </div>
+              {brief && <span className="rounded-full border border-white/[0.07] bg-white/[0.035] px-2.5 py-1 text-[9px] font-semibold text-[#7f8799]">{brief.sourceCount} sources</span>}
+            </div>
+            {briefLoading && (
+              <div className="grid gap-3 p-5 sm:grid-cols-3">
+                {[0, 1, 2].map(item => <div key={item} className="h-28 animate-pulse rounded-2xl bg-white/[0.045]" />)}
+              </div>
+            )}
+            {briefError && <div className="m-5 rounded-2xl border border-red-400/20 bg-red-400/[0.07] px-4 py-3 text-xs text-red-200">{briefError}</div>}
+            {brief && !briefLoading && (
+              <div className="p-5">
+                <div className="mb-5 max-w-3xl"><h3 className="text-lg font-semibold tracking-tight text-white">{brief.headline}</h3><p className="mt-1.5 text-xs leading-5 text-[#969daf]">{brief.summary}</p></div>
+                <div className="grid gap-4 lg:grid-cols-3">
+                  <div className="rounded-2xl border border-white/[0.07] bg-white/[0.025] p-4">
+                    <h4 className="mb-3 flex items-center gap-2 text-[10px] font-bold uppercase tracking-[.14em] text-[#9eabff]"><Target className="h-3.5 w-3.5" /> Priorities</h4>
+                    <div className="space-y-3">{brief.priorities.length ? brief.priorities.map((item, index) => <div key={`${item.sourceRef}-${index}`}><p className="text-xs font-semibold leading-5 text-[#e8eaf0]">{item.title}</p><p className="mt-0.5 text-[10px] leading-4 text-[#777f91]">{item.why}</p><span className="mt-1 inline-block font-mono text-[8px] text-[#5f6880]">{item.sourceRef}</span></div>) : <p className="text-[11px] text-[#70788a]">No urgent priorities found.</p>}</div>
+                  </div>
+                  <div className="rounded-2xl border border-white/[0.07] bg-white/[0.025] p-4">
+                    <h4 className="mb-3 flex items-center gap-2 text-[10px] font-bold uppercase tracking-[.14em] text-emerald-300"><ArrowRight className="h-3.5 w-3.5" /> Follow up</h4>
+                    <div className="space-y-3">{brief.followUps.length ? brief.followUps.map((item, index) => <div key={`${item.sourceRef}-${index}`}><p className="text-xs font-semibold leading-5 text-[#e8eaf0]">{item.title}</p><p className="mt-0.5 text-[10px] leading-4 text-[#777f91]">{item.why}</p><span className="mt-1 inline-block font-mono text-[8px] text-[#5f6880]">{item.sourceRef}</span></div>) : <p className="text-[11px] text-[#70788a]">No follow-ups found.</p>}</div>
+                  </div>
+                  <div className="rounded-2xl border border-white/[0.07] bg-white/[0.025] p-4">
+                    <h4 className="mb-3 flex items-center gap-2 text-[10px] font-bold uppercase tracking-[.14em] text-amber-300"><AlertTriangle className="h-3.5 w-3.5" /> Watchouts</h4>
+                    <div className="space-y-2">{brief.watchouts.length ? brief.watchouts.map((item, index) => <p key={index} className="text-[11px] leading-4 text-[#a7adba]">• {item}</p>) : <p className="text-[11px] text-[#70788a]">Nothing needs attention right now.</p>}</div>
+                  </div>
+                </div>
+              </div>
+            )}
+          </section>
+        )}
+
+        <section className="overflow-hidden rounded-[24px] border border-white/[0.07] bg-[#111318] shadow-[0_16px_60px_rgba(0,0,0,.16)]">
+          <div className="flex items-center justify-between border-b border-white/[0.07] px-5 py-4">
+            <div className="flex items-center gap-2.5">
+              <span className="grid h-8 w-8 place-items-center rounded-xl bg-emerald-400/10 text-emerald-300"><ListTodo className="h-4 w-4" /></span>
+              <div><h2 className="text-sm font-semibold text-white">AI inbox</h2><p className="text-[10px] text-[#747d92]">Commitments and reminders AIPA found in your conversations</p></div>
+            </div>
+            {(aiTasks.length + aiReminders.length) > 0 && <span className="rounded-full border border-emerald-300/15 bg-emerald-300/[0.06] px-2.5 py-1 text-[9px] font-semibold text-emerald-200">{aiTasks.length + aiReminders.length} open</span>}
+          </div>
+          {aiTasks.length === 0 && aiReminders.length === 0 ? (
+            <div className="flex items-center gap-3 px-5 py-6 text-xs text-[#777f91]"><Check className="h-4 w-4 text-emerald-300" />No open AI tasks or reminders yet. Analyze a conversation to extract them.</div>
+          ) : (
+            <div className="grid gap-3 p-4 md:grid-cols-2">
+              {aiTasks.map(task => <div key={task.id} className="flex items-start gap-3 rounded-2xl border border-white/[0.06] bg-white/[0.025] p-3"><button onClick={() => completeTask(task.id)} className="mt-0.5 grid h-5 w-5 shrink-0 place-items-center rounded-full border border-[#697593] text-transparent transition hover:border-emerald-300 hover:bg-emerald-300/10 hover:text-emerald-300" title="Complete task" aria-label={`Complete ${task.description}`}><Check className="h-3 w-3" /></button><div className="min-w-0"><p className="text-xs font-medium leading-5 text-[#e6e8ef]">{task.description}</p><p className="mt-1 flex items-center gap-1 text-[9px] text-[#747d92]"><Clock3 className="h-3 w-3" />AI task</p></div></div>)}
+              {aiReminders.map(reminder => <div key={reminder.id} className="flex items-start gap-3 rounded-2xl border border-white/[0.06] bg-white/[0.025] p-3"><button onClick={() => completeReminder(reminder.id)} className="mt-0.5 grid h-5 w-5 shrink-0 place-items-center rounded-full border border-[#697593] text-transparent transition hover:border-emerald-300 hover:bg-emerald-300/10 hover:text-emerald-300" title="Dismiss reminder" aria-label={`Dismiss ${reminder.text}`}><Check className="h-3 w-3" /></button><div className="min-w-0"><p className="text-xs font-medium leading-5 text-[#e6e8ef]">{reminder.text}</p><p className="mt-1 flex items-center gap-1 text-[9px] text-[#747d92]"><Clock3 className="h-3 w-3" />Reminder</p></div></div>)}
+            </div>
+          )}
+        </section>
 
         {/* Stats */}
         <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">

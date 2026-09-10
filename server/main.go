@@ -1,10 +1,11 @@
 package main
 
 import (
+	"context"
 	"crypto/hmac"
 	"crypto/rand"
-	"crypto/sha1"
 	"crypto/rsa"
+	"crypto/sha1"
 	"database/sql"
 	"encoding/base64"
 	"encoding/hex"
@@ -17,9 +18,11 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"os/signal"
 	"strconv"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	"github.com/go-sql-driver/mysql"
@@ -42,6 +45,23 @@ const (
 //
 // Rotating it invalidates every existing session, so everyone signs in again.
 var jwtKey = os.Getenv("IBCONNECT_JWT_SECRET")
+
+var allowedOrigins = func() map[string]bool {
+	out := map[string]bool{}
+	for _, origin := range strings.Split(os.Getenv("IBCONNECT_ALLOWED_ORIGINS"), ",") {
+		if trimmed := strings.TrimSpace(strings.TrimSuffix(origin, "/")); trimmed != "" {
+			out[trimmed] = true
+		}
+	}
+	return out
+}()
+
+func originAllowed(origin string) bool {
+	if origin == "" {
+		return true // non-browser clients do not send Origin
+	}
+	return allowedOrigins[strings.TrimSuffix(origin, "/")]
+}
 
 // mustHaveSigningKey refuses to start rather than fall back to a known key.
 // A silent fallback is how the old value survived for months: everything kept
@@ -74,7 +94,7 @@ var (
 	upgrader = websocket.Upgrader{
 		ReadBufferSize:  4096,
 		WriteBufferSize: 4096,
-		CheckOrigin:     func(r *http.Request) bool { return true },
+		CheckOrigin:     func(r *http.Request) bool { return originAllowed(r.Header.Get("Origin")) },
 	}
 )
 
@@ -120,13 +140,13 @@ type Message struct {
 }
 
 type ScheduledMeeting struct {
-    ID         string   `json:"id"`
-    Code       string   `json:"code"`
-    Title      string   `json:"title"`
-    Date       string   `json:"date"`
-    Time       string   `json:"time"`
-    CreatorID  string   `json:"creatorId"`
-    InviteeIDs []string `json:"inviteeIds"`
+	ID         string   `json:"id"`
+	Code       string   `json:"code"`
+	Title      string   `json:"title"`
+	Date       string   `json:"date"`
+	Time       string   `json:"time"`
+	CreatorID  string   `json:"creatorId"`
+	InviteeIDs []string `json:"inviteeIds"`
 }
 
 type Claims struct {
@@ -145,6 +165,9 @@ func signToken(userID string) (string, error) {
 
 func parseToken(s string) (*Claims, error) {
 	tok, err := jwt.ParseWithClaims(s, &Claims{}, func(t *jwt.Token) (any, error) {
+		if t.Method != jwt.SigningMethodHS256 {
+			return nil, fmt.Errorf("unexpected JWT signing method %q", t.Method.Alg())
+		}
 		return []byte(jwtKey), nil
 	})
 	if err != nil {
@@ -414,7 +437,10 @@ func fail(w http.ResponseWriter, msg string, code int) {
 
 func cors(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Access-Control-Allow-Origin", "*")
+		if origin := r.Header.Get("Origin"); originAllowed(origin) && origin != "" {
+			w.Header().Set("Access-Control-Allow-Origin", origin)
+			w.Header().Add("Vary", "Origin")
+		}
 		w.Header().Set("Access-Control-Allow-Methods", "GET,POST,PUT,DELETE,OPTIONS")
 		w.Header().Set("Access-Control-Allow-Headers", "Content-Type,Authorization")
 		if r.Method == "OPTIONS" {
@@ -438,10 +464,14 @@ func cors(next http.Handler) http.Handler {
 // localStorage — unchanged) before minting IB Connect's own session JWT.
 
 var (
-	ibAccountIssuer       = strings.TrimSuffix(getenvOr("IB_ACCOUNT_ISSUER", "https://meet.icebrkr.space/auth"), "/")
+	ibAccountIssuer = strings.TrimSuffix(getenvOr("IB_ACCOUNT_ISSUER", "https://meet.icebrkr.space/auth"), "/")
+	// The issuer is public and must match the ID token exactly. Containers can
+	// use a separate private URL for token/JWKS transport without changing iss.
+	ibAccountInternalURL  = strings.TrimSuffix(getenvOr("IB_ACCOUNT_INTERNAL_URL", ibAccountIssuer), "/")
 	ibAccountClientID     = os.Getenv("IB_ACCOUNT_CLIENT_ID")
 	ibAccountClientSecret = os.Getenv("IB_ACCOUNT_CLIENT_SECRET")
 	ibAccountRedirectURI  = getenvOr("IB_ACCOUNT_REDIRECT_URI", "https://meet.icebrkr.space/")
+	ibAccountHTTP         = &http.Client{Timeout: 15 * time.Second}
 
 	jwksMu      sync.RWMutex
 	jwksKeys    map[string]*rsa.PublicKey
@@ -475,7 +505,7 @@ func fetchJWKS() (map[string]*rsa.PublicKey, error) {
 	}
 	jwksMu.RUnlock()
 
-	resp, err := http.Get(ibAccountIssuer + "/oauth/jwks.json")
+	resp, err := ibAccountHTTP.Get(ibAccountInternalURL + "/oauth/jwks.json")
 	if err != nil {
 		return nil, err
 	}
@@ -555,7 +585,7 @@ func handleOIDCCallback(w http.ResponseWriter, r *http.Request) {
 		"client_id":     {ibAccountClientID},
 		"client_secret": {ibAccountClientSecret},
 	}
-	tokenResp, err := http.PostForm(ibAccountIssuer+"/oauth/token", form)
+	tokenResp, err := ibAccountHTTP.PostForm(ibAccountInternalURL+"/oauth/token", form)
 	if err != nil {
 		fail(w, "could not reach IB Account", 502)
 		return
@@ -740,7 +770,7 @@ func handleGetScheduledMeetings(w http.ResponseWriter, r *http.Request) {
 		var m ScheduledMeeting
 		var invJSON string
 		rows.Scan(&m.ID, &m.Code, &m.Title, &m.Date, &m.Time, &m.CreatorID, &invJSON) //nolint
-		json.Unmarshal([]byte(invJSON), &m.InviteeIDs)                                 //nolint
+		json.Unmarshal([]byte(invJSON), &m.InviteeIDs)                                //nolint
 		meetings = append(meetings, m)
 	}
 	ok(w, meetings)
@@ -847,6 +877,10 @@ func handleThreads(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		ok(w, threads)
+		return
+	}
+	if r.Method != http.MethodPost {
+		fail(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
 
@@ -989,7 +1023,29 @@ func handleMessages(w http.ResponseWriter, r *http.Request) {
 		Text string          `json:"text"`
 		File *FileAttachment `json:"fileAttachment"`
 	}
-	json.NewDecoder(r.Body).Decode(&b) //nolint
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 8<<20)).Decode(&b); err != nil {
+		fail(w, "invalid or oversized message", http.StatusBadRequest)
+		return
+	}
+	b.Text = strings.TrimSpace(b.Text)
+	if len(b.Text) > 16000 {
+		fail(w, "message text must be 16000 characters or fewer", http.StatusBadRequest)
+		return
+	}
+	if b.File != nil {
+		if b.File.Name == "" || len(b.File.Name) > 255 || b.File.Size < 0 || b.File.Size > 6<<20 || len(b.File.DataURL) > 8<<20 {
+			fail(w, "file attachment is too large or invalid", http.StatusBadRequest)
+			return
+		}
+		if b.File.MType == "" || !strings.Contains(b.File.MType, "/") {
+			fail(w, "file attachment type is invalid", http.StatusBadRequest)
+			return
+		}
+	}
+	if b.Text == "" && b.File == nil {
+		fail(w, "message text or attachment is required", http.StatusBadRequest)
+		return
+	}
 	msgID := "msg-" + newID()
 	var fn, ft, fd sql.NullString
 	var fs sql.NullInt64
@@ -1136,6 +1192,7 @@ func handleChatWS(w http.ResponseWriter, r *http.Request) {
 			To       string `json:"to"`
 			RoomID   string `json:"roomId"`
 			FromName string `json:"fromName"`
+			CallType string `json:"callType"`
 		}
 		if json.Unmarshal(data, &msg) != nil {
 			continue
@@ -1152,8 +1209,11 @@ func handleChatWS(w http.ResponseWriter, r *http.Request) {
 			})
 		}
 		if msg.Type == "call_invite" && msg.To != "" && msg.RoomID != "" {
+			if msg.CallType != "audio" {
+				msg.CallType = "video"
+			}
 			pushTo([]string{msg.To}, "call_invite", map[string]string{
-				"fromId": claims.UserID, "fromName": msg.FromName, "roomId": msg.RoomID,
+				"fromId": claims.UserID, "fromName": msg.FromName, "roomId": msg.RoomID, "callType": msg.CallType,
 			})
 		}
 		if msg.Type == "call_declined" && msg.To != "" {
@@ -1238,8 +1298,12 @@ type JoinResponsePayload struct {
 	RequestID string `json:"request_id"`
 	Approve   bool   `json:"approve"`
 }
-type ChatPayload struct{ Text string `json:"text"` }
-type ReactionPayload struct{ Emoji string `json:"emoji"` }
+type ChatPayload struct {
+	Text string `json:"text"`
+}
+type ReactionPayload struct {
+	Emoji string `json:"emoji"`
+}
 
 // Kept in sync with REACTIONS in src/lib/reactions.ts. Anything not listed here is
 // dropped silently rather than rejected — a client sending an unknown reaction is
@@ -1249,8 +1313,12 @@ var allowedReactions = map[string]bool{
 	"😂": true, "😮": true, "🤔": true, "👋": true,
 }
 
-type HandPayload struct{ Raised bool `json:"raised"` }
-type CaptionLangPayload struct{ Lang string `json:"lang"` }
+type HandPayload struct {
+	Raised bool `json:"raised"`
+}
+type CaptionLangPayload struct {
+	Lang string `json:"lang"`
+}
 type RequireApprovalPayload struct {
 	Value bool `json:"value"`
 }
@@ -1706,6 +1774,11 @@ func enterRoom(client *SigClient, room *Room) []PeerInfo {
 		prev.conn.Close()
 	}
 	client.room = room
+	if db != nil {
+		if _, err := db.Exec(`INSERT INTO meeting_participants (room_id,user_id,user_name) VALUES (?,?,?) ON DUPLICATE KEY UPDATE user_name=VALUES(user_name), last_seen_at=NOW(6), left_at=NULL`, room.id, client.id, client.name); err != nil {
+			log.Printf("[Meeting] participant persistence failed room=%s user=%s: %v", room.id, client.id, err)
+		}
+	}
 	return peers
 }
 
@@ -2115,6 +2188,11 @@ func leaveRoom(client *SigClient) {
 	if !removed {
 		return
 	}
+	if db != nil {
+		if _, err := db.Exec(`UPDATE meeting_participants SET left_at=NOW(6), last_seen_at=NOW(6) WHERE room_id=? AND user_id=?`, room.id, client.id); err != nil {
+			log.Printf("[Meeting] participant leave persistence failed room=%s user=%s: %v", room.id, client.id, err)
+		}
+	}
 	room.broadcast(client.id, "peer_left", map[string]string{"peer_id": client.id})
 	if empty {
 		scheduleReap(room)
@@ -2129,6 +2207,16 @@ func handleHealth(w http.ResponseWriter, r *http.Request) {
 // ── Main ──────────────────────────────────────────────────────────────────────
 
 func main() {
+	if len(os.Args) == 2 && os.Args[1] == "-healthcheck" {
+		port := getenvOr("PORT", "8080")
+		client := &http.Client{Timeout: 2 * time.Second}
+		resp, err := client.Get("http://127.0.0.1:" + port + "/health")
+		if err != nil || resp.StatusCode != http.StatusOK {
+			os.Exit(1)
+		}
+		resp.Body.Close()
+		return
+	}
 	mustHaveSigningKey()
 
 	var err error
@@ -2179,7 +2267,11 @@ func main() {
 	mux.HandleFunc("/chat-ws", handleChatWS)
 	mux.HandleFunc("/api/auth/oidc/callback", handleOIDCCallback)
 	mux.HandleFunc("/api/auth/me", func(w http.ResponseWriter, r *http.Request) {
-		if r.Method == "PUT" { handleUpdateMe(w, r) } else { handleMe(w, r) }
+		if r.Method == "PUT" {
+			handleUpdateMe(w, r)
+		} else {
+			handleMe(w, r)
+		}
 	})
 	mux.HandleFunc("/api/turn-credentials", handleTurnCredentials)
 	mux.HandleFunc("/api/livekit/token", handleLiveKitToken)
@@ -2187,6 +2279,7 @@ func main() {
 	mux.HandleFunc("/api/interview/", handleInterviewRoutes)
 	mux.HandleFunc("/api/ai/status", handleAIStatus)
 	mux.HandleFunc("/api/ai/chat", handleAIChat)
+	mux.HandleFunc("/api/ai/daily-brief", handleAIDailyBrief)
 	mux.HandleFunc("/api/ai/rewrite", handleAIRewrite)
 	mux.HandleFunc("/api/ai/reply-suggestions", handleAIReplySuggestions)
 	mux.HandleFunc("/api/ai/ask-thread", handleAIAskThread)
@@ -2264,6 +2357,36 @@ func main() {
 	// ALSO reachable directly on the public IP over plain HTTP — bypassing TLS and
 	// anything nginx enforces. BIND_ADDR overrides it for local testing.
 	addr := getenvOr("BIND_ADDR", "127.0.0.1") + ":" + port
-	log.Printf("[Server] listening on %s", addr)
-	log.Fatal(http.ListenAndServe(addr, cors(mux)))
+	srv := &http.Server{
+		Addr:              addr,
+		Handler:           cors(mux),
+		ReadTimeout:       30 * time.Second,
+		ReadHeaderTimeout: 10 * time.Second,
+		// AI analysis endpoints can legitimately take a few minutes with the
+		// current external model; keep a bounded write deadline instead of
+		// allowing a stalled provider to hold a socket forever.
+		// The longest synchronous operation is AI conversation/meeting analysis,
+		// which has its own 300s provider deadline. Keep the server write window
+		// slightly above that deadline so the handler can return a useful JSON
+		// error instead of closing the connection while Nginx is still waiting.
+		WriteTimeout:   315 * time.Second,
+		IdleTimeout:    75 * time.Second,
+		MaxHeaderBytes: 1 << 20,
+	}
+	go func() {
+		log.Printf("[Server] listening on %s", addr)
+		if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			log.Fatalf("http server: %v", err)
+		}
+	}()
+
+	stop := make(chan os.Signal, 1)
+	signal.Notify(stop, syscall.SIGINT, syscall.SIGTERM)
+	<-stop
+	log.Printf("[Server] shutting down")
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	if err := srv.Shutdown(ctx); err != nil {
+		log.Printf("[Server] graceful shutdown: %v", err)
+	}
 }

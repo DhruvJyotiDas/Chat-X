@@ -1,4 +1,4 @@
-import { ActionItem, ChatThread, ComplianceLog, Participant } from './types';
+import { ActionItem, ChatThread, Participant } from './types';
 
 export const initialParticipants: Participant[] = [
   {
@@ -154,66 +154,35 @@ export const initialThreads: ChatThread[] = [
   }
 ];
 
-export const initialComplianceLogs: ComplianceLog[] = [
-  {
-    id: 'log-1',
-    timestamp: '2026-06-04 14:32:01 UTC',
-    event: 'Auto-Purge Executed: Transcripts > 7 days',
-    actor: 'SYSTEM',
-    status: 'SUCCESS'
-  },
-  {
-    id: 'log-2',
-    timestamp: '2026-06-04 09:15:22 UTC',
-    event: 'Recording Consent Overridden (Emergency Protocol)',
-    actor: 'Admin: J. Doe',
-    status: 'FLAGGED'
-  },
-  {
-    id: 'log-3',
-    timestamp: '2026-06-03 18:00:00 UTC',
-    event: 'Data Sovereignty toggled ON (Swiss Data Center)',
-    actor: 'Admin: M. Smith',
-    status: 'SUCCESS'
-  },
-  {
-    id: 'log-4',
-    timestamp: '2026-06-02 11:22:15 UTC',
-    event: 'E2E Key Rotation Initiated',
-    actor: 'SYSTEM',
-    status: 'SUCCESS'
-  }
-];
-
 export const faqCategories = [
   {
     id: 'privacy',
-    title: 'Privacy & Sovereignty',
+    title: 'Privacy & Data',
     icon: 'shield_person',
     items: [
-      'Data Residency Regions',
-      'GDPR Compliance Setup',
-      'Anonymization Protocols'
+      'Where is my data stored?',
+      'How are meeting transcripts created?',
+      'What can AIPA access?'
     ]
   },
   {
-    id: 'encryption',
-    title: 'Encryption Standards',
+    id: 'calls',
+    title: 'Calls & Meetings',
     icon: 'key',
     items: [
-      'Key Management (KMS)',
-      'End-to-End Configuration',
-      'Rotating Security Keys'
+      'How are calls protected?',
+      'How do live captions work?',
+      'How do I share my screen?'
     ]
   },
   {
-    id: 'audits',
-    title: 'Data Audits',
+    id: 'ai',
+    title: 'AIPA Features',
     icon: 'fact_check',
     items: [
-      'Generating Audit Logs',
-      'Exporting for Compliance',
-      'Real-time Monitoring'
+      'What is Daily Focus?',
+      'How do I ask about a conversation?',
+      'Can AI make mistakes?'
     ]
   },
   {
@@ -221,45 +190,45 @@ export const faqCategories = [
     title: 'Account Security',
     icon: 'admin_panel_settings',
     items: [
-      'MFA Enforcements',
-      'SSO Integrations',
-      'Role-Based Access Control'
+      'How does Continue with IB work?',
+      'Where can I change my password?',
+      'Which controls are still planned?'
     ]
   }
 ];
 
 export const FAQAnswers: Record<string, string> = {
-  'Data Residency Regions': 'IB Connect routes all chats and sync files through selected secure geographical regions. Enabling "Data Sovereignty" migrates all stored transcripts and speech models to Swiss-based secure vaults.',
-  'GDPR Compliance Setup': 'Under Settings > Compliance, you can configure automatic consent requirements. Transcripts are encrypted at rest with AES-256 and only accessible strictly to validated workspace session members.',
-  'Anonymization Protocols': 'Text and transcripts feed into your choice of localized NLP tools. Proprietary PII scrubbers remove names, IP addresses, locations and financial data from transcript logs automatically before storage.',
-  'Key Management (KMS)': 'Workspace admins can assign client-held keys (BYOK) stored in AWS KMS or Google Cloud KMS. Data cannot be decrypted or searched without the active KMS keys injected into the session.',
-  'End-to-End Configuration': 'E2E Encryption shields video data and audio relays during live calls. All streams route dynamically via peer-to-peer enclaves when participants number under six.',
-  'Rotating Security Keys': 'System keys rotate automatically every 24 hours. Users can force-reset active security locks on active audio enclaves directly from the Security sidepanel.',
-  'Generating Audit Logs': 'Every session initialization, transcript download, or parameter change creates an immutable log block. View and download reports from the Compliance Audit Log component.',
-  'Exporting for Compliance': 'Logs can be exported in standardized AES-256 encrypted CSV formats directly. Integrations support automatic sync with Splunk, Datadog, or secure cloud endpoints.',
-  'Real-time Monitoring': 'Live anomaly detection alerts admins on abnormal transcript queries, foreign session connection attempts, or emergency consent overrides.',
-  'MFA Enforcements': 'Toggle Multi-Factor Authentication requirements for all company users. Third-party authenticator apps or security keys (FIDO2) are supported.',
-  'SSO Integrations': 'Integrate with Okta, Microsoft Entra ID (Azure AD), or Google Workspace SSO out-of-the-box using standard SAML 2.0 or OIDC connectors.',
-  'Role-Based Access Control': 'Define customized access permissions (Admin, Compliance Auditor, Member) to restrict who can export compliance reports, join emergency syncs, or change data retention rules.'
+  'Where is my data stored?': 'This deployment stores account and application records in its configured MariaDB databases. Chat attachments are currently stored with message records. Region selection and customer-controlled residency are not available in the current product.',
+  'How are meeting transcripts created?': 'When a participant enables live captions, microphone audio is sent through the configured speech-recognition service. Final caption lines can be stored for the meeting summary experience. Only enable captions when everyone understands the meeting policy.',
+  'What can AIPA access?': 'Each feature receives only the context assembled for that request. Ask AIPA in a conversation uses recent messages from that conversation; Daily Focus uses your recent permitted messages, tasks, reminders and meetings. The general assistant drawer does not automatically read workspace data.',
+  'How are calls protected?': 'Calls use WebRTC through LiveKit. In an HTTPS production deployment, signaling and media are protected in transit. Application-managed end-to-end encryption is not enabled in the current build.',
+  'How do live captions work?': 'Live captions are optional. Audio is streamed to the configured speech service while captions are active, and final lines can be used for transcript and summary features.',
+  'How do I share my screen?': 'During a call, choose the screen-share control and select a tab, window or display. Browser and operating-system permissions determine which sources and audio-sharing options are available.',
+  'What is Daily Focus?': 'Daily Focus is a user-triggered AIPA briefing built from your recent permitted activity. It highlights likely priorities, follow-ups and schedule risks and cites the source IDs used to create the brief.',
+  'How do I ask about a conversation?': 'Open a chat and select Ask AIPA. The answer uses a bounded set of recent messages from that thread. For important decisions, verify the answer against the conversation.',
+  'Can AI make mistakes?': 'Yes. AI output can miss context, misunderstand names or dates, and produce incorrect statements. Review important details before acting, especially assignments, deadlines and meeting information.',
+  'How does Continue with IB work?': 'The browser uses an authorization-code flow with PKCE and nonce validation. IB Account handles the password; IB Connect receives a verified identity token and creates an application session.',
+  'Where can I change my password?': 'Open Settings and choose Manage IB Account. Password, profile and sign-out controls are provided by the IB Account service.',
+  'Which controls are still planned?': 'Device session management, workspace roles, configurable retention, audited exports, enterprise federation and application-managed meeting E2EE remain roadmap items. The Security page labels planned controls separately from active safeguards.'
 };
 
 export const featuredGuides = [
   {
     id: 'guide-1',
-    title: 'Setting up Auto-Purge Timers',
+    title: 'Using AIPA responsibly',
     icon: 'timer',
-    detail: 'Auto-Purge processes guarantee your team meets strict regulatory timelines. Setting "Transcript Retention" to 7 days will dispatch storage wipe workers every Sunday at 00:00 UTC to securely overwrite expired disk blocks with random noise.'
+    detail: 'Use conversation-scoped tools when context matters, verify generated dates and assignments, and keep sensitive information within the intended conversation or workspace.'
   },
   {
     id: 'guide-2',
-    title: 'Understanding AES-256 Secured channels',
+    title: 'Preparing for a reliable call',
     icon: 'enhanced_encryption',
-    detail: 'All communication metadata, chat transcripts, and database records use military-grade AES-256-GCM. Decryption keys are loaded strictly ephemerally within the user container space and are never stored alongside encrypted text blocks.'
+    detail: 'Use the pre-call device check, choose the correct microphone and camera, and keep the connection panel available when diagnosing packet loss or restricted-network issues.'
   },
   {
     id: 'guide-3',
-    title: 'Compliance Export Guide',
+    title: 'Understanding current privacy controls',
     icon: 'file_download',
-    detail: 'For security auditiing, admins can prepare audited data reviews. This documentation guides you through verifying the cryptographic sign-offs in your exported CSV files to prove compliance to compliance inspectors.'
+    detail: 'The Security Center distinguishes active safeguards from planned capabilities. Do not rely on roadmap items for a regulatory or contractual requirement.'
   }
 ];

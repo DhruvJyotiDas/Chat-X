@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   Room, RoomEvent, RemoteParticipant, RemoteTrack, RemoteTrackPublication,
   LocalTrackPublication, ConnectionState, ConnectionQuality, Participant, Track,
-  RemoteVideoTrack, RemoteAudioTrack, ScreenSharePresets,
+  RemoteVideoTrack, RemoteAudioTrack, ScreenSharePresets, VideoQuality,
 } from 'livekit-client';
 import { describeMediaError } from '../lib/mediaErrors';
 import { api } from '../lib/api';
@@ -303,9 +303,30 @@ export function useWebRTC() {
     const capGridTiles = visible.size >= 3;
     participant.videoTrackPublications.forEach((pub) => {
       if (pub.source === Track.Source.ScreenShare) {
-        // Screen share is deliberately NOT capped: it is text, it lives on the
-        // main stage, and 960x540 (its own lower layer) is unreadable.
+        // Screen share is deliberately NOT capped to the tile: it is text, it
+        // lives on the main stage, and its bottom rung (640x360, measured) is
+        // unreadable for anything you would actually share.
         if (!pub.isSubscribed) pub.setSubscribed(true);
+        // MEASURED 2026-09-08 against a v1.13.6 SFU (see CHANGELOG S1):
+        // setSubscribed alone sends UpdateSubscription and NOTHING else, so the
+        // SFU never receives an UpdateTrackSettings for this track and falls
+        // back to its floor. Every viewer was getting 640x360 on a full desktop
+        // stage while the 1280x720 and 1920x1080 rungs sat active:false and were
+        // never encoded at all. One call fixes it, and it must come AFTER
+        // setSubscribed - isManualOperationAllowed() rejects it otherwise.
+        //
+        // HIGH, not setVideoDimensions(1920x1080): the two are mutually
+        // exclusive in the SDK (each clears the other's field), both measured
+        // identical here, and HIGH means "the top rung, whatever it is" rather
+        // than a hardcoded number that silently becomes a cap if the capture
+        // ladder ever changes. The server still drops us down when bandwidth
+        // genuinely does not allow it, which is the behaviour we want.
+        //
+        // This request stands unopposed ONLY because ScreenTile assigns
+        // srcObject instead of calling track.attach() - see the banner there.
+        // Re-running this per visible-set change is free: setVideoQuality
+        // early-returns when the quality is unchanged.
+        pub.setVideoQuality(VideoQuality.HIGH);
         return;
       }
       const shouldSubscribe = visible.has(participant.identity);

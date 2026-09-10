@@ -1,7 +1,8 @@
 // Typed API client — all calls go to the Go backend
 import { diag, classifyDisconnect, reportSessionExpired, backoffDelay } from './diagnostics';
+import { config } from '../config';
 
-const BASE = '/api';
+const BASE = config.apiBase.replace(/\/$/, '');
 
 function token(): string {
   return localStorage.getItem('ibconnect_jwt') ?? '';
@@ -25,7 +26,8 @@ async function request<T>(method: string, path: string, body?: unknown): Promise
   } catch {
     // Response was not JSON — could be nginx 413 / 502 / HTML error page
     if (res.status === 413) throw new Error('Request too large — try a smaller profile picture (under 500 KB)');
-    if (res.status === 502 || res.status === 503) throw new Error('Server temporarily unavailable, please try again');
+    if (res.status === 502 || res.status === 503) throw new Error('AIPA is temporarily unavailable. Please try again in a moment.');
+    if (res.status === 504) throw new Error('AIPA is taking longer than expected. Your transcript is safe—please try the summary again.');
     throw new Error(`Server error (${res.status}): ${text.slice(0, 120)}`);
   }
 
@@ -105,6 +107,25 @@ export const api = {
 
   // ── AI features (server/ai.go, gpu/AI_CONTRACT.md) ──────────────────────
   getAIStatus: () => request<{ configured: boolean; detail?: string }>('GET', '/ai/status'),
+  // Sends the user's own local date + personal (client-only) calendar events
+  // alongside the message so AIPA can answer "what's on my calendar" and
+  // resolve relative dates ("tomorrow") against the user's actual today —
+  // see buildAIPAContext/detectScheduleIntent in server/ai_assistant.go.
+  // `action` comes back set (e.g. "schedule_meeting") when the message was
+  // recognized as a real request and actually carried out server-side,
+  // rather than just answered.
+  aiChat: (text: string, messages: AIAssistantMessage[] = [], personalEvents: AIPACalendarEvent[] = []) =>
+    request<{ result: string; action?: string }>('POST', '/ai/chat', {
+      text,
+      messages,
+      timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+      localNow: new Date().toISOString().slice(0, 10),
+      personalEvents,
+    }),
+  aiDailyBrief: () => request<AIDailyBrief>('POST', '/ai/daily-brief', {
+    timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+    localNow: new Date().toString(),
+  }),
   aiRewrite: (text: string, mode: string) =>
     request<{ result: string }>('POST', '/ai/rewrite', { text, mode }),
   aiReplySuggestions: (threadId: string) =>
@@ -139,6 +160,18 @@ export const api = {
 // ── AI feature types (server/ai.go) ─────────────────────────────────────────
 
 export interface AIActionItem { description: string; assignee: string; due: string }
+export interface AIAssistantMessage { role: 'user' | 'assistant'; text: string }
+export interface AIPACalendarEvent { title: string; date: string; startTime: string }
+export interface AIBriefItem { title: string; why: string; sourceRef: string }
+export interface AIDailyBrief {
+  headline: string;
+  summary: string;
+  priorities: AIBriefItem[];
+  followUps: AIBriefItem[];
+  watchouts: string[];
+  generatedAt: string;
+  sourceCount: number;
+}
 export interface AIReminderSuggestion { text: string; when: string }
 export interface AIMeetingSuggestion { title: string; when: string }
 export interface AIThreadAnalysis {
@@ -225,7 +258,7 @@ export type ChatWSEvent =
   | { type: 'thread_created'; payload: ApiThread }
   | { type: 'typing_start'; payload: { threadId: string; userId: string; userName: string } }
   | { type: 'typing_stop'; payload: { threadId: string; userId: string } }
-  | { type: 'call_invite'; payload: { fromId: string; fromName: string; roomId: string } }
+  | { type: 'call_invite'; payload: { fromId: string; fromName: string; roomId: string; callType: 'audio' | 'video' } }
   | { type: 'call_declined'; payload: { fromId: string } }
   | { type: 'call_accepted'; payload: { fromId: string } }
   | { type: 'meeting_reminder'; payload: { threadId: string; meetingId: string; title: string; date: string; time: string } };
@@ -314,9 +347,9 @@ export function sendTyping(ws: WebSocket | null, threadId: string, userName: str
   ws.send(JSON.stringify({ type: isTyping ? 'typing_start' : 'typing_stop', threadId, userName }));
 }
 
-export function sendCallInvite(ws: WebSocket | null, toUserId: string, roomId: string, fromName: string) {
+export function sendCallInvite(ws: WebSocket | null, toUserId: string, roomId: string, fromName: string, callType: 'audio' | 'video' = 'video') {
   if (!ws || ws.readyState !== WebSocket.OPEN) return;
-  ws.send(JSON.stringify({ type: 'call_invite', to: toUserId, roomId, fromName }));
+  ws.send(JSON.stringify({ type: 'call_invite', to: toUserId, roomId, fromName, callType }));
 }
 
 export function sendCallDeclined(ws: WebSocket | null, toUserId: string) {

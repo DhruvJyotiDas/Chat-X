@@ -267,8 +267,25 @@ func extractJSONObject(s string) (string, bool) {
 		return "", false
 	}
 	depth := 0
+	inString := false
+	escaped := false
 	for i := start; i < len(s); i++ {
+		if inString {
+			if escaped {
+				escaped = false
+				continue
+			}
+			switch s[i] {
+			case '\\':
+				escaped = true
+			case '"':
+				inString = false
+			}
+			continue
+		}
 		switch s[i] {
+		case '"':
+			inString = true
 		case '{':
 			depth++
 		case '}':
@@ -311,6 +328,57 @@ func aiChatBudgeted(ctx context.Context, system string, history []aiChatMessage,
 // standard 120s ceiling in direct testing (a real call hit that timeout with
 // the model still generating, not stuck) — a bigger max_tokens alone doesn't
 // help if the wall-clock ceiling cuts the call off first.
+// UPDATE, 2026-09: the GPU VM rebuilt its Qwen server (previously a hand-
+// rolled loop around a raw model.generate() call with no real chat template
+// — see the file-level notes above and gpu/AI_CONTRACT.md for the full
+// history of what that caused) and, in the process, switched the response
+// envelope from this service's original custom {"result": "..."} shape to
+// the standard OpenAI chat-completions shape
+// ({"choices":[{"message":{"content":...},"finish_reason":...}]}) — reported
+// to us as "no breaking changes", which was not accurate; confirmed directly
+// against the real service that /v1/chat/completions now returns the new
+// shape, and confirmed the OLD parsing left every single AI feature in this
+// app silently returning an empty string in production until this was
+// caught and fixed. wireChatResp below matches what's actually live, not
+// what was claimed.
+//
+// The underlying fix is real and substantial, independently verified against
+// the real service (not just taken on their word): a trivial question that
+// previously took 30-90s due to a free-running echo-loop (the model failing
+// to recognize <|im_end|> and continuing to generate a fake "User: ...
+// Assistant: ..." continuation of the conversation until max_tokens was
+// hit — see this file's still-relevant trimEcho/stripThinking, kept as a
+// defensive no-op backstop, not because they're expected to fire routinely
+// any more) now completes in 1-5s. stop sequences and real token-by-token
+// SSE streaming (not used by this client yet, but confirmed genuinely
+// working, not just accepted-and-ignored) both work correctly now too.
+//
+// One real, disclosed limitation surfaced by testing, not by their report:
+// the model identifies itself as "Qwen/Qwen3.5-2B-Base" — a BASE (non-
+// instruction-tuned) model. It handles ordinary multi-turn assistant chat
+// correctly (confirmed: recalled a fact stated two turns earlier), but
+// unreliably follows a system-prompt instruction to analyze/transform a
+// conversation when that conversation is framed as literal multi-turn role
+// history (confirmed: given reply-suggestions' original role-mapped-history
+// shape, it just echoed the input back instead of attempting the task) —
+// it tends to continue participating in a conversation shaped like one,
+// rather than stepping outside it to complete a meta-task. This app's own
+// prompts for exactly that category (reply-suggestions, ask-thread) already
+// use a single-turn, transcript-embedded-as-plain-text shape rather than
+// role-mapped history (fixed for a different reason earlier — see
+// replyLineRe's comment in ai.go) and were confirmed, directly, to still
+// work correctly against the new server. Only a caller that starts sending
+// a real analyze-a-conversation task as multi-turn role history would hit
+// this.
+type wireChatResp struct {
+	Choices []struct {
+		Message struct {
+			Content string `json:"content"`
+		} `json:"message"`
+		FinishReason string `json:"finish_reason"`
+	} `json:"choices"`
+}
+
 func aiChatBudgetedTimed(ctx context.Context, system string, history []aiChatMessage, text string, schema json.RawMessage, maxTokens int, timeout time.Duration) (string, error) {
 	msgs := make([]wireMessage, 0, len(history)+2)
 	if system != "" {
@@ -321,13 +389,23 @@ func aiChatBudgetedTimed(ctx context.Context, system string, history []aiChatMes
 	}
 	msgs = append(msgs, wireMessage{Role: "user", Content: text})
 
-	var out struct {
-		Result string `json:"result"`
-	}
+	var out wireChatResp
 	if err := aiGPUPostTimed(ctx, "/v1/chat/completions", wireChatReq{Messages: msgs, MaxTokens: maxTokens}, &out, timeout); err != nil {
 		return "", err
 	}
-	answer, ok := stripThinking(out.Result)
+	if len(out.Choices) == 0 {
+		return "", errors.New("AI service returned no response")
+	}
+	raw := out.Choices[0].Message.Content
+	if out.Choices[0].FinishReason == "length" {
+		// Genuinely truncated by max_tokens, not a stylistic choice — the old
+		// stripThinking() caught this via an unclosed <think> tag; the new
+		// server reports it explicitly instead, which is more reliable, so
+		// this checks first and stripThinking's own check stays as a backstop
+		// for the (now rare) case where thinking is still present.
+		return "", errors.New("AI service response was cut off before it finished — try again")
+	}
+	answer, ok := stripThinking(raw)
 	if !ok {
 		return "", errors.New("AI service response was cut off before it finished reasoning — try again")
 	}
