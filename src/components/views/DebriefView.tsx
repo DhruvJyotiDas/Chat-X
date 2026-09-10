@@ -1,8 +1,9 @@
 import React, { useState } from 'react';
-import { Video, Plus, Link2, Calendar, Clock, Users, AlertCircle, ChevronRight, Bolt, History, VideoOff, Trash2 } from 'lucide-react';
+import { Video, Plus, Link2, Calendar, Clock, Users, AlertCircle, ChevronRight, Bolt, History, VideoOff, Trash2, Sparkles } from 'lucide-react';
 import { useMeeting } from '../../context/MeetingContext';
 import { useAuth } from '../../context/AuthContext';
 import ScheduleMeetingModal from '../meeting/ScheduleMeetingModal';
+import MeetingNotesDialog from '../meeting/MeetingNotesDialog';
 
 interface MeetingRecord { id: string; title?: string; roomCode: string; isHost: boolean; startedAt: string; endedAt?: string; participantCount: number; }
 interface Props { onJoinMeeting: () => void; autoJoinCode?: string; onAutoJoinConsumed?: () => void; }
@@ -20,6 +21,7 @@ export default function DebriefView({ onJoinMeeting, autoJoinCode, onAutoJoinCon
   const [showScheduleModal, setShowScheduleModal] = useState(false);
   const [isCreating, setIsCreating] = useState(false);
   const [isJoining, setIsJoining] = useState(false);
+  const [notesMeeting, setNotesMeeting] = useState<MeetingRecord | null>(null);
 
   React.useEffect(() => { if (autoJoinCode) { setMeetingCode(autoJoinCode); onAutoJoinConsumed?.(); } }, [autoJoinCode, onAutoJoinConsumed]);
 
@@ -30,9 +32,14 @@ export default function DebriefView({ onJoinMeeting, autoJoinCode, onAutoJoinCon
   const handleJoin = async (code?: string) => { const target = (code ?? meetingCode).trim().toUpperCase(); if (!target) return; setIsJoining(true); clearMeetingError(); try { await joinMeeting(target); onJoinMeeting(); } catch {} finally { setIsJoining(false); } };
 
   return (
-    <div className="flex-1 overflow-y-auto p-3 sm:p-6 select-none scrollbar-hide">
+    <div className="dashboard-surface flex-1 overflow-y-auto p-3 sm:p-6 select-none scrollbar-hide">
       {showScheduleModal && <ScheduleMeetingModal onClose={() => setShowScheduleModal(false)} />}
-      <div className="max-w-4xl mx-auto flex flex-col gap-4 sm:gap-6">
+      {notesMeeting && <MeetingNotesDialog roomId={notesMeeting.roomCode} title={notesMeeting.title || `Meeting ${notesMeeting.roomCode}`} onClose={() => setNotesMeeting(null)} />}
+      <div className="relative z-10 max-w-5xl mx-auto flex flex-col gap-4 sm:gap-6">
+        <div className="relative overflow-hidden rounded-[28px] border border-white/[0.08] bg-gradient-to-br from-[#151925] via-[#101219] to-[#0d0f14] p-5 sm:p-7 shadow-[0_24px_80px_rgba(0,0,0,.22)]">
+          <div className="pointer-events-none absolute -right-16 -top-24 h-64 w-64 rounded-full bg-[#718cff]/15 blur-3xl" />
+          <div className="relative flex flex-col justify-between gap-4 sm:flex-row sm:items-end"><div><p className="mb-2 flex items-center gap-2 text-[10px] font-bold uppercase tracking-[.18em] text-[#8994aa]"><Sparkles className="h-3.5 w-3.5 text-[#aebaff]" />Your meeting workspace</p><h1 className="text-2xl font-semibold tracking-tight text-white">Meet, return, and act</h1><p className="mt-1.5 max-w-xl text-xs leading-5 text-[#858fa3]">Start a room, schedule the next conversation, or reopen AIPA notes from a previous meeting.</p></div><div className="flex gap-2"><span className="rounded-xl border border-white/[0.07] bg-white/[0.035] px-3 py-2 text-[10px] text-[#929bad]"><strong className="mr-1 text-sm text-white">{scheduledMeetings.length}</strong> scheduled</span><span className="rounded-xl border border-white/[0.07] bg-white/[0.035] px-3 py-2 text-[10px] text-[#929bad]"><strong className="mr-1 text-sm text-white">{history.length}</strong> recent</span></div></div>
+        </div>
         {meetingError && (
           <div className="bg-[#93000a]/20 border border-[#ffb4ab]/30 rounded-xl p-3 sm:p-4 flex items-center gap-3">
             <AlertCircle className="w-4 h-4 text-[#ffb4ab] shrink-0" /><p className="text-xs text-[#ffb4ab] flex-1">{meetingError}</p><button onClick={clearMeetingError} className="text-[#ffb4ab] hover:text-white cursor-pointer text-xs font-bold">✕</button>
@@ -117,6 +124,7 @@ export default function DebriefView({ onJoinMeeting, autoJoinCode, onAutoJoinCon
                     {isRejoinable(record) && (
                       <button onClick={() => handleJoin(record.roomCode)} disabled={isJoining} className="text-[10px] text-[#8c90a1] hover:text-[#b0c6ff] cursor-pointer shrink-0 font-semibold px-2 py-1 rounded border border-[#424655] hover:border-[#b0c6ff]/40 transition-colors disabled:opacity-50">Rejoin</button>
                     )}
+                    <button onClick={() => setNotesMeeting(record)} className="flex shrink-0 items-center gap-1 rounded-lg border border-[#8ab4f8]/20 bg-[#8ab4f8]/10 px-2.5 py-1.5 text-[10px] font-semibold text-[#aecbfa] transition hover:bg-[#8ab4f8]/15" title="Open transcript and AI meeting notes"><Sparkles className="h-3 w-3" /><span className="hidden sm:inline">Notes</span></button>
                   </div>
               ))}
             </div>

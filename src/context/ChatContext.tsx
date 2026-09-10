@@ -13,6 +13,7 @@ export interface IncomingCall {
   fromId: string;
   fromName: string;
   roomId: string;
+  callType: 'audio' | 'video';
 }
 
 interface ChatContextType {
@@ -29,7 +30,7 @@ interface ChatContextType {
   refreshThreads: () => Promise<void>;
   incomingCall: IncomingCall | null;
   dismissIncomingCall: () => void;
-  notifyCallInvite: (toUserId: string, roomId: string, fromName: string) => void;
+  notifyCallInvite: (toUserId: string, roomId: string, fromName: string, callType?: 'audio' | 'video') => void;
   notifyCallDeclined: (toUserId: string) => void;
   notifyCallAccepted: (toUserId: string) => void;
 }
@@ -309,8 +310,8 @@ export function ChatProvider({ children }: { children: React.ReactNode }) {
 
   const dismissIncomingCall = useCallback(() => setIncomingCall(null), []);
 
-  const notifyCallInvite = useCallback((toUserId: string, roomId: string, fromName: string) => {
-    sendCallInvite(wsRef.current, toUserId, roomId, fromName);
+  const notifyCallInvite = useCallback((toUserId: string, roomId: string, fromName: string, callType: 'audio' | 'video' = 'video') => {
+    sendCallInvite(wsRef.current, toUserId, roomId, fromName, callType);
   }, []);
 
   const notifyCallDeclined = useCallback((toUserId: string) => {

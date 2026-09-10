@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   Room, RoomEvent, RemoteParticipant, RemoteTrack, RemoteTrackPublication,
   LocalTrackPublication, ConnectionState, ConnectionQuality, Participant, Track,
-  RemoteVideoTrack, RemoteAudioTrack,
+  RemoteVideoTrack, RemoteAudioTrack, ScreenSharePresets, VideoQuality,
 } from 'livekit-client';
 import { describeMediaError } from '../lib/mediaErrors';
 import { api } from '../lib/api';
@@ -303,9 +303,30 @@ export function useWebRTC() {
     const capGridTiles = visible.size >= 3;
     participant.videoTrackPublications.forEach((pub) => {
       if (pub.source === Track.Source.ScreenShare) {
-        // Screen share is deliberately NOT capped: it is text, it lives on the
-        // main stage, and 960x540 (its own lower layer) is unreadable.
+        // Screen share is deliberately NOT capped to the tile: it is text, it
+        // lives on the main stage, and its bottom rung (640x360, measured) is
+        // unreadable for anything you would actually share.
         if (!pub.isSubscribed) pub.setSubscribed(true);
+        // MEASURED 2026-09-08 against a v1.13.6 SFU (see CHANGELOG S1):
+        // setSubscribed alone sends UpdateSubscription and NOTHING else, so the
+        // SFU never receives an UpdateTrackSettings for this track and falls
+        // back to its floor. Every viewer was getting 640x360 on a full desktop
+        // stage while the 1280x720 and 1920x1080 rungs sat active:false and were
+        // never encoded at all. One call fixes it, and it must come AFTER
+        // setSubscribed - isManualOperationAllowed() rejects it otherwise.
+        //
+        // HIGH, not setVideoDimensions(1920x1080): the two are mutually
+        // exclusive in the SDK (each clears the other's field), both measured
+        // identical here, and HIGH means "the top rung, whatever it is" rather
+        // than a hardcoded number that silently becomes a cap if the capture
+        // ladder ever changes. The server still drops us down when bandwidth
+        // genuinely does not allow it, which is the behaviour we want.
+        //
+        // This request stands unopposed ONLY because ScreenTile assigns
+        // srcObject instead of calling track.attach() - see the banner there.
+        // Re-running this per visible-set change is free: setVideoQuality
+        // early-returns when the quality is unchanged.
+        pub.setVideoQuality(VideoQuality.HIGH);
         return;
       }
       const shouldSubscribe = visible.has(participant.identity);
@@ -562,7 +583,43 @@ export function useWebRTC() {
       return;
     }
     try {
-      await room.localParticipant.setScreenShareEnabled(true);
+      await room.localParticipant.setScreenShareEnabled(
+        true,
+        {
+          // THE important one for shared code and text. Screen capture defaults
+          // to no content hint, which lets the encoder trade resolution away to
+          // hold framerate — the worst possible trade for text, and it happens
+          // silently. 'detail' inverts that: under CPU or bandwidth pressure the
+          // encoder drops FRAMES and keeps pixels, so a shared terminal stays
+          // legible while scrolling gets choppy. Choppy and readable beats smooth
+          // and illegible.
+          contentHint: 'detail',
+        },
+        {
+          // Screen share gets THREE simulcast rungs instead of two.
+          //
+          // With defaults, computeDefaultScreenShareSimulcastPresets returns a
+          // single half-resolution preset, so computeVideoEncodings falls to its
+          // `size >= 480` branch and publishes only [half, original]. That is a
+          // 4x jump in pixels between the two rungs: a viewer marginally below
+          // the top rung's threshold does not step down, they fall off it, all
+          // the way to half resolution. Naming both presets explicitly gives
+          // midPreset a value, which takes the `size >= 960 && midPreset` branch
+          // and yields 360p / 720p / native.
+          //
+          // Framerates stay at 15 on the lower rungs by design: encodingsFromPresets
+          // takes min(sourceFramerate, preset framerate) per rung.
+          screenShareSimulcastLayers: [
+            ScreenSharePresets.h360fps15,   // 640x360   @ 400 kbps
+            ScreenSharePresets.h720fps15,   // 1280x720  @ 1.5 Mbps
+          ],
+          // screenShareEncoding is deliberately left at its default
+          // (h1080fps15 — 1920x1080, 2.5 Mbps, 15 fps). See the commit message:
+          // raising it to h1080fps30 (5 Mbps) buys no legibility at all, because
+          // it is the same bits-per-frame, and it would more than double
+          // screen-share egress in a large room.
+        },
+      );
     } catch (err) {
       // A user dismissing the picker throws NotAllowedError — not an error
       // worth surfacing, same rule the old mesh implementation used.

@@ -1,0 +1,191 @@
+name: ib-connect
+
+x-restart: &restart
+  restart: unless-stopped
+
+services:
+  frontend:
+    <<: *restart
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        VITE_API_BASE: /api
+        VITE_IB_ACCOUNT_ISSUER: ${PUBLIC_ORIGIN:-http://localhost:8088}/auth
+        VITE_IB_ACCOUNT_REDIRECT_URI: ${PUBLIC_ORIGIN:-http://localhost:8088}/
+        VITE_IB_ACCOUNT_URL: ${PUBLIC_ORIGIN:-http://localhost:8088}/auth/account
+        VITE_IB_ACCOUNT_CLIENT_ID: ${IB_ACCOUNT_CLIENT_ID:?copy deploy/docker/env.example to .env}
+    ports:
+      # Keep the app behind the host TLS proxy in production. Set
+      # FRONTEND_BIND=0.0.0.0 only when intentionally exposing plain HTTP.
+      - "${FRONTEND_BIND:-127.0.0.1}:${FRONTEND_PORT:-8088}:80"
+    depends_on:
+      backend:
+        condition: service_healthy
+      account:
+        condition: service_healthy
+      livekit:
+        condition: service_started
+    networks: [app]
+
+  backend:
+    <<: *restart
+    build:
+      context: ./server
+    environment:
+      BIND_ADDR: 0.0.0.0
+      PORT: 8080
+      IBCONNECT_DB_ADDR: app-db:3306
+      IBCONNECT_DB_NAME: ibconnect
+      IBCONNECT_DB_USER: ibconnect
+      IBCONNECT_DB_PASSWORD: ${APP_DB_PASSWORD:?APP_DB_PASSWORD is required}
+      IBCONNECT_JWT_SECRET: ${IBCONNECT_JWT_SECRET:?IBCONNECT_JWT_SECRET is required}
+      IBCONNECT_ALLOWED_ORIGINS: ${IBCONNECT_ALLOWED_ORIGINS:-${PUBLIC_ORIGIN:-http://localhost:8088}}
+      IB_ACCOUNT_ISSUER: ${PUBLIC_ORIGIN:-http://localhost:8088}/auth
+      IB_ACCOUNT_INTERNAL_URL: http://account:8090/auth
+      IB_ACCOUNT_REDIRECT_URI: ${PUBLIC_ORIGIN:-http://localhost:8088}/
+      IB_ACCOUNT_CLIENT_ID: ${IB_ACCOUNT_CLIENT_ID:?IB_ACCOUNT_CLIENT_ID is required}
+      IB_ACCOUNT_CLIENT_SECRET: ${IB_ACCOUNT_CLIENT_SECRET:?IB_ACCOUNT_CLIENT_SECRET is required}
+      LIVEKIT_URL: ${LIVEKIT_PUBLIC_URL:-ws://localhost:8088/livekit}
+      LIVEKIT_API_KEY: ${LIVEKIT_API_KEY:?LIVEKIT_API_KEY is required}
+      LIVEKIT_API_SECRET: ${LIVEKIT_API_SECRET:?LIVEKIT_API_SECRET is required}
+      TURN_HOST: ${TURN_HOST:-localhost}
+      TURN_STATIC_AUTH_SECRET: ${TURN_STATIC_AUTH_SECRET:-}
+      AI_GPU_URL: ${AI_GPU_URL:-}
+      AI_GPU_TOKEN: ${AI_GPU_TOKEN:-}
+      ASR_GPU_URL: ${ASR_GPU_URL:-}
+      ASR_GPU_TOKEN: ${ASR_GPU_TOKEN:-}
+      ASR_GPU_PIN: ${ASR_GPU_PIN:-}
+      INTERVIEW_GPU_URL: ${INTERVIEW_GPU_URL:-}
+      INTERVIEW_GPU_TOKEN: ${INTERVIEW_GPU_TOKEN:-}
+      GITHUB_TOKEN: ${GITHUB_TOKEN:-}
+    depends_on:
+      app-db:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "/usr/local/bin/ibconnect-api", "-healthcheck"]
+      interval: 20s
+      timeout: 3s
+      start_period: 15s
+      retries: 5
+    networks: [app]
+
+  account:
+    <<: *restart
+    build:
+      context: ./ib-account/server
+    environment:
+      IB_ACCOUNT_ADDR: 0.0.0.0:8090
+      IB_ACCOUNT_BASE_PATH: /auth
+      IB_ACCOUNT_ISSUER: ${PUBLIC_ORIGIN:-http://localhost:8088}/auth
+      IB_ACCOUNT_DB_ADDR: account-db:3306
+      IB_ACCOUNT_DB_NAME: ib_account
+      IB_ACCOUNT_DB_USER: ib_account
+      IB_ACCOUNT_DB_PASSWORD: ${ACCOUNT_DB_PASSWORD:?ACCOUNT_DB_PASSWORD is required}
+      IB_ACCOUNT_CLIENT_ID: ${IB_ACCOUNT_CLIENT_ID:?IB_ACCOUNT_CLIENT_ID is required}
+      IB_ACCOUNT_CLIENT_SECRET: ${IB_ACCOUNT_CLIENT_SECRET:?IB_ACCOUNT_CLIENT_SECRET is required}
+      IB_ACCOUNT_REDIRECT_URIS: ${PUBLIC_ORIGIN:-http://localhost:8088}/
+      IB_ACCOUNT_KEY_FILE: /var/lib/ib-account/oidc_signing_key.pem
+      IB_ACCOUNT_INSECURE_COOKIES: ${IB_ACCOUNT_INSECURE_COOKIES:-0}
+      EMAIL_API: ${EMAIL_API:-brevo}
+      EMAIL_API_KEY: ${EMAIL_API_KEY:-}
+      SMTP_HOST: ${SMTP_HOST:-}
+      SMTP_PORT: ${SMTP_PORT:-587}
+      SMTP_USER: ${SMTP_USER:-}
+      SMTP_PASS: ${SMTP_PASS:-}
+      SMTP_FROM: ${SMTP_FROM:-IB Account <no-reply@localhost>}
+    volumes:
+      - account-keys:/var/lib/ib-account
+    depends_on:
+      account-db:
+        condition: service_healthy
+      account-key-init:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD", "/usr/local/bin/ib-account", "-healthcheck"]
+      interval: 20s
+      timeout: 3s
+      start_period: 15s
+      retries: 5
+    networks: [app]
+
+  account-key-init:
+    image: alpine:3.21
+    user: "0:0"
+    command: ["sh", "-c", "chown -R 65532:65532 /data && chmod 700 /data"]
+    volumes:
+      - account-keys:/data
+    restart: "no"
+    networks: [app]
+
+  app-db:
+    <<: *restart
+    image: mariadb:11.4
+    environment:
+      MARIADB_DATABASE: ibconnect
+      MARIADB_USER: ibconnect
+      MARIADB_PASSWORD: ${APP_DB_PASSWORD:?APP_DB_PASSWORD is required}
+      MARIADB_ROOT_PASSWORD: ${APP_DB_ROOT_PASSWORD:?APP_DB_ROOT_PASSWORD is required}
+    volumes:
+      - app-db:/var/lib/mysql
+    healthcheck:
+      test: ["CMD-SHELL", "healthcheck.sh --connect --innodb_initialized"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    networks: [app]
+
+  account-db:
+    <<: *restart
+    image: mariadb:11.4
+    environment:
+      MARIADB_DATABASE: ib_account
+      MARIADB_USER: ib_account
+      MARIADB_PASSWORD: ${ACCOUNT_DB_PASSWORD:?ACCOUNT_DB_PASSWORD is required}
+      MARIADB_ROOT_PASSWORD: ${ACCOUNT_DB_ROOT_PASSWORD:?ACCOUNT_DB_ROOT_PASSWORD is required}
+    volumes:
+      - account-db:/var/lib/mysql
+    healthcheck:
+      test: ["CMD-SHELL", "healthcheck.sh --connect --innodb_initialized"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    networks: [app]
+
+  redis:
+    <<: *restart
+    image: redis:7.4-alpine
+    command: ["redis-server", "--appendonly", "yes", "--maxmemory-policy", "noeviction"]
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+    networks: [app]
+
+  livekit:
+    <<: *restart
+    image: livekit/livekit-server:v1.9.7
+    command: ["--config", "/etc/livekit.yaml"]
+    environment:
+      LIVEKIT_KEYS: "${LIVEKIT_API_KEY:?LIVEKIT_API_KEY is required}: ${LIVEKIT_API_SECRET:?LIVEKIT_API_SECRET is required}"
+    volumes:
+      - ./deploy/docker/livekit.yaml:/etc/livekit.yaml:ro
+    ports:
+      - "7881:7881/tcp"
+      - "50000-50100:50000-50100/udp"
+    depends_on:
+      redis:
+        condition: service_healthy
+    networks: [app]
+
+networks:
+  app:
+
+volumes:
+  app-db:
+  account-db:
+  account-keys:
+  redis-data:

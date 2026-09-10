@@ -13,14 +13,14 @@ import Sidebar from './components/layout/Sidebar';
 import TopBar from './components/layout/TopBar';
 
 // Views
-import DashboardView from './components/views/DashboardView';
-import ChatsView from './components/views/ChatsView';
-import DebriefView from './components/views/DebriefView';
-import SecurityView from './components/views/SecurityView';
-import SupportView from './components/views/SupportView';
-import CallsView from './components/views/CallsView';
-import CalendarView from './components/views/CalendarView';
-import InterviewView from './components/views/InterviewView';
+const DashboardView = React.lazy(() => import('./components/views/DashboardView'));
+const ChatsView = React.lazy(() => import('./components/views/ChatsView'));
+const DebriefView = React.lazy(() => import('./components/views/DebriefView'));
+const SecurityView = React.lazy(() => import('./components/views/SecurityView'));
+const SupportView = React.lazy(() => import('./components/views/SupportView'));
+const CallsView = React.lazy(() => import('./components/views/CallsView'));
+const CalendarView = React.lazy(() => import('./components/views/CalendarView'));
+const InterviewView = React.lazy(() => import('./components/views/InterviewView'));
 
 // Meeting
 import ActiveMeetingView from './components/meeting/ActiveMeetingView';
@@ -36,9 +36,19 @@ import CommandPalette from './components/CommandPalette';
 
 // Types & data
 import { AppView, ComplianceLog } from './types';
-import { initialComplianceLogs } from './data';
 import { useTheme } from './hooks/useTheme';
 import { api } from './lib/api';
+
+function ViewLoader() {
+  return (
+    <div className="flex flex-1 items-center justify-center bg-[#090a0d]">
+      <div className="flex items-center gap-2 text-xs text-[#7d8598]">
+        <span className="h-4 w-4 animate-spin rounded-full border-2 border-[#718cff] border-t-transparent" />
+        Loading workspace…
+      </div>
+    </div>
+  );
+}
 
 function AppContent({ pendingRoomCode }: { pendingRoomCode?: string }) {
   const { currentUser, isLoading, loginWithToken } = useAuth();
@@ -51,7 +61,7 @@ function AppContent({ pendingRoomCode }: { pendingRoomCode?: string }) {
   const { incomingCall, dismissIncomingCall, notifyCallAccepted, notifyCallDeclined } = useChat();
 
   const [currentView, setCurrentView] = useState<AppView>('dashboard');
-  const [logs, setLogs] = useState<ComplianceLog[]>(initialComplianceLogs);
+  const [logs, setLogs] = useState<ComplianceLog[]>([]);
   const [searchFilter, setSearchFilter] = useState('');
   const [autoJoinCode, setAutoJoinCode] = useState<string | undefined>(pendingRoomCode);
 
@@ -188,7 +198,7 @@ function AppContent({ pendingRoomCode }: { pendingRoomCode?: string }) {
     notifyCallAccepted(incomingCall.fromId);
     dismissIncomingCall();
     try {
-      await joinMeeting(incomingCall.roomId);
+      await joinMeeting(incomingCall.roomId, undefined, false, incomingCall.callType === 'audio' ? { muted: false, videoOff: true } : undefined);
       setCurrentView('active_meeting');
     } catch {
       // error shown via MeetingContext.meetingError
@@ -330,6 +340,7 @@ function AppContent({ pendingRoomCode }: { pendingRoomCode?: string }) {
               transition={{ duration: 0.12, ease: 'easeOut' }}
               className="flex-grow flex overflow-hidden"
             >
+              <React.Suspense fallback={<ViewLoader />}>
               {effectiveView === 'dashboard' && (
                 <DashboardView
                   onNavigate={setCurrentView}
@@ -373,6 +384,7 @@ function AppContent({ pendingRoomCode }: { pendingRoomCode?: string }) {
               )}
 
               {effectiveView === 'support' && <SupportView searchFilter={searchFilter} />}
+              </React.Suspense>
             </motion.div>
           </AnimatePresence>
         </div>

@@ -27,6 +27,7 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -106,14 +107,100 @@ func handleAIStatus(w http.ResponseWriter, r *http.Request) {
 // callers pass their own history if they have any.
 
 type aiChatRequest struct {
-	System   string          `json:"system"`
-	Messages []aiChatMessage `json:"messages"`
-	Text     string          `json:"text"`
+	Messages       []aiChatMessage     `json:"messages"`
+	Text           string              `json:"text"`
+	TimeZone       string              `json:"timeZone"`
+	LocalNow       string              `json:"localNow"`       // e.g. "2026-09-08" — the user's own local today, for resolving "tomorrow"/"next Monday"
+	PersonalEvents []aipaCalendarEvent `json:"personalEvents"` // client-only calendar (calendarLocal.ts) — server has no other visibility into it
+}
+
+// aiAssistantSystemPrompt is used both for the plain contextual chat and
+// (with CONTEXT appended below) is the one prompt the "grounded in your own
+// IB Connect activity" claim actually rests on — see buildAIPAContext.
+const aiAssistantSystemPrompt = "You are AIPA, the productivity assistant built into IB Connect. " +
+	"You can see a CONTEXT block below (when present) drawn from the user's own profile, recent messages, " +
+	"open tasks/reminders, and upcoming meetings — use it naturally to answer questions like \"what's my name\", " +
+	"\"what did we agree on with X\", or \"what's on my calendar\", the same way a human assistant with access to " +
+	"that information would. The CONTEXT block is real IB Connect data, not something to second-guess, but it may " +
+	"be incomplete (older items are not included) — say so rather than claiming certainty about anything not shown. " +
+	"Do not claim to have read anything NOT present in the CONTEXT block. " +
+	"Never claim that you completed an external action yourself — actions like scheduling a meeting are handled by " +
+	"a separate step outside this chat, not by anything you say here. Be clear when the user must verify important facts. " +
+	// This model has no working stop-sequence support (confirmed directly —
+	// see lightAIMaxTokens' comment in ai.go and trimEcho in ai_gpu.go): once
+	// it finishes a real answer it frequently free-runs into echoing a fake
+	// "User: ...\nAssistant: ..." continuation of the conversation for the
+	// rest of whatever token budget it's given. Measured directly against
+	// this exact endpoint: "What is 2+2?" with no history at all still took
+	// ~78s, because the real answer ("4") arrived almost instantly and the
+	// remaining ~1200-token budget was spent entirely on that echo loop —
+	// invisible to the user (trimEcho strips it from what's returned), but
+	// not to the clock, since the model still has to generate through it
+	// before the HTTP response can return at all. This explicit instruction
+	// measurably reduces how often the loop triggers in the first place
+	// (the same fix already applied to Ask AIPA's thread-Q&A prompt); the
+	// smaller aiAssistantMaxTokens below (instead of the shared, larger
+	// aiChatMaxTokens default other aiChat() callers use) bounds how bad the
+	// worst case is even when it still happens.
+	"Never output the words \"User\" or \"Assistant\" as part of your reply. Never repeat or continue this " +
+	"conversation as if drafting the other side's next turn. Stop generating immediately once your answer is complete."
+
+const (
+	aiChatRateWindow = time.Minute
+	aiChatRateLimit  = 20
+)
+
+var aiChatRate = struct {
+	sync.Mutex
+	users map[string]aiChatRateEntry
+}{users: make(map[string]aiChatRateEntry)}
+
+type aiChatRateEntry struct {
+	started time.Time
+	count   int
+}
+
+// allowAIChat is intentionally process-local for this first guard: it stops a
+// single account from monopolizing a GPU immediately, while the durable quota
+// service/Redis counter remains a P1 scaling task. Expired entries are removed
+// opportunistically so the map cannot grow with one-off account IDs.
+func allowAIChat(userID string) bool {
+	now := time.Now()
+	aiChatRate.Lock()
+	defer aiChatRate.Unlock()
+	entry, ok := aiChatRate.users[userID]
+	if !ok || now.Sub(entry.started) >= aiChatRateWindow {
+		aiChatRate.users[userID] = aiChatRateEntry{started: now, count: 1}
+		if len(aiChatRate.users) > 10000 {
+			for id, candidate := range aiChatRate.users {
+				if now.Sub(candidate.started) >= aiChatRateWindow {
+					delete(aiChatRate.users, id)
+				}
+			}
+		}
+		return true
+	}
+	if entry.count >= aiChatRateLimit {
+		return false
+	}
+	entry.count++
+	aiChatRate.users[userID] = entry
+	return true
 }
 
 func handleAIChat(w http.ResponseWriter, r *http.Request) {
-	if _, err := bearerUID(r); err != nil {
+	if r.Method != http.MethodPost {
+		fail(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	uid, err := bearerUID(r)
+	if err != nil {
 		fail(w, "Unauthorized", 401)
+		return
+	}
+	if !allowAIChat(uid) {
+		w.Header().Set("Retry-After", "60")
+		fail(w, "AI request limit reached; try again in a minute", http.StatusTooManyRequests)
 		return
 	}
 	if !aiGPUConfigured() {
@@ -121,14 +208,92 @@ func handleAIChat(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req aiChatRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.Text == "" {
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 64*1024)).Decode(&req); err != nil || strings.TrimSpace(req.Text) == "" {
 		fail(w, "text is required", 400)
 		return
 	}
-	result, err := aiChat(r.Context(), req.System, req.Messages, req.Text, nil)
+	req.Text = strings.TrimSpace(req.Text)
+	if len(req.Text) > 4000 {
+		fail(w, "text must be 4000 characters or fewer", 400)
+		return
+	}
+	if len(req.Messages) > 12 {
+		req.Messages = req.Messages[len(req.Messages)-12:]
+	}
+	history := make([]aiChatMessage, 0, len(req.Messages))
+	for _, message := range req.Messages {
+		message.Text = strings.TrimSpace(message.Text)
+		if (message.Role != "user" && message.Role != "assistant") || message.Text == "" {
+			continue
+		}
+		if len(message.Text) > 4000 {
+			message.Text = message.Text[:4000]
+		}
+		history = append(history, message)
+	}
+	// See lightAIMaxTokens' 2026-09 update comment: the GPU-side chat-
+	// template/stop-token fix removed the reason this needed to be small.
+	// Kept as its own constant (not the shared aiChat()/aiChatMaxTokens
+	// default that document-ask/rewrite use) since AIPA is a general chat
+	// surface that can legitimately need more room than a single-fact
+	// lookup — a deliberately generous budget now costs nothing extra in
+	// the common case, since the model stops on its own once it's done.
+	const aiAssistantMaxTokens = 2500
+	const aiAssistantTimeout = 60 * time.Second
+
+	var callerName string
+	db.QueryRow(`SELECT display_name FROM users WHERE id=?`, uid).Scan(&callerName) //nolint
+	if callerName == "" {
+		callerName = "the user"
+	}
+	todayISO := strings.TrimSpace(req.LocalNow)
+	if todayISO == "" {
+		todayISO = time.Now().UTC().Format("2006-01-02")
+	} else if len(todayISO) > 10 {
+		todayISO = todayISO[:10]
+	}
+
+	// Scheduling is checked FIRST, on the raw message alone (no thread
+	// history — see this file's header on why single-turn extraction is the
+	// reliable shape for this model) — only when it comes back both a
+	// scheduling request AND confident does this ever take a real action;
+	// anything else falls straight through to the normal contextual answer
+	// below, unactioned.
+	// looksLikeScheduleRequest is checked FIRST and, if it matches, the
+	// classifier's own isSchedulingRequest flag is not trusted to override
+	// it — see looksLikeScheduleRequest's comment for the reproduced case
+	// that made this necessary. Anything that regex-matches never reaches
+	// the free-form general-chat call below.
+	if looksLikeScheduleRequest(req.Text) {
+		intent, ierr := detectScheduleIntent(r.Context(), req.Text, todayISO, callerName)
+		if ierr == nil && intent.Confident {
+			summary := executeScheduleMeeting(uid, callerName, intent)
+			ok(w, map[string]any{"result": summary, "action": "schedule_meeting"})
+			return
+		}
+		if ierr == nil {
+			ok(w, map[string]any{"result": clarifyScheduleRequest(intent)})
+			return
+		}
+		ok(w, map[string]any{"result": "I can schedule that for you — could you confirm exactly who you want to meet with and the date and time?"})
+		return
+	}
+
+	contextBlock := buildAIPAContext(uid, req.PersonalEvents)
+	prompt := req.Text
+	if contextBlock != "" {
+		prompt = "CONTEXT\n" + contextBlock + "\nUSER MESSAGE\n" + req.Text
+	}
+	result, err := aiChatBudgetedTimed(r.Context(), aiAssistantSystemPrompt, history, prompt, nil, aiAssistantMaxTokens, aiAssistantTimeout)
 	if err != nil {
 		fail(w, err.Error(), 502)
 		return
+	}
+	if looksLikeFalseActionClaim(result) {
+		// The model claimed to have taken an action it never actually took
+		// (see looksLikeFalseActionClaim) — never forward that to the user as
+		// if it were true.
+		result = "I can help with that — tell me exactly who to invite and the date/time, and I'll actually schedule it, send the link, and add it to the calendar."
 	}
 	ok(w, map[string]string{"result": result})
 }
@@ -324,20 +489,13 @@ func handleAIReplySuggestions(w http.ResponseWriter, r *http.Request) {
 		"Never output the word Assistant or User. Never repeat the transcript. Stop after the three lines."
 	prompt := fmt.Sprintf("Transcript:\n%s\nWrite 3 reply suggestions for what I could send next, in the format described.", transcript.String())
 
-	// replyMaxTokens/replyTimeout: bigger than lightAIMaxTokens (see that
-	// constant's own comment for the general echo-loop problem this model
-	// has) because, once the pathological all-one-role loop was fixed by the
-	// transcript rewrite above, what's left is genuine reasoning — measured
-	// directly, this task legitimately needs real thinking (drafting three
-	// distinct, appropriately-toned replies is not a fact lookup the way
-	// ask-thread's questions are). 600-token trials against the real model
-	// were repeatedly cut off mid-<think>, never reaching the answer; 1300
-	// completed cleanly with real, correct, well-formatted output in both
-	// trials run. Timeout at ~13-15 tok/s gives 1300 tokens a worst case
-	// around 100s; 120s leaves margin, still well under nginx's dedicated
-	// 320s location for this route.
-	const replyMaxTokens = 1300
-	const replyTimeout = 120 * time.Second
+	// See lightAIMaxTokens' 2026-09 update comment: the GPU-side fix that
+	// made these budgets safe to size for real content again (rather than
+	// worst-case echo-loop damage control) applies equally here. Kept as its
+	// own constant, still somewhat above lightAIMaxTokens, since drafting
+	// three distinct replies is a real generation task, not a fact lookup.
+	const replyMaxTokens = 2000
+	const replyTimeout = 60 * time.Second
 	result, err := aiChatBudgetedTimed(r.Context(), system, nil, prompt, nil, replyMaxTokens, replyTimeout)
 	if err != nil {
 		fail(w, err.Error(), 502)
@@ -478,31 +636,31 @@ const analyzeMaxTokens = 4000
 const analyzeTimeout = 300 * time.Second
 
 // lightAIMaxTokens/lightAITimeout back ask-thread (reply-suggestions has its
-// own, bigger budget — see replyMaxTokens below for why) — deliberately NOT
-// matched to analyzeMaxTokens/analyzeTimeout above, which was tried first
-// and made the reported "feels stuck" complaint worse, not better. Root
-// cause, confirmed directly against the real model (not guessed): it has no
-// working stop-sequence support (a "stop" parameter is silently ignored,
-// same as "enable_thinking" — see gpu/AI_CONTRACT.md), so once it produces
-// its real answer — which for ask-thread's factual-lookup questions
-// consistently arrives within the first few dozen tokens, thinking included
-// — it frequently free-runs into echoing a fake "\nUser: <the prompt
-// again>\nAssistant: <answer again>" loop for the REST of whatever
-// max_tokens budget it's given, confirmed to reliably consume the entire
-// budget once triggered. A bigger budget therefore does not buy correctness
-// here (trimEcho in ai_gpu.go already recovers the real answer regardless of
-// how much echo garbage follows it); it only guarantees a longer wait on
-// every call, including ones whose answer was ready almost immediately.
-// Tuned by direct trial against the real model, not picked from theory:
-// 550 was tried first and genuinely too low — 2 of 3 real trial questions
-// came back "cut off before it finished reasoning" (real thinking exceeded
-// the budget, not the echo loop). 900 worked with zero hard failures across
-// several trials but cost up to ~45s even on non-trivial factual questions.
-// 750 is the settled middle: zero hard failures across the same trial
-// questions, ~40-48s worst case, ~3-15s for simple lookups. Still a large
-// improvement over the previous ~300s ceiling for the exact same failure.
-const lightAIMaxTokens = 750
-const lightAITimeout = 75 * time.Second
+// own budget — see replyMaxTokens below).
+//
+// UPDATE, 2026-09: the GPU VM fixed the root cause these were originally
+// tuned defensively around. The model previously had no working chat
+// template/stop-token handling (a hand-rolled server built the prompt via
+// manual string concatenation instead of the model's real chat template),
+// so it couldn't recognize end-of-turn and would routinely free-run into
+// echoing a fake "\nUser: ...\nAssistant: ..." continuation for the rest of
+// whatever max_tokens budget it was given — confirmed at the time to
+// reliably consume the entire budget once triggered, which is why these
+// constants were kept small: a bigger budget only meant a longer guaranteed
+// wait, never a better answer (trimEcho already recovered the real answer
+// from the garbage regardless of budget size). The GPU VM rebuilt the
+// server around the model's actual chat template and real stop-token
+// handling; confirmed directly against the fixed service, not taken on
+// their word: previously-guaranteed-to-loop prompts now complete in 1-8s,
+// and a deliberately large budget (3000 tokens) on a genuinely long-answer
+// question still returned in 16s because the model now actually stops when
+// it's done rather than free-running to the ceiling. With that constraint
+// gone, these are sized for real content headroom again rather than worst-
+// case damage control — trimEcho/stripThinking stay in place as a cheap,
+// harmless backstop in case the new server ever regresses, not because
+// they're expected to fire routinely any more.
+const lightAIMaxTokens = 2000
+const lightAITimeout = 60 * time.Second
 
 type aiActionItem struct {
 	Description string `json:"description"`

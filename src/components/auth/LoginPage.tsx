@@ -64,7 +64,7 @@ export default function LoginPage({ pendingJoinCode }: { pendingJoinCode?: strin
         </div>
 
         <p className="text-center text-[10px] text-[#8c90a1]/50 mt-6">
-          IB Connect · End-to-End Encrypted · Your data stays on this device
+          IB Connect · One account across IB applications
         </p>
       </div>
     </div>

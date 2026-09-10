@@ -32,7 +32,7 @@ interface MeetingContextType {
    *  see EVICTED_CODE in signalingSocket.ts. The socket will not reconnect on its own. */
   evictedNotice: string | null;
   dismissEvictedNotice: () => void;
-  createMeeting: (customCode?: string, title?: string) => Promise<string>;
+  createMeeting: (customCode?: string, title?: string, prefs?: MediaPrefs) => Promise<string>;
   joinMeeting: (code: string, title?: string, allowRecreate?: boolean, prefs?: MediaPrefs) => Promise<string>;
   /** True from the moment join_room/create_room is sent until either an
    *  existing participant lets this one in (isInMeeting flips true) or
@@ -532,7 +532,7 @@ export function MeetingProvider({ children }: { children: React.ReactNode }) {
   }, [webrtc]);
   useEffect(() => { reconnectRef.current = reenterRoom; }, [reenterRoom]);
 
-  const createMeeting = useCallback(async (customCode?: string, title?: string): Promise<string> => {
+  const createMeeting = useCallback(async (customCode?: string, title?: string, prefs?: MediaPrefs): Promise<string> => {
     try {
       setMeetingError(null);
       setEvictedNotice(null);
@@ -565,7 +565,7 @@ export function MeetingProvider({ children }: { children: React.ReactNode }) {
       // (server/livekit.go), so there is no confirmed room to ask for a
       // token for until this point.
       const { token, url } = await api.getLiveKitToken(roomId, userIdRef.current, nameRef.current);
-      await webrtc.connect(url, token);
+      await webrtc.connect(url, token, prefs);
       return roomId;
     } catch (err: any) { setMeetingError(err.message || 'Failed to create meeting'); throw err; }
   }, [user.id, webrtc, connectSocket, saveMeetingRecord]);

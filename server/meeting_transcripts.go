@@ -45,6 +45,38 @@ func migrateMeetingTranscripts() {
 	if err != nil {
 		panic(err)
 	}
+	// Durable membership is the authorization source for transcript access.
+	// The in-memory signaling roster disappears on restart, while a room code is
+	// an identifier rather than a capability.
+	_, err = db.Exec(`CREATE TABLE IF NOT EXISTS meeting_participants (
+		room_id VARCHAR(255) NOT NULL,
+		user_id VARCHAR(255) NOT NULL,
+		user_name VARCHAR(255) NOT NULL,
+		joined_at DATETIME(6) DEFAULT NOW(6),
+		last_seen_at DATETIME(6) DEFAULT NOW(6),
+		left_at DATETIME(6),
+		PRIMARY KEY (room_id, user_id),
+		INDEX idx_meeting_participant_user (user_id, room_id)
+	)`)
+	if err != nil {
+		panic(err)
+	}
+}
+
+// meetingParticipantAccess deliberately permits a participant who has already
+// left: post-call transcript review is part of the meeting experience. It does
+// not permit arbitrary signed-in users who only know the room code. Scheduled
+// meetings are checked as a compatibility path for rooms created before the
+// durable participant table existed.
+func meetingParticipantAccess(roomID, userID string) bool {
+	var found int
+	if err := db.QueryRow(`SELECT 1 FROM meeting_participants WHERE room_id=? AND user_id=? LIMIT 1`, roomID, userID).Scan(&found); err == nil {
+		return true
+	}
+	if err := db.QueryRow(`SELECT 1 FROM scheduled_meetings WHERE code=? AND (creator_id=? OR JSON_CONTAINS(COALESCE(invitee_ids, JSON_ARRAY()), JSON_QUOTE(?))) LIMIT 1`, roomID, userID, userID).Scan(&found); err == nil {
+		return true
+	}
+	return false
 }
 
 // saveTranscriptLine is best-effort and never blocks a caption from
@@ -95,24 +127,23 @@ func fetchTranscriptLines(roomID string) ([]transcriptLineRow, error) {
 }
 
 // ─── GET /api/meetings/{roomId}/transcript ───────────────────────────────────
-//
-// Auth is deliberately just "signed in", not "was actually in this specific
-// room" — this app has no durable record of room membership either (Room.
-// clients/admitted are in-memory and gone once the room is reaped, which is
-// exactly why this table needs to exist in the first place), so there is
-// nothing durable to check membership against without a much larger change.
-// Same lightweight trust level this app already applies to other post-hoc
-// meeting lookups (e.g. validateRoomCode) — a room code is not treated as a
-// secret once the call is over, only as a room key. Noted here as a real,
-// deliberate simplification rather than an oversight.
 func handleMeetingTranscript(w http.ResponseWriter, r *http.Request) {
-	if _, err := bearerUID(r); err != nil {
+	if r.Method != http.MethodGet {
+		fail(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	uid, err := bearerUID(r)
+	if err != nil {
 		fail(w, "Unauthorized", 401)
 		return
 	}
 	roomID := strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, "/api/meetings/"), "/transcript")
 	if roomID == "" {
 		fail(w, "not found", 404)
+		return
+	}
+	if !meetingParticipantAccess(roomID, uid) {
+		fail(w, "not a participant in this meeting", http.StatusForbidden)
 		return
 	}
 	lines, err := fetchTranscriptLines(roomID)
@@ -152,17 +183,22 @@ type meetingSummary struct {
 }
 
 func handleMeetingSummary(w http.ResponseWriter, r *http.Request) {
-	if _, err := bearerUID(r); err != nil {
+	uid, err := bearerUID(r)
+	if err != nil {
 		fail(w, "Unauthorized", 401)
 		return
 	}
-	if r.Method != "POST" {
-		fail(w, "not found", 404)
+	if r.Method != http.MethodPost {
+		fail(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
 	roomID := strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, "/api/meetings/"), "/summary")
 	if roomID == "" {
 		fail(w, "not found", 404)
+		return
+	}
+	if !meetingParticipantAccess(roomID, uid) {
+		fail(w, "not a participant in this meeting", http.StatusForbidden)
 		return
 	}
 	if !aiGPUConfigured() {

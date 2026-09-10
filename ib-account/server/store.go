@@ -39,8 +39,10 @@ type User struct {
 	CreatedAt     time.Time
 }
 
-// openStore connects to MariaDB, creating the database if it does not exist
-// yet, then runs migrations.
+// openStore connects directly to the configured schema first. This lets a
+// production/container runtime use a least-privilege account that has rights
+// only inside an already-provisioned database. For backwards compatibility,
+// an account with CREATE DATABASE can still bootstrap a missing schema.
 func openStore(cfg *Config) (*Store, error) {
 	base := mysql.Config{
 		User: cfg.DBUser, Passwd: cfg.DBPass,
@@ -49,30 +51,45 @@ func openStore(cfg *Config) (*Store, error) {
 		MultiStatements: true,
 	}
 
-	// 1. connect without selecting a schema, ensure it exists
-	bootstrap := base
-	bootstrap.DBName = ""
-	bdb, err := sql.Open("mysql", bootstrap.FormatDSN())
-	if err != nil {
-		return nil, err
-	}
-	if _, err := bdb.Exec("CREATE DATABASE IF NOT EXISTS `" + cfg.DBName + "` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci"); err != nil {
-		bdb.Close()
-		return nil, fmt.Errorf("create database: %w", err)
-	}
-	bdb.Close()
-
-	// 2. reconnect into the schema
 	base.DBName = cfg.DBName
 	db, err := sql.Open("mysql", base.FormatDSN())
 	if err != nil {
 		return nil, err
 	}
-	db.SetConnMaxLifetime(3 * time.Minute)
-	db.SetMaxOpenConns(10)
-	if err := db.Ping(); err != nil {
-		return nil, err
+	if err = db.Ping(); err != nil {
+		db.Close()
+		var mysqlErr *mysql.MySQLError
+		if !errors.As(err, &mysqlErr) || mysqlErr.Number != 1049 {
+			return nil, err
+		}
+
+		// Legacy bootstrap path for installations that intentionally grant the
+		// service account CREATE DATABASE.
+		bootstrap := base
+		bootstrap.DBName = ""
+		bdb, openErr := sql.Open("mysql", bootstrap.FormatDSN())
+		if openErr != nil {
+			return nil, openErr
+		}
+		if _, createErr := bdb.Exec("CREATE DATABASE IF NOT EXISTS `" + cfg.DBName + "` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci"); createErr != nil {
+			bdb.Close()
+			return nil, fmt.Errorf("database %q must be provisioned before startup: %w", cfg.DBName, createErr)
+		}
+		bdb.Close()
+
+		db, err = sql.Open("mysql", base.FormatDSN())
+		if err != nil {
+			return nil, err
+		}
+		if err = db.Ping(); err != nil {
+			db.Close()
+			return nil, err
+		}
 	}
+	db.SetConnMaxLifetime(3 * time.Minute)
+	db.SetConnMaxIdleTime(1 * time.Minute)
+	db.SetMaxOpenConns(10)
+	db.SetMaxIdleConns(5)
 
 	s := &Store{db: db, cfg: cfg}
 	if err := s.migrate(); err != nil {

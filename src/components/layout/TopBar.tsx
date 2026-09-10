@@ -4,6 +4,7 @@ import { AppView } from '../../types';
 import { useAuth } from '../../context/AuthContext';
 import { useChat } from '../../context/ChatContext';
 import { loadNotifications } from '../../lib/preferences';
+import AIAssistantPanel from '../ai/AIAssistantPanel';
 
 interface TopBarProps {
   currentView: AppView;
@@ -15,18 +16,19 @@ interface TopBarProps {
 
 const VIEW_INFO: Record<AppView, { title: string; subtitle: string; badge: string }> = {
   dashboard: { title: 'Home', subtitle: 'Your daily overview', badge: 'DASHBOARD' },
-  chats: { title: 'IB Connect', subtitle: 'Secure Messaging', badge: 'E2E ENCRYPTED' },
+  chats: { title: 'Messages', subtitle: 'Conversations and groups', badge: 'MESSAGING' },
   calls: { title: 'Calls', subtitle: 'Video & Audio Calls', badge: 'WEBRTC' },
-  debrief: { title: 'Meeting Debrief', subtitle: 'Sync Recap & Action Items', badge: 'SYNC ARCHIVE' },
-  active_meeting: { title: 'Active Call', subtitle: 'Secured Enclave Workspace', badge: 'LIVE CALL' },
+  debrief: { title: 'Meeting Debrief', subtitle: 'Recaps and action items', badge: 'MEETING NOTES' },
+  active_meeting: { title: 'Active Call', subtitle: 'Live audio and video', badge: 'LIVE MEDIA' },
   calendar: { title: 'Calendar', subtitle: 'Schedule & Events', badge: 'PERSONAL' },
-  security: { title: 'Security & Compliance', subtitle: 'Operational Integrity Console', badge: 'AES-256' },
+  security: { title: 'Security', subtitle: 'Account and privacy controls', badge: 'SECURITY CENTER' },
   support: { title: 'Help & Support', subtitle: 'Intelligence Knowledge Center', badge: 'DEDICATED' },
   interview: { title: 'Virtual Interview', subtitle: 'AI mock interviews from your CV', badge: 'AI COACH' },
 };
 
 export default function TopBar({ currentView, onViewChange, searchFilter, onSearchChange, onNewChatClicked }: TopBarProps) {
   const [notifOpen, setNotifOpen] = useState(false);
+  const [assistantOpen, setAssistantOpen] = useState(false);
   const { currentUser } = useAuth();
   const { threads } = useChat();
   const info = VIEW_INFO[currentView] || VIEW_INFO.chats;
@@ -65,6 +67,7 @@ export default function TopBar({ currentView, onViewChange, searchFilter, onSear
 
   return (
     <>
+      <AIAssistantPanel open={assistantOpen} onClose={() => setAssistantOpen(false)} />
       {/* In-app companion to the OS Notification (which may not have permission,
           or may not be supported at all) — always shown regardless, so a meeting
           reminder is never silently invisible while the app is open. */}
@@ -78,7 +81,7 @@ export default function TopBar({ currentView, onViewChange, searchFilter, onSear
         </div>
       )}
       {/* THE FIX: Changed 'px-5' to 'pl-16 pr-5 md:px-5' to clear the hamburger button on mobile */}
-      <header className="h-14 w-full flex justify-between items-center pl-16 pr-5 md:px-5 border-b border-[#424655] bg-[#131313]/90 backdrop-blur-xl z-40 sticky top-0 shrink-0 select-none">
+      <header className="relative h-14 w-full flex justify-between items-center pl-16 pr-5 md:px-5 border-b border-white/[0.07] bg-[#0d0f14]/90 backdrop-blur-xl z-40 sticky top-0 shrink-0 select-none">
       <div className="flex items-center gap-3 min-w-0">
         <h1
           className="font-bold text-base tracking-tight text-[#e5e2e1] cursor-pointer whitespace-nowrap"
@@ -116,6 +119,15 @@ export default function TopBar({ currentView, onViewChange, searchFilter, onSear
           <Command className="w-3 h-3" />K
         </button>
 
+        <button
+          onClick={() => setAssistantOpen(true)}
+          className="group flex h-8 items-center gap-1.5 rounded-xl border border-[#718cff]/25 bg-[#718cff]/10 px-2.5 text-[10px] font-semibold text-[#aebaff] transition hover:border-[#718cff]/50 hover:bg-[#718cff]/15 hover:text-white"
+          title="Ask AIPA"
+        >
+          <Sparkles className="h-3.5 w-3.5 transition-transform group-hover:rotate-12" />
+          <span className="hidden lg:inline">Ask AIPA</span>
+        </button>
+
         {currentView !== 'active_meeting' && currentView !== 'dashboard' && (
           <button
             onClick={handleAction}
@@ -135,6 +147,16 @@ export default function TopBar({ currentView, onViewChange, searchFilter, onSear
           <Bell className="w-4 h-4" />
           {showNotifDot && <span className="absolute top-1.5 right-1.5 w-1.5 h-1.5 rounded-full bg-[#ffb4ab]" />}
         </button>
+
+        {notifOpen && (
+          <div className="absolute right-12 top-12 z-50 w-72 rounded-2xl border border-white/10 bg-[#12141b]/95 p-3 shadow-2xl backdrop-blur-xl">
+            <p className="px-2 pb-2 text-[10px] font-bold uppercase tracking-[.16em] text-[#737b8e]">Notifications</p>
+            <button onClick={() => { setNotifOpen(false); onViewChange('chats'); }} className="flex w-full items-center gap-3 rounded-xl px-3 py-3 text-left hover:bg-white/[0.05]">
+              <span className="grid h-9 w-9 place-items-center rounded-xl bg-[#718cff]/10 text-[#9bafff]"><Bell className="h-4 w-4" /></span>
+              <span><strong className="block text-xs font-semibold text-white">{unreadTotal || 'No'} unread messages</strong><span className="text-[10px] text-[#7f8798]">{unreadTotal ? 'Open your inbox to catch up' : "You're all caught up"}</span></span>
+            </button>
+          </div>
+        )}
 
         <button
           onClick={() => onViewChange('support')}

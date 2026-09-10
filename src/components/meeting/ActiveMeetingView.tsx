@@ -6,7 +6,7 @@ import {
   MoreVertical, Volume2, Lightbulb, Tag, Hash, HelpCircle,
   Activity, Zap, Mic2, ChevronDown, Link, ChevronLeft, ChevronRight,
   Pin, PinOff, Minimize2, ArrowLeft, AlertTriangle, Hand, Smile, Captions,
-  Loader2, Download,
+  Loader2, Download, FileText, CheckCircle2, ListChecks, RotateCcw, Sparkles,
 } from 'lucide-react';
 import { useMeeting } from '../../context/MeetingContext';
 import { PeerInfo } from '../../hooks/useWebRTC';
@@ -556,6 +556,30 @@ function RemoteTile({ peer, videoWithheld = false }: { peer: PeerInfo; videoWith
 // unlike camera tiles, a screen's content (text, slides, code) is unusable if
 // half of it gets clipped off to fill a square-ish grid cell.
 
+// ============================================================================
+// DO NOT CONVERT THIS TILE TO track.attach(). READ THIS FIRST.
+// ============================================================================
+// This tile assigns a hand-built MediaStream to <video>.srcObject and never
+// calls track.attach(). That is DELIBERATE and it is load-bearing for screen
+// share quality. LiveKit only observes an element's size when you attach()
+// through it, so with srcObject adaptiveStream never measures this tile, and
+// the setVideoQuality(HIGH) that applyVideoSubscription sends for ScreenShare
+// (useWebRTC.ts) is the only instruction the SFU has. Result: the top rung.
+//
+// Switch this to track.attach() and emitTrackUpdate() starts taking
+// min(what we asked for, this element's CSS size). A screen-share tile is
+// never as wide as the source, so the SFU quietly forwards a lower rung.
+// MEASURED 2026-09-08, same source, same 1188x668 stage:
+//     srcObject (this file)  -> viewer receives 1920x1080
+//     track.attach()         -> viewer receives 1280x720
+//     track.attach() + setVideoQuality(HIGH)     -> still 1280x720 (overruled)
+//     track.attach() + setVideoDimensions(1920)  -> still 1280x720 (overruled)
+// There is NO error, NO warning and NO log when that happens. Text just goes
+// soft and someone reopens this ticket in three months.
+//
+// RemoteTile (camera) is the opposite case and correctly DOES use attach() -
+// camera tiles WANT to be sized down when they are small. Screen share does not.
+// ============================================================================
 function ScreenTile({ stream, label, compact = false, isPinned = false, onToggleFocus }: {
   stream: MediaStream | null;
   label: string;
@@ -571,6 +595,7 @@ function ScreenTile({ stream, label, compact = false, isPinned = false, onToggle
   const attach = useCallback((vid: HTMLVideoElement | null) => {
     ref.current = vid;
     if (!vid || !stream) return;
+    // srcObject, NOT track.attach() - see the banner above this function.
     if (vid.srcObject !== stream) vid.srcObject = stream;
     playWhenAllowed(vid);
   }, [stream]);
@@ -653,6 +678,50 @@ interface ParticipantTileProps {
   handRaised?: boolean;
   /** Tile is mounted but its camera video was intentionally not subscribed. */
   videoWithheld?: boolean;
+}
+
+// Your OWN share, shown to you. Deliberately a static card and never a <video>
+// of your own screen: painting your display onto your display is the infinite
+// mirror tunnel, and it is instant the moment you share a whole screen rather
+// than a single window. Filtering 'local-screen' out of one render site at a
+// time does not fix that - the stage, the carousel and an explicit pin are
+// three separate paths to the same tunnel - so the self-view simply stops
+// being a video anywhere. This also restores the "you are presenting"
+// indicator, which the previous auto-focus guard had removed entirely.
+function PresentingCard({ compact = false, onStop, onToggleFocus }: {
+  compact?: boolean;
+  onStop?: () => void;
+  onToggleFocus?: () => void;
+}) {
+  return (
+    <div
+      onClick={onToggleFocus}
+      className={`group relative w-full h-full overflow-hidden bg-[#202124] border border-[#3c4043] shadow-lg flex flex-col items-center justify-center gap-2 ${
+        compact ? 'rounded-xl gap-1' : 'rounded-2xl md:gap-3'
+      } ${onToggleFocus ? 'cursor-pointer' : ''}`}
+    >
+      <div className={`rounded-full bg-[#1a73e8]/15 flex items-center justify-center ${compact ? 'w-7 h-7' : 'w-12 h-12 md:w-16 md:h-16'}`}>
+        <ScreenShare className={`text-[#8ab4f8] ${compact ? 'w-3.5 h-3.5' : 'w-6 h-6 md:w-8 md:h-8'}`} />
+      </div>
+      <span className={`font-semibold text-[#e8eaed] ${compact ? 'text-[10px]' : 'text-sm md:text-base'}`}>
+        You&apos;re presenting
+      </span>
+      {!compact && (
+        <span className="text-[11px] md:text-xs text-[#9aa0a6] px-4 text-center">
+          Everyone else in the meeting can see your screen.
+        </span>
+      )}
+      {!compact && onStop && (
+        <button
+          onClick={(e) => { e.stopPropagation(); onStop(); }}
+          className="mt-1 md:mt-2 flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[#ea4335] hover:bg-[#d33b2c] active:scale-95 text-white text-xs font-semibold transition-all cursor-pointer"
+        >
+          <ScreenShareOff className="w-3.5 h-3.5" />
+          Stop sharing
+        </button>
+      )}
+    </div>
+  );
 }
 
 function ParticipantTile({
@@ -834,6 +903,24 @@ function SettingsPanel({
 
 // ─── Right panel (Chat + People + Mobile Transcript) ─────────────────────────
 
+function SummarySection({ icon: Icon, title, tone, items }: { icon: React.ElementType; title: string; tone: string; items: string[] }) {
+  return (
+    <div className="rounded-xl border border-white/[0.06] bg-black/10 p-2.5">
+      <p className={`mb-2 flex items-center gap-1.5 text-[9px] font-bold uppercase tracking-[.12em] ${tone}`}>
+        <Icon className="h-3 w-3" />{title}
+      </p>
+      <div className="space-y-2">
+        {items.map((item, index) => (
+          <div key={index} className="flex gap-2 text-[10px] leading-4 text-[#dce1e8]">
+            <span className="mt-1 h-1.5 w-1.5 shrink-0 rounded-full bg-current opacity-70" />
+            <span>{item}</span>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 function RightPanel({
   tab, onTabChange, chatMessages, onSend, peers, userName, isMuted, onClose,
   links, raisedHands, isHandRaised,
@@ -869,6 +956,7 @@ function RightPanel({
   const [isSummarizing, setIsSummarizing] = useState(false);
   const [summary, setSummary] = useState<MeetingSummary | null>(null);
   const [transcriptError, setTranscriptError] = useState<string | null>(null);
+  const [summaryCopied, setSummaryCopied] = useState(false);
 
   const handleDownloadTranscript = async () => {
     if (!roomId || isDownloading) return;
@@ -901,6 +989,24 @@ function RightPanel({
       setTranscriptError(err instanceof Error ? err.message : 'Could not generate a summary');
     } finally {
       setIsSummarizing(false);
+    }
+  };
+
+  const handleCopySummary = async () => {
+    if (!summary) return;
+    const lines = [
+      'Meeting summary', summary.summary,
+      summary.attendees.length ? `Attendees: ${summary.attendees.join(', ')}` : '',
+      summary.keyPoints.length ? `Key points\n${summary.keyPoints.map(item => `• ${item}`).join('\n')}` : '',
+      summary.decisions.length ? `Decisions\n${summary.decisions.map(item => `• ${item}`).join('\n')}` : '',
+      summary.actionItems.length ? `Action items\n${summary.actionItems.map(item => `• ${item.description}${item.owner && item.owner.toLowerCase() !== 'unclear' ? ` — ${item.owner}` : ''}`).join('\n')}` : '',
+    ].filter(Boolean).join('\n\n');
+    try {
+      await navigator.clipboard.writeText(lines);
+      setSummaryCopied(true);
+      window.setTimeout(() => setSummaryCopied(false), 1800);
+    } catch {
+      setTranscriptError('Could not copy the summary. You can still select and copy its text.');
     }
   };
 
@@ -1069,61 +1175,65 @@ function RightPanel({
           {/* The server saves every final caption line as it's spoken,
               independent of this panel even being open — these two actions
               pull that durable record, not this client's own local log. */}
-          <div className="px-3 pt-2.5 shrink-0 flex flex-col gap-2">
+          <div className="px-3 pt-3 shrink-0 flex flex-col gap-2.5">
             <div className="flex gap-2">
               <button
                 onClick={handleDownloadTranscript}
                 disabled={!roomId || isDownloading}
-                className="flex-1 flex items-center justify-center gap-1.5 bg-[#3c4043] hover:bg-[#4a4d51] disabled:opacity-40 text-[#e8eaed] text-[10px] font-semibold py-1.5 rounded-lg transition-colors cursor-pointer"
+                className="flex-1 flex items-center justify-center gap-1.5 border border-white/[0.08] bg-white/[0.045] hover:bg-white/[0.08] disabled:opacity-40 text-[#d9dce2] text-[10px] font-semibold py-2 rounded-xl transition-all cursor-pointer"
               >
                 {isDownloading ? <Loader2 className="w-3 h-3 animate-spin" /> : <Download className="w-3 h-3" />}
-                Download transcript
+                Transcript
               </button>
               <button
                 onClick={handleGenerateSummary}
                 disabled={!roomId || isSummarizing}
-                className="flex-1 flex items-center justify-center gap-1.5 bg-[#3c4043] hover:bg-[#4a4d51] disabled:opacity-40 text-[#e8eaed] text-[10px] font-semibold py-1.5 rounded-lg transition-colors cursor-pointer"
+                className="group flex-1 flex items-center justify-center gap-1.5 border border-[#8ab4f8]/25 bg-[#8ab4f8]/10 hover:border-[#8ab4f8]/45 hover:bg-[#8ab4f8]/15 disabled:opacity-40 text-[#aecbfa] text-[10px] font-semibold py-2 rounded-xl transition-all cursor-pointer"
               >
-                {isSummarizing ? <Loader2 className="w-3 h-3 animate-spin" /> : <Lightbulb className="w-3 h-3" />}
-                {isSummarizing ? 'Summarizing…' : 'Meeting summary'}
+                {isSummarizing ? <Loader2 className="w-3 h-3 animate-spin" /> : <Sparkles className="w-3 h-3 transition-transform group-hover:rotate-12" />}
+                {isSummarizing ? 'Creating…' : summary ? 'Regenerate' : 'AI summary'}
               </button>
             </div>
-            {transcriptError && <p className="text-[10px] text-[#f28b82]">{transcriptError}</p>}
-            {isSummarizing && <p className="text-[10px] text-[#9aa0a6]">This can take a couple of minutes for a long meeting.</p>}
+            {transcriptError && (
+              <div className="flex items-start gap-2 rounded-xl border border-[#f28b82]/20 bg-[#f28b82]/[0.07] px-3 py-2.5">
+                <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-[#f28b82]" />
+                <p className="min-w-0 flex-1 text-[10px] leading-4 text-[#f6bbb5]">{transcriptError}</p>
+                <button onClick={handleGenerateSummary} disabled={isSummarizing} className="shrink-0 text-[#f6bbb5] hover:text-white" title="Try summary again"><RotateCcw className="h-3.5 w-3.5" /></button>
+              </div>
+            )}
+            {isSummarizing && (
+              <div className="overflow-hidden rounded-xl border border-[#8ab4f8]/15 bg-[#8ab4f8]/[0.055] px-3 py-2.5">
+                <div className="flex items-center gap-2"><span className="relative flex h-2 w-2"><span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-[#8ab4f8] opacity-60" /><span className="relative inline-flex h-2 w-2 rounded-full bg-[#8ab4f8]" /></span><p className="text-[10px] font-semibold text-[#c6dafc]">AIPA is reviewing the transcript</p></div>
+                <p className="mt-1 pl-4 text-[9px] leading-4 text-[#8e98a8]">Extracting topics, decisions, and follow-ups. You can keep using the meeting while this runs.</p>
+              </div>
+            )}
           </div>
 
           {summary && (
-            <div className="border-b border-[#3c4043] p-3 shrink-0 flex flex-col gap-2.5 max-h-64 overflow-y-auto scrollbar-hide">
-              <div className="flex items-center justify-between">
-                <p className="text-[9px] font-bold uppercase tracking-wider text-[#9aa0a6]">Meeting Summary</p>
-                <button onClick={() => setSummary(null)} className="text-[#9aa0a6] hover:text-[#e8eaed] cursor-pointer"><X className="w-3 h-3" /></button>
+            <div className="mx-3 mb-1 mt-3 max-h-[22rem] shrink-0 overflow-y-auto rounded-2xl border border-[#8ab4f8]/20 bg-gradient-to-b from-[#252b38] to-[#1b1f27] shadow-[0_12px_36px_rgba(0,0,0,.22)] scrollbar-hide">
+              <div className="sticky top-0 z-10 flex items-center justify-between border-b border-white/[0.07] bg-[#222833]/95 px-3 py-2.5 backdrop-blur-md">
+                <div className="flex items-center gap-2">
+                  <span className="grid h-7 w-7 place-items-center rounded-lg bg-[#8ab4f8]/15 text-[#aecbfa]"><FileText className="h-3.5 w-3.5" /></span>
+                  <div><p className="text-[10px] font-bold text-[#eef2f8]">Meeting intelligence</p><p className="text-[8px] text-[#8893a5]">Generated from the saved transcript</p></div>
+                </div>
+                <div className="flex items-center gap-1">
+                  <button onClick={handleCopySummary} className="grid h-7 w-7 place-items-center rounded-lg text-[#9aa4b4] transition hover:bg-white/[0.07] hover:text-white" title="Copy summary">{summaryCopied ? <Check className="h-3.5 w-3.5 text-[#81c995]" /> : <Copy className="h-3.5 w-3.5" />}</button>
+                  <button onClick={() => setSummary(null)} className="grid h-7 w-7 place-items-center rounded-lg text-[#9aa4b4] transition hover:bg-white/[0.07] hover:text-white" title="Close summary"><X className="h-3.5 w-3.5" /></button>
+                </div>
               </div>
-              <p className="text-[11px] text-[#e8eaed] leading-relaxed">{summary.summary}</p>
-              {summary.attendees.length > 0 && (
-                <p className="text-[10px] text-[#9aa0a6]"><span className="font-semibold text-[#c7c9cc]">Attendees: </span>{summary.attendees.join(', ')}</p>
-              )}
-              {summary.keyPoints.length > 0 && (
-                <div>
-                  <p className="text-[9px] font-bold uppercase tracking-wider text-[#9aa0a6] mb-1">Key points</p>
-                  <ul className="space-y-0.5">{summary.keyPoints.map((p, i) => <li key={i} className="text-[10px] text-[#e8eaed] pl-3 relative before:content-['•'] before:absolute before:left-0 before:text-[#9aa0a6]">{p}</li>)}</ul>
-                </div>
-              )}
-              {summary.decisions.length > 0 && (
-                <div>
-                  <p className="text-[9px] font-bold uppercase tracking-wider text-[#9aa0a6] mb-1">Decisions</p>
-                  <ul className="space-y-0.5">{summary.decisions.map((d, i) => <li key={i} className="text-[10px] text-[#81c995] pl-3 relative before:content-['✓'] before:absolute before:left-0">{d}</li>)}</ul>
-                </div>
-              )}
-              {summary.actionItems.length > 0 && (
-                <div>
-                  <p className="text-[9px] font-bold uppercase tracking-wider text-[#9aa0a6] mb-1">Action items</p>
-                  <ul className="space-y-0.5">{summary.actionItems.map((a, i) => (
-                    <li key={i} className="text-[10px] text-[#e8eaed] pl-3 relative before:content-['→'] before:absolute before:left-0">
-                      {a.description}{a.owner && a.owner.toLowerCase() !== 'unclear' && <span className="text-[#9aa0a6]"> — {a.owner}</span>}
-                    </li>
-                  ))}</ul>
-                </div>
-              )}
+              <div className="flex flex-col gap-3 p-3">
+                <p className="text-[11px] leading-[1.65] text-[#e3e7ed]">{summary.summary}</p>
+                {summary.attendees.length > 0 && <div className="flex flex-wrap gap-1.5">{summary.attendees.map(name => <span key={name} className="rounded-full border border-white/[0.07] bg-white/[0.045] px-2 py-1 text-[9px] text-[#b8c0cd]">{name}</span>)}</div>}
+                {summary.keyPoints.length > 0 && <SummarySection icon={Lightbulb} title="Key points" tone="text-[#fdd663]" items={summary.keyPoints} />}
+                {summary.decisions.length > 0 && <SummarySection icon={CheckCircle2} title="Decisions" tone="text-[#81c995]" items={summary.decisions} />}
+                {summary.actionItems.length > 0 && (
+                  <div className="rounded-xl border border-white/[0.06] bg-black/10 p-2.5">
+                    <p className="mb-2 flex items-center gap-1.5 text-[9px] font-bold uppercase tracking-[.12em] text-[#aecbfa]"><ListChecks className="h-3 w-3" /> Action items</p>
+                    <div className="space-y-2">{summary.actionItems.map((item, index) => <div key={index} className="flex gap-2 text-[10px] leading-4 text-[#dce1e8]"><span className="mt-1 h-1.5 w-1.5 shrink-0 rounded-full bg-[#8ab4f8]" /><span>{item.description}{item.owner && item.owner.toLowerCase() !== 'unclear' && <span className="ml-1 text-[#8f99aa]">— {item.owner}</span>}</span></div>)}</div>
+                  </div>
+                )}
+                <p className="border-t border-white/[0.06] pt-2 text-[8px] leading-3 text-[#737e90]">AI-generated notes can miss context. Review important decisions and assignments before sharing.</p>
+              </div>
             </div>
           )}
 
@@ -1453,7 +1563,15 @@ export default function ActiveMeetingView({ onLeaveMeeting, onMinimize }: Props)
         : tiles.some((t) => t.id === pinned.id);
       if (stillThere) return pinned;
     }
-    if (activeScreens.length > 0) return { kind: 'screen' as const, id: activeScreens[0].id };
+    // Somebody else's share outranks your own — you already know what is on
+    // your screen. Your own share can still take the stage when it is the only
+    // one, which is what tells you you are presenting. Neither case renders a
+    // video of your own display: 'local-screen' draws a PresentingCard in every
+    // position, so there is no mirror tunnel to guard against here.
+    const remoteScreen = activeScreens.find((sc) => sc.id !== 'local-screen');
+    if (remoteScreen) return { kind: 'screen' as const, id: remoteScreen.id };
+    const own = activeScreens.find((sc) => sc.id === 'local-screen');
+    if (own) return { kind: 'screen' as const, id: own.id };
     return null;
   }, [pinned, activeScreens, tiles]);
 
@@ -1666,12 +1784,19 @@ export default function ActiveMeetingView({ onLeaveMeeting, onMinimize }: Props)
             <div className="flex-1 min-h-0 p-2 md:p-4 pb-20 md:pb-24 flex flex-col xl:flex-row gap-2 md:gap-3">
               <div className="flex-1 min-w-0 min-h-0">
                 {focusedScreen ? (
-                  <ScreenTile
-                    stream={focusedScreen.stream}
-                    label={focusedScreen.id === 'local-screen' ? 'Your screen' : `${focusedScreen.name}'s screen`}
-                    isPinned={pinned?.kind === 'screen' && pinned.id === focusedScreen.id}
-                    onToggleFocus={() => toggleFocus('screen', focusedScreen.id)}
-                  />
+                  focusedScreen.id === 'local-screen' ? (
+                    <PresentingCard
+                      onStop={() => { void toggleScreenShare(); }}
+                      onToggleFocus={() => toggleFocus('screen', focusedScreen.id)}
+                    />
+                  ) : (
+                    <ScreenTile
+                      stream={focusedScreen.stream}
+                      label={`${focusedScreen.name}'s screen`}
+                      isPinned={pinned?.kind === 'screen' && pinned.id === focusedScreen.id}
+                      onToggleFocus={() => toggleFocus('screen', focusedScreen.id)}
+                    />
+                  )
                 ) : focusedTile ? (
                   <ParticipantTile
                     id={focusedTile.id}
@@ -1698,13 +1823,17 @@ export default function ActiveMeetingView({ onLeaveMeeting, onMinimize }: Props)
                 <div className="shrink-0 flex xl:flex-col gap-2 md:gap-3 overflow-x-auto xl:overflow-x-hidden xl:overflow-y-auto scrollbar-hide h-24 md:h-32 xl:h-auto xl:w-52 2xl:w-64">
                   {carouselScreens.map((s) => (
                     <div key={s.id} className="aspect-video h-full xl:h-auto xl:w-full shrink-0">
-                      <ScreenTile
-                        stream={s.stream}
-                        label={s.id === 'local-screen' ? 'Your screen' : `${s.name}'s screen`}
-                        compact
-                        isPinned={false}
-                        onToggleFocus={() => toggleFocus('screen', s.id)}
-                      />
+                      {s.id === 'local-screen' ? (
+                        <PresentingCard compact onToggleFocus={() => toggleFocus('screen', s.id)} />
+                      ) : (
+                        <ScreenTile
+                          stream={s.stream}
+                          label={`${s.name}'s screen`}
+                          compact
+                          isPinned={false}
+                          onToggleFocus={() => toggleFocus('screen', s.id)}
+                        />
+                      )}
                     </div>
                   ))}
                   {carouselTiles.map((tile) => {
