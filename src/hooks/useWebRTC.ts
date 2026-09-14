@@ -461,6 +461,21 @@ export function useWebRTC() {
       if (pub.source === Track.Source.ScreenShare) { setIsScreenSharing(false); setScreenStream(null); }
       else rebuildLocalStream();
     });
+    // LiveKit's OWN reconnection (see isMediaConnected's comment below for why
+    // this is a separate concern from /ws) can complete while local state has
+    // drifted from what actually got renegotiated -- specifically, whether a
+    // screen-share track survived the reconnect as a live publication. Without
+    // this, a stale isScreenSharing is exactly the desync that let
+    // toggleScreenShare take its "start" branch while a track was still
+    // published (2026-09-13 production bug). Resync from ground truth every
+    // time the underlying connection comes back.
+    room.on(RoomEvent.Reconnected, () => {
+      const pub = room.localParticipant.getTrackPublication(Track.Source.ScreenShare);
+      const stillSharing = !!(pub && pub.track);
+      setIsScreenSharing(stillSharing);
+      if (stillSharing) rebuildScreenStream();
+      else setScreenStream(null);
+    });
     room.on(RoomEvent.Disconnected, () => {
       setPeers([]);
       setScreenPeers([]);
@@ -577,10 +592,32 @@ export function useWebRTC() {
   const toggleScreenShare = useCallback(async () => {
     const room = roomRef.current;
     if (!room) return;
-    if (isScreenSharing) {
-      try { await room.localParticipant.setScreenShareEnabled(false); }
-      catch (err) { console.warn('[toggleScreenShare] stop failed:', err); }
-      return;
+    // Ask LiveKit's own state, not React's. React's isScreenSharing can desync
+    // from what is actually published -- most concretely across a LiveKit-level
+    // reconnect (see the Reconnected listener below), which used to leave a
+    // stale "true" or "false" in this closure with no way to correct itself.
+    // A desynced "false" here is the 2026-09-13 production bug: a second
+    // getDisplayMedia() call landed while the FIRST screen-share track was
+    // still published, because this function trusted a stale isScreenSharing
+    // and took the "start" branch instead of "stop" -- six simultaneous
+    // software VP8 encodes of a 1080p capture until someone reloaded the tab.
+    const existing = room.localParticipant.getTrackPublication(Track.Source.ScreenShare);
+    if (isScreenSharing || existing) {
+      try {
+        await room.localParticipant.setScreenShareEnabled(false);
+      } catch (err) {
+        // This used to be swallowed into a console.warn. An unpublish that
+        // fails is exactly the case that produces the duplicate-track bug --
+        // the caller (or the user, retrying) needs to know it did not work,
+        // not just the browser console.
+        console.error('[toggleScreenShare] stop failed:', err);
+        setMediaNotice("Couldn't stop the current screen share. Try again, or reload if sharing looks stuck.");
+      }
+      if (isScreenSharing) return;
+      // existing was true but isScreenSharing was false: we were desynced and
+      // have now cleaned up the orphaned publication. Fall through and start
+      // the NEW share the user actually asked for, instead of silently eating
+      // their click.
     }
     try {
       await room.localParticipant.setScreenShareEnabled(
