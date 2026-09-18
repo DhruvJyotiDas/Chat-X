@@ -41,9 +41,17 @@ const UTILITY_NAV: NavItem[] = [
   { id: 'support', name: 'Support', Icon: HelpCircle },
 ];
 
+// Desktop only. On touch, .group:hover never fires at all -- a phone user
+// gets pure icon-only nav with zero way to reveal meaning (found in Phase 1
+// of the redesign, UI_REDESIGN_PLAN.md section 1). Fixing that is the mobile
+// drawer below, which carries a visible label on every row instead -- this
+// tooltip's job stays exactly what it already did well: desktop, where hover
+// genuinely exists. A dark tooltip on a light page is a deliberate choice,
+// not a leftover from the dark theme -- inverted-contrast tooltips are a
+// normal, legible pattern regardless of the page's own theme.
 function RailTooltip({ children }: { children: React.ReactNode }) {
   return (
-    <div className="pointer-events-none absolute left-full ml-3 top-1/2 -translate-y-1/2 scale-95 opacity-0 group-hover:scale-100 group-hover:opacity-100 hidden md:block bg-[#2a2a2a] text-[#e5e2e1] text-xs font-medium py-1.5 px-3 rounded-lg shadow-xl border border-[#424655]/80 transition-all duration-150 z-50 whitespace-nowrap">
+    <div className="pointer-events-none absolute left-full ml-3 top-1/2 -translate-y-1/2 scale-95 opacity-0 group-hover:scale-100 group-hover:opacity-100 hidden md:block bg-[var(--ib-gray-900)] text-white text-xs font-medium py-1.5 px-3 rounded-lg shadow-[var(--ib-shadow-lg)] transition-all duration-150 z-50 whitespace-nowrap">
       {children}
     </div>
   );
@@ -68,7 +76,9 @@ export default function Sidebar({ currentView, onViewChange, unreadCount = 0, is
     setIsMobileMenuOpen(false);
   };
 
-  const renderNavButton = ({ id, name, Icon }: NavItem) => {
+  // Desktop: unchanged shape (icon-only, 44px square, tooltip on hover),
+  // retheme only.
+  const renderRailButton = ({ id, name, Icon }: NavItem) => {
     const isActive = currentView === id;
     const showBadge = id === 'chats' && unreadCount > 0 && !isActive;
     return (
@@ -79,20 +89,46 @@ export default function Sidebar({ currentView, onViewChange, unreadCount = 0, is
         aria-current={isActive ? 'page' : undefined}
         className={`relative group w-11 h-11 flex items-center justify-center rounded-2xl shrink-0 transition-all duration-200 cursor-pointer ${
           isActive
-            ? 'bg-[#568dff]/15 text-[#b0c6ff] ring-1 ring-inset ring-[#568dff]/30 shadow-[0_0_14px_rgba(86,141,255,0.18)]'
-            : 'text-[#8c90a1] hover:bg-white/[0.06] hover:text-[#e5e2e1]'
+            ? 'bg-[var(--ib-blue-50)] text-[var(--ib-blue-500)] ring-1 ring-inset ring-[var(--ib-blue-100)]'
+            : 'text-[var(--ib-gray-600)] hover:bg-[var(--ib-gray-50)] hover:text-[var(--ib-gray-900)]'
         }`}
       >
         <Icon className="w-[18px] h-[18px] transition-transform duration-200 group-hover:scale-110" strokeWidth={isActive ? 2.25 : 2} />
 
         {showBadge && (
-          <span className="absolute top-1.5 right-1.5 w-2 h-2 rounded-full bg-[var(--ib-bad-dot)] ring-2 ring-[#1c1b1b]" />
+          <span className="absolute top-1.5 right-1.5 w-2 h-2 rounded-full bg-[var(--ib-bad-dot)] ring-2 ring-white" />
         )}
         {id === 'debrief' && isInMeeting && (
-          <span className="absolute -top-1 -right-1 text-[7px] font-black bg-[#4dffb1] text-[#002661] px-1 py-px rounded-full leading-tight tracking-wide">LIVE</span>
+          <span className="absolute -top-1 -right-1 text-[7px] font-black bg-[var(--ib-good-dot)] text-white px-1 py-px rounded-full leading-tight tracking-wide">LIVE</span>
         )}
 
         <RailTooltip>{name}</RailTooltip>
+      </button>
+    );
+  };
+
+  // Mobile drawer: a real labeled row, not the rail shrunk down. This is the
+  // actual fix -- see the file header. 48px tall (mobile tap-target floor).
+  const renderDrawerRow = ({ id, name, Icon }: NavItem) => {
+    const isActive = currentView === id;
+    const showBadge = id === 'chats' && unreadCount > 0 && !isActive;
+    return (
+      <button
+        key={id}
+        onClick={() => handleNavClick(id)}
+        aria-current={isActive ? 'page' : undefined}
+        className={`relative flex items-center gap-3 w-full h-12 px-4 rounded-[var(--ib-radius-md)] shrink-0 transition-colors cursor-pointer ${
+          isActive
+            ? 'bg-[var(--ib-blue-50)] text-[var(--ib-blue-500)]'
+            : 'text-[var(--ib-gray-800)] hover:bg-[var(--ib-gray-50)]'
+        }`}
+      >
+        <Icon className="w-5 h-5 shrink-0" strokeWidth={isActive ? 2.25 : 2} />
+        <span className="text-[15px] font-medium">{name}</span>
+        {showBadge && <span className="ml-auto w-2 h-2 rounded-full bg-[var(--ib-bad-dot)] shrink-0" />}
+        {id === 'debrief' && isInMeeting && (
+          <span className="ml-auto text-[10px] font-black bg-[var(--ib-good-dot)] text-white px-1.5 py-0.5 rounded-full tracking-wide shrink-0">LIVE</span>
+        )}
       </button>
     );
   };
@@ -104,10 +140,11 @@ export default function Sidebar({ currentView, onViewChange, unreadCount = 0, is
       {/* ── Mobile toggle ── */}
       <button
         onClick={() => setIsMobileMenuOpen(!isMobileMenuOpen)}
-        className={`md:hidden fixed top-3 left-3 z-[80] w-10 h-10 rounded-xl backdrop-blur-md flex items-center justify-center transition-all duration-300 shadow-xl ${
+        aria-label={isMobileMenuOpen ? 'Close menu' : 'Open menu'}
+        className={`md:hidden fixed top-3 left-3 z-[80] w-10 h-10 rounded-xl backdrop-blur-md flex items-center justify-center transition-all duration-300 shadow-[var(--ib-shadow-md)] ${
           isMobileMenuOpen
-            ? 'bg-[#568dff]/15 border border-[#568dff]/40 text-[#b0c6ff] rotate-90 scale-95'
-            : 'bg-[#1c1b1b]/90 border border-[#424655] text-[#e5e2e1] hover:bg-[#2a2a2a] rotate-0 scale-100'
+            ? 'bg-[var(--ib-blue-50)] border border-[var(--ib-blue-100)] text-[var(--ib-blue-500)] rotate-90 scale-95'
+            : 'bg-white/90 border border-[var(--ib-gray-200)] text-[var(--ib-gray-800)] hover:bg-[var(--ib-gray-50)] rotate-0 scale-100'
         }`}
       >
         {isMobileMenuOpen ? <X className="w-5 h-5" /> : <Menu className="w-5 h-5" />}
@@ -116,40 +153,40 @@ export default function Sidebar({ currentView, onViewChange, unreadCount = 0, is
       {/* ── Mobile overlay ── */}
       {isMobileMenuOpen && (
         <div
-          className="md:hidden fixed inset-0 z-[65] bg-black/60 backdrop-blur-sm transition-opacity"
+          className="md:hidden fixed inset-0 z-[65] bg-[var(--ib-gray-900)]/40 backdrop-blur-sm transition-opacity"
           onClick={() => setIsMobileMenuOpen(false)}
         />
       )}
 
-      {/* ── Sidebar rail ── */}
-      <nav className={`fixed left-0 top-0 bottom-0 z-[70] flex flex-col items-center py-4 w-[76px] h-full border-r border-[#424655] bg-[#1c1b1b] shrink-0 transition-transform duration-300 ease-[cubic-bezier(0.2,0.8,0.2,1)] ${isMobileMenuOpen ? 'translate-x-0' : '-translate-x-full md:translate-x-0'}`}>
-
-        {/* Brand */}
+      {/* ── Desktop rail: icon-only, unchanged shape, always visible ≥md.
+           No off-canvas transform needed since it's never hidden -- matches
+           ChatsView's own hidden/lg:flex convention (CLAUDE.md's cited
+           reference pattern) rather than the old translate-x-full trick that
+           had to serve both a hidden mobile drawer AND a visible desktop
+           rail from the same element. ── */}
+      <nav className="hidden md:flex fixed left-0 top-0 bottom-0 z-[70] flex-col items-center py-4 w-[76px] h-full border-r border-[var(--ib-gray-100)] bg-white shrink-0">
         <button
           onClick={() => handleNavClick('dashboard')}
-          className="mt-10 md:mt-1 mb-3 w-11 h-11 rounded-2xl bg-[#0066FF] flex items-center justify-center shadow-[0_0_18px_rgba(0,102,255,0.4)] hover:scale-105 active:scale-95 transition-transform shrink-0"
+          className="mt-1 mb-3 w-11 h-11 rounded-2xl bg-[var(--ib-blue-500)] flex items-center justify-center shadow-[0_0_18px_rgba(0,102,255,0.35)] hover:scale-105 active:scale-95 transition-transform shrink-0"
         >
           <BrandMark className="w-6 h-6" />
         </button>
 
-        {/* Primary nav */}
         <div className="flex flex-col items-center gap-1">
-          {PRIMARY_NAV.map(renderNavButton)}
+          {PRIMARY_NAV.map(renderRailButton)}
         </div>
 
-        <div className="w-7 h-px bg-[#424655]/60 my-2 shrink-0" />
+        <div className="w-7 h-px bg-[var(--ib-gray-100)] my-2 shrink-0" />
 
-        {/* Utility nav */}
         <div className="flex flex-col items-center gap-1">
-          {UTILITY_NAV.map(renderNavButton)}
+          {UTILITY_NAV.map(renderRailButton)}
         </div>
 
-        {/* Footer */}
         <div className="mt-auto flex flex-col items-center gap-2 pt-3 shrink-0">
           <button
-            onClick={() => { setShowSettings(true); setIsMobileMenuOpen(false); }}
+            onClick={() => setShowSettings(true)}
             aria-label="Settings"
-            className="relative group w-11 h-11 flex items-center justify-center rounded-2xl text-[#8c90a1] hover:bg-white/[0.06] hover:text-[#e5e2e1] transition-all cursor-pointer"
+            className="relative group w-11 h-11 flex items-center justify-center rounded-2xl text-[var(--ib-gray-600)] hover:bg-[var(--ib-gray-50)] hover:text-[var(--ib-gray-900)] transition-all cursor-pointer"
           >
             <Settings className="w-[17px] h-[17px] group-hover:rotate-45 transition-transform duration-300" />
             <RailTooltip>Settings</RailTooltip>
@@ -157,32 +194,96 @@ export default function Sidebar({ currentView, onViewChange, unreadCount = 0, is
 
           <div className="relative group">
             <div
-              className="w-9 h-9 rounded-full overflow-hidden border-2 border-[#353534] hover:border-[#568dff] transition-colors cursor-pointer"
+              className="w-9 h-9 rounded-full overflow-hidden border-2 border-[var(--ib-gray-200)] hover:border-[var(--ib-blue-500)] transition-colors cursor-pointer"
               role="button"
               tabIndex={0}
               aria-label="Your profile and settings"
-              onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setShowSettings(true); setIsMobileMenuOpen(false); } }}
-              onClick={() => { setShowSettings(true); setIsMobileMenuOpen(false); }}
+              onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setShowSettings(true); } }}
+              onClick={() => setShowSettings(true)}
             >
               {currentUser?.avatar ? (
                 <img alt="profile" src={currentUser.avatar} className="w-full h-full object-cover" />
               ) : (
-                <div className="w-full h-full bg-[#568dff]/20 flex items-center justify-center">
-                  <span className="text-xs font-bold text-[#b0c6ff]">{initials}</span>
+                <div className="w-full h-full bg-[var(--ib-blue-50)] flex items-center justify-center">
+                  <span className="text-xs font-bold text-[var(--ib-blue-800)]">{initials}</span>
                 </div>
               )}
             </div>
-            <span className="absolute bottom-0 right-0 w-2.5 h-2.5 bg-[#4dffb1] rounded-full border-2 border-[#1c1b1b]" />
+            <span className="absolute bottom-0 right-0 w-2.5 h-2.5 bg-[var(--ib-good-dot)] rounded-full border-2 border-white" />
 
-            <div className="pointer-events-none absolute left-full ml-3 bottom-0 scale-95 opacity-0 group-hover:scale-100 group-hover:opacity-100 hidden md:block bg-[#2a2a2a] text-[#e5e2e1] text-xs rounded-xl shadow-xl border border-[#424655]/80 transition-all duration-150 z-50 whitespace-nowrap overflow-hidden">
-              <div className="px-3 py-2 border-b border-[#424655] font-semibold flex items-center gap-1.5">
+            <div className="pointer-events-none absolute left-full ml-3 bottom-0 scale-95 opacity-0 group-hover:scale-100 group-hover:opacity-100 hidden md:block bg-[var(--ib-gray-900)] text-white text-xs rounded-xl shadow-[var(--ib-shadow-lg)] transition-all duration-150 z-50 whitespace-nowrap overflow-hidden">
+              <div className="px-3 py-2 border-b border-white/15 font-semibold flex items-center gap-1.5">
                 {currentUser?.displayName}
                 {status.emoji && <span>{status.emoji}</span>}
               </div>
-              {status.text && <div className="px-3 py-1.5 text-[#c2c6d8] border-b border-[#424655]">{status.text}</div>}
-              <div className="px-3 py-1.5 text-[#8c90a1]">Click to open settings</div>
+              {status.text && <div className="px-3 py-1.5 text-white/80 border-b border-white/15">{status.text}</div>}
+              <div className="px-3 py-1.5 text-white/70">Click to open settings</div>
             </div>
           </div>
+        </div>
+      </nav>
+
+      {/* ── Mobile drawer: a real labeled menu, not the rail shown/hidden.
+           w-72 (288px) -- enough room for icon+label+badge without feeling
+           cramped, well short of forcing horizontal scroll on a 320px
+           viewport (CLAUDE.md's own "survive 320px" bar). ── */}
+      <nav
+        className={`md:hidden fixed left-0 top-0 bottom-0 z-[70] flex flex-col w-72 max-w-[85vw] h-full bg-white shadow-[var(--ib-shadow-lg)] shrink-0
+          transition-transform duration-300 ease-[cubic-bezier(0.2,0.8,0.2,1)]
+          ${isMobileMenuOpen ? 'translate-x-0' : '-translate-x-full'}`}
+      >
+        <button
+          onClick={() => handleNavClick('dashboard')}
+          className="flex items-center gap-3 mt-14 mb-4 mx-4 shrink-0"
+        >
+          <span className="w-10 h-10 rounded-2xl bg-[var(--ib-blue-500)] flex items-center justify-center shadow-[0_0_18px_rgba(0,102,255,0.35)] shrink-0">
+            <BrandMark className="w-5 h-5" />
+          </span>
+          <span className="text-[15px] font-semibold text-[var(--ib-gray-900)]">IB Connect</span>
+        </button>
+
+        <div className="flex flex-col gap-1 px-3 overflow-y-auto">
+          {PRIMARY_NAV.map(renderDrawerRow)}
+        </div>
+
+        <div className="h-px bg-[var(--ib-gray-100)] my-3 mx-4 shrink-0" />
+
+        <div className="flex flex-col gap-1 px-3">
+          {UTILITY_NAV.map(renderDrawerRow)}
+        </div>
+
+        <div className="mt-auto flex flex-col gap-1 p-3 pt-3 border-t border-[var(--ib-gray-100)] shrink-0">
+          <button
+            onClick={() => { setShowSettings(true); setIsMobileMenuOpen(false); }}
+            className="flex items-center gap-3 w-full h-12 px-4 rounded-[var(--ib-radius-md)] text-[var(--ib-gray-800)] hover:bg-[var(--ib-gray-50)] transition-colors cursor-pointer"
+          >
+            <Settings className="w-5 h-5 shrink-0" />
+            <span className="text-[15px] font-medium">Settings</span>
+          </button>
+
+          <button
+            onClick={() => { setShowSettings(true); setIsMobileMenuOpen(false); }}
+            className="flex items-center gap-3 w-full px-4 py-2.5 rounded-[var(--ib-radius-md)] hover:bg-[var(--ib-gray-50)] transition-colors cursor-pointer text-left"
+          >
+            <span className="relative shrink-0">
+              <span className="block w-9 h-9 rounded-full overflow-hidden border-2 border-[var(--ib-gray-200)]">
+                {currentUser?.avatar ? (
+                  <img alt="profile" src={currentUser.avatar} className="w-full h-full object-cover" />
+                ) : (
+                  <span className="w-full h-full bg-[var(--ib-blue-50)] flex items-center justify-center">
+                    <span className="text-xs font-bold text-[var(--ib-blue-800)]">{initials}</span>
+                  </span>
+                )}
+              </span>
+              <span className="absolute bottom-0 right-0 w-2.5 h-2.5 bg-[var(--ib-good-dot)] rounded-full border-2 border-white" />
+            </span>
+            <span className="min-w-0">
+              <span className="block text-[14px] font-semibold text-[var(--ib-gray-900)] truncate">{currentUser?.displayName}</span>
+              <span className="block text-[12px] text-[var(--ib-gray-600)] truncate">
+                {status.text || 'Click to open settings'}
+              </span>
+            </span>
+          </button>
         </div>
       </nav>
     </>
