@@ -623,7 +623,9 @@ function ScreenTile({ stream, label, compact = false, isPinned = false, onToggle
       ) : (
         <div className="flex flex-col items-center gap-2 text-[#9aa0a6]">
           <ScreenShare className={compact ? 'w-5 h-5 animate-pulse' : 'w-8 h-8 animate-pulse'} />
-          <span className="text-xs">Connecting…</span>
+          <span className="flex items-center gap-1.5 text-xs">
+            <BrandDots mode="loading" size={6} />Connecting…
+          </span>
         </div>
       )}
       <div className={`absolute bg-[#111]/80 backdrop-blur-sm font-semibold text-white flex items-center gap-1.5 shadow-sm truncate ${
@@ -641,7 +643,7 @@ function ScreenTile({ stream, label, compact = false, isPinned = false, onToggle
           aria-label={isPinned ? `Unpin ${label}` : `Pin ${label}`}
           title={isPinned ? 'Unpin' : 'Pin to main view'}
           className={`absolute top-1.5 right-1.5 md:top-2 md:right-2 p-1.5 rounded-lg bg-[#202124]/85 backdrop-blur-sm border border-[#5f6368]/50 text-white shadow-lg cursor-pointer transition-opacity hover:bg-[#3c4043] focus-visible:opacity-100 ${
-            isPinned ? 'opacity-100 text-[#8ab4f8]' : 'opacity-0 group-hover:opacity-100'
+            isPinned ? 'opacity-100 text-[var(--ib-blue-500)]' : 'opacity-0 group-hover:opacity-100'
           }`}
         >
           {isPinned ? <PinOff className={compact ? 'w-3 h-3' : 'w-3.5 h-3.5'} /> : <Pin className={compact ? 'w-3 h-3' : 'w-3.5 h-3.5'} />}
@@ -714,7 +716,7 @@ function PresentingCard({ compact = false, onStop, onToggleFocus }: {
       {!compact && onStop && (
         <button
           onClick={(e) => { e.stopPropagation(); onStop(); }}
-          className="mt-1 md:mt-2 flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[#ea4335] hover:bg-[#d33b2c] active:scale-95 text-white text-xs font-semibold transition-all cursor-pointer"
+          className="mt-1 md:mt-2 flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[var(--ib-bad-dot)] hover:bg-[var(--ib-bad-text)] active:scale-95 text-white text-xs font-semibold transition-all cursor-pointer"
         >
           <ScreenShareOff className="w-3.5 h-3.5" />
           Stop sharing
