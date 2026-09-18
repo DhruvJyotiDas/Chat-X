@@ -43,7 +43,7 @@ export default function LoginPage({ pendingJoinCode, autoStart = false }: { pend
   }, [autoStart]);
 
   return (
-    <div className="min-h-screen bg-[#0e0e0e] flex items-center justify-center p-4">
+    <div className="min-h-dvh bg-[#0e0e0e] flex items-center justify-center p-4">
       <div className="w-full max-w-md">
         <div className="flex flex-col items-center mb-8">
           <div className="w-14 h-14 rounded-2xl bg-[#0066FF] flex items-center justify-center shadow-[0_0_30px_rgba(0,102,255,0.4)] mb-4">

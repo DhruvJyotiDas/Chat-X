@@ -221,7 +221,7 @@ function AppContent({ pendingRoomCode }: { pendingRoomCode?: string }) {
 
   if (isLoading) {
     return (
-      <div className="min-h-screen bg-[#0e0e0e] flex items-center justify-center">
+      <div className="min-h-dvh bg-[#0e0e0e] flex items-center justify-center">
         <div className="w-8 h-8 rounded-full border-2 border-[#568dff] border-t-transparent animate-spin" />
       </div>
     );
@@ -242,7 +242,7 @@ function AppContent({ pendingRoomCode }: { pendingRoomCode?: string }) {
   // Redialling the room a reload interrupted.
   if (!isInMeeting && rejoinState === 'pending') {
     return (
-      <div className="min-h-screen bg-[#111] flex flex-col items-center justify-center gap-3 text-[#e8eaed]">
+      <div className="min-h-dvh bg-[#111] flex flex-col items-center justify-center gap-3 text-[#e8eaed]">
         <div className="w-8 h-8 rounded-full border-2 border-[#8ab4f8] border-t-transparent animate-spin" />
         <p className="text-sm text-[#9aa0a6]">
           Rejoining <span className="font-mono font-bold text-[#8ab4f8]">{rejoinTarget}</span>…
@@ -259,7 +259,7 @@ function AppContent({ pendingRoomCode }: { pendingRoomCode?: string }) {
   // which naturally falls through past this block on the next render.
   if (!isInMeeting && awaitingApproval) {
     return (
-      <div className="min-h-screen bg-[#111] flex flex-col items-center justify-center gap-3 text-[#e8eaed] px-4 text-center">
+      <div className="min-h-dvh bg-[#111] flex flex-col items-center justify-center gap-3 text-[#e8eaed] px-4 text-center">
         <div className="w-10 h-10 rounded-full border-2 border-[#8ab4f8] border-t-transparent animate-spin" />
         <p className="text-base font-semibold">Waiting to be let in…</p>
         <p className="text-sm text-[#9aa0a6] max-w-xs">Someone in the meeting needs to accept you before you can join.</p>
@@ -269,7 +269,7 @@ function AppContent({ pendingRoomCode }: { pendingRoomCode?: string }) {
 
   if (!isInMeeting && joinDeniedReason) {
     return (
-      <div className="min-h-screen bg-[#111] flex flex-col items-center justify-center gap-3 text-[#e8eaed] px-4 text-center">
+      <div className="min-h-dvh bg-[#111] flex flex-col items-center justify-center gap-3 text-[#e8eaed] px-4 text-center">
         <div className="w-12 h-12 rounded-full bg-[#3c1f1f] flex items-center justify-center text-2xl">🚫</div>
         <p className="text-base font-semibold">
           {joinDeniedReason === 'timed_out' ? 'Nobody let you in' : "You weren't let into this meeting"}
@@ -323,11 +323,11 @@ function AppContent({ pendingRoomCode }: { pendingRoomCode?: string }) {
 
   return (
     <>
-    <div className="min-h-screen text-[#e5e2e1] bg-[#0e0e0e] flex font-sans overflow-hidden w-full max-w-full">
+    <div className="min-h-dvh text-[#e5e2e1] bg-[#0e0e0e] flex font-sans overflow-hidden w-full max-w-full">
       <Sidebar currentView={effectiveView} onViewChange={setCurrentView} isInMeeting={isInMeeting} />
 
       {/* FIXED: pl-0 on mobile, pl-[76px] on desktop to match the sidebar rail width */}
-      <div className="flex-1 pl-0 md:pl-[76px] flex flex-col h-screen overflow-hidden w-full">
+      <div className="flex-1 pl-0 md:pl-[76px] flex flex-col h-dvh overflow-hidden w-full">
         {effectiveView !== 'active_meeting' && (
           <TopBar
             currentView={effectiveView}

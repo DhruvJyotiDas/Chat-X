@@ -1,8 +1,18 @@
 <!doctype html>
-<html lang="en" class="dark">
+<html lang="en">
   <head>
+    <!-- class="dark" removed 2026-09-18: confirmed inert -- zero Tailwind
+         dark: variant classes exist anywhere in src/, so it never did
+         anything. Left in place it would misleadingly suggest this
+         now-light-default app is still dark-rooted. Theming is entirely
+         via [data-theme] (useTheme.ts), unaffected by this. -->
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <!-- viewport-fit=cover added 2026-09-18: without it, any
+         safe-area-inset-* CSS (none exists yet, but the redesign plan
+         flags this as needed for the in-meeting control bar) computes to
+         zero on iOS regardless of what's written -- this is the
+         prerequisite, not the fix itself. -->
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
     <title>IB Connect - Intelligent Enterprise Dashboard</title>
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <link rel="icon" type="image/png" sizes="32x32" href="/favicon-32x32.png" />

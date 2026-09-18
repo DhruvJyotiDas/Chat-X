@@ -116,7 +116,7 @@ export default function PreJoinScreen({ roomCode, initialName, nameEditable = tr
   };
 
   return (
-    <div className="min-h-screen bg-[#111] text-[#e8eaed] flex flex-col items-center justify-center p-4 gap-6">
+    <div className="min-h-dvh bg-[#111] text-[#e8eaed] flex flex-col items-center justify-center p-4 gap-6">
       <div className="flex items-center gap-2.5">
         <div className="w-9 h-9 rounded-xl bg-[#0066FF] flex items-center justify-center shadow-[0_0_24px_rgba(0,102,255,0.35)]">
           <BrandMark className="w-5 h-5" />
