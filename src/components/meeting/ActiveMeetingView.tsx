@@ -32,6 +32,8 @@ import { api, type MeetingSummary } from '../../lib/api';
 import { useSilentMic } from '../../hooks/useSilentMic';
 import { useCallShortcuts, SHORTCUT_HINTS } from '../../hooks/useCallShortcuts';
 import { REACTIONS } from '../../lib/reactions';
+import Avatar from '../ui/Avatar';
+import BrandDots from '../BrandDots';
 
 export type BgMode = 'none' | 'blur' | 'blur-heavy' | 'color-dark' | 'color-space';
 
@@ -140,7 +142,7 @@ function QualityBadge({ quality, relayed }: { quality: LinkQuality; relayed: boo
   if (quality === 'good' || quality === 'unknown') return null;
 
   const bars = quality === 'fair' ? 2 : 1;
-  const colour = quality === 'fair' ? 'bg-[#fdd663]' : 'bg-[#f28b82]';
+  const colour = quality === 'fair' ? 'bg-[var(--ib-warn-dot)]' : 'bg-[var(--ib-bad-dot)]';
   const label = quality === 'fair'
     ? `Unstable connection${relayed ? ' (relayed)' : ''}`
     : `Poor connection${relayed ? ' (relayed)' : ''}`;
@@ -380,9 +382,7 @@ function LocalTile({ stream, isVideoOff, name, bgMode }: { stream: MediaStream |
       {showCanvas && <canvas ref={canvasRef} className="w-full h-full object-cover" style={{ display: 'block' }} />}
       {isVideoOff && (
         <div className="absolute inset-0 flex flex-col items-center justify-center">
-          <div className="w-14 h-14 md:w-16 md:h-16 rounded-full bg-[#568dff]/20 flex items-center justify-center mb-2 shadow-lg border border-[#568dff]/30">
-            <span className="text-xl md:text-2xl font-bold text-[#b0c6ff]">{name.charAt(0).toUpperCase()}</span>
-          </div>
+          <Avatar initials={name.charAt(0).toUpperCase()} size="lg" className="mb-2 shadow-lg" />
           <span className="text-xs text-[#9aa0a6] font-medium tracking-wide truncate max-w-[90%]">{name}</span>
         </div>
       )}
@@ -495,11 +495,11 @@ function RemoteTile({ peer, videoWithheld = false }: { peer: PeerInfo; videoWith
   if (!peer.stream) {
     return (
       <div className="w-full h-full flex flex-col items-center justify-center bg-[#202124]">
-        <div className="w-14 h-14 md:w-16 md:h-16 rounded-full bg-[#c0c1ff]/10 flex items-center justify-center mb-2 animate-pulse border border-[#c0c1ff]/20">
-          <span className="text-xl md:text-2xl font-bold text-[#c0c1ff]">{peer.name.charAt(0).toUpperCase()}</span>
-        </div>
+        <Avatar initials={peer.name.charAt(0).toUpperCase()} size="lg" className="mb-2" />
         <span className="text-xs font-medium text-[#e8eaed] truncate max-w-[90%]">{peer.name}</span>
-        <span className="text-[9px] md:text-[10px] text-[#8ab4f8] mt-1 animate-pulse">Connecting…</span>
+        <span className="flex items-center gap-1.5 text-[9px] md:text-[10px] text-[#8ab4f8] mt-1">
+          <BrandDots mode="loading" size={6} />Connecting…
+        </span>
       </div>
     );
   }
@@ -532,14 +532,14 @@ function RemoteTile({ peer, videoWithheld = false }: { peer: PeerInfo; videoWith
           as before this distinction existed. */}
       {!hasVideo && (
         <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 bg-[#202124]">
-          <div className="w-14 h-14 md:w-16 md:h-16 rounded-full bg-[#c0c1ff]/10 flex items-center justify-center border border-[#c0c1ff]/20">
-            <span className="text-xl md:text-2xl font-bold text-[#c0c1ff]">{peer.name.charAt(0).toUpperCase()}</span>
-          </div>
+          <Avatar initials={peer.name.charAt(0).toUpperCase()} size="lg" />
           {/* A tile whose video we deliberately did not subscribe (see the
               subscription tiers above) is neither connecting nor camera-off —
               claiming either would be a lie. Show the avatar and say nothing. */}
           {videoWithheld ? null : stillConnecting ? (
-            <span className="text-[9px] md:text-[10px] text-[#8ab4f8] animate-pulse">Connecting…</span>
+            <span className="flex items-center gap-1.5 text-[9px] md:text-[10px] text-[#8ab4f8]">
+              <BrandDots mode="loading" size={6} />Connecting…
+            </span>
           ) : (
             <span className="text-[9px] md:text-[10px] text-[#9aa0a6] flex items-center gap-1">
               <VideoOff className="w-3 h-3" />Camera off
@@ -732,7 +732,7 @@ function ParticipantTile({
   return (
     <div
       className={`group relative w-full h-full rounded-xl md:rounded-2xl overflow-hidden bg-[#202124] border shadow-lg transition-colors ${
-        isSpeaking ? 'border-[#8ab4f8] ring-2 ring-[#8ab4f8]/70' : 'border-[#3c4043]'
+        isSpeaking ? 'border-[var(--ib-blue-500)] ring-2 ring-[var(--ib-blue-500)]/70' : 'border-[#3c4043]'
       }`}
     >
       {isLocal
@@ -757,7 +757,7 @@ function ParticipantTile({
           open. Positioned left so it never collides with the pin control. */}
       {handRaised && (
         <div
-          className={`absolute rounded-lg bg-[#fdd663] text-[#202124] shadow-lg flex items-center justify-center ${
+          className={`absolute rounded-lg bg-[var(--ib-warn-dot)] text-[var(--ib-gray-900)] shadow-lg flex items-center justify-center ${
             compact ? 'top-1 left-1 w-5 h-5' : 'top-1.5 left-1.5 md:top-2 md:left-2 w-7 h-7'
           }`}
           title={`${name} has their hand raised`}
@@ -774,7 +774,7 @@ function ParticipantTile({
         aria-label={isFocused ? `Unpin ${name}` : `Pin ${name}`}
         title={isFocused ? 'Unpin' : 'Pin to main view'}
         className={`absolute top-1.5 right-1.5 md:top-2 md:right-2 p-1.5 rounded-lg bg-[#202124]/85 backdrop-blur-sm border border-[#5f6368]/50 text-white shadow-lg cursor-pointer transition-opacity hover:bg-[#3c4043] focus-visible:opacity-100 ${
-          isFocused ? 'opacity-100 text-[#8ab4f8]' : 'opacity-0 group-hover:opacity-100'
+          isFocused ? 'opacity-100 text-[var(--ib-blue-500)]' : 'opacity-0 group-hover:opacity-100'
         }`}
       >
         {isFocused
