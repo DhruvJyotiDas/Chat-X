@@ -2,6 +2,9 @@ import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { useParams } from 'react-router-dom';
 import { Routes, Route } from 'react-router-dom';
 import { motion, AnimatePresence } from 'motion/react';
+import { CircleSlash } from 'lucide-react';
+import BrandDots from './components/BrandDots';
+import Button from './components/ui/Button';
 
 // Auth
 import { AuthProvider, useAuth } from './context/AuthContext';
@@ -259,32 +262,37 @@ function AppContent({ pendingRoomCode }: { pendingRoomCode?: string }) {
   // which naturally falls through past this block on the next render.
   if (!isInMeeting && awaitingApproval) {
     return (
-      <div className="min-h-dvh bg-[#111] flex flex-col items-center justify-center gap-3 text-[#e8eaed] px-4 text-center">
-        <div className="w-10 h-10 rounded-full border-2 border-[#8ab4f8] border-t-transparent animate-spin" />
+      <div className="min-h-dvh bg-[var(--ib-gray-50)] flex flex-col items-center justify-center gap-4 text-[var(--ib-gray-900)] px-4 text-center">
+        {/* The three-dot mark's loading state (DESIGN_SYSTEM.md section 7) --
+            this waiting room is exactly the surface that section proposed it
+            for, not a generic spinner borrowed from elsewhere. */}
+        <BrandDots mode="loading" size={12} />
         <p className="text-base font-semibold">Waiting to be let in…</p>
-        <p className="text-sm text-[#9aa0a6] max-w-xs">Someone in the meeting needs to accept you before you can join.</p>
+        <p className="text-sm text-[var(--ib-gray-600)] max-w-xs">Someone in the meeting needs to accept you before you can join.</p>
       </div>
     );
   }
 
   if (!isInMeeting && joinDeniedReason) {
     return (
-      <div className="min-h-dvh bg-[#111] flex flex-col items-center justify-center gap-3 text-[#e8eaed] px-4 text-center">
-        <div className="w-12 h-12 rounded-full bg-[#3c1f1f] flex items-center justify-center text-2xl">🚫</div>
+      <div className="min-h-dvh bg-[var(--ib-gray-50)] flex flex-col items-center justify-center gap-3 text-[var(--ib-gray-900)] px-4 text-center">
+        {/* Lucide icon, not an emoji -- the rest of the app (Sidebar, TopBar,
+            every other status surface) speaks lucide-react; an emoji here
+            was the one place that didn't. */}
+        <div className="w-12 h-12 rounded-full bg-[var(--ib-bad-fill)] flex items-center justify-center">
+          <CircleSlash className="w-6 h-6 text-[var(--ib-bad-dot)]" />
+        </div>
         <p className="text-base font-semibold">
           {joinDeniedReason === 'timed_out' ? 'Nobody let you in' : "You weren't let into this meeting"}
         </p>
-        <p className="text-sm text-[#9aa0a6] max-w-xs">
+        <p className="text-sm text-[var(--ib-gray-600)] max-w-xs">
           {joinDeniedReason === 'timed_out'
             ? 'Nobody in the meeting responded in time. Ask them to expect your request, then try again.'
             : 'Someone in the meeting turned down your request to join.'}
         </p>
-        <button
-          onClick={clearJoinDenied}
-          className="mt-2 px-4 py-2 rounded-lg bg-[#8ab4f8] text-[#062e6f] font-semibold text-sm hover:bg-[#aecbfa] transition-colors"
-        >
+        <Button onClick={clearJoinDenied} className="mt-2">
           Try again
-        </button>
+        </Button>
       </div>
     );
   }
