@@ -7,7 +7,7 @@ import {
 } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
 import { api } from '../../lib/api';
-import { useTheme, ThemePreference } from '../../hooks/useTheme';
+import { useTheme, ThemePreference, DARK_MODE_READY } from '../../hooks/useTheme';
 import { loadStatus, saveStatus, loadNotifications, saveNotifications, NotificationPreferences } from '../../lib/preferences';
 import { watchDevices, resolveSelection, loadDevicePrefs, EMPTY_SNAPSHOT, type DeviceSnapshot } from '../../lib/devicePrefs';
 import { isSpeakerSelectionSupported, setPreferredSpeaker } from '../../lib/audioOutput';
@@ -267,25 +267,31 @@ function PreferencesTab() {
 
   return (
     <div className="flex flex-col gap-6">
-      {/* Theme */}
-      <div>
-        <div className="flex items-center gap-2 mb-2.5">
-          <Palette className="w-3.5 h-3.5 text-[#b0c6ff]" />
-          <span className="text-[10px] font-bold uppercase tracking-wider text-[#8c90a1]">Appearance</span>
+      {/* Theme -- gated on DARK_MODE_READY (light-theme redesign, sub-unit 0).
+          Dark mode isn't coherent yet (see useTheme.ts's own note on the
+          mixed CSS cascade), so this picker stays hidden rather than let
+          someone select a 'dark' that only half-applies. Full rebuild onto
+          tokens/primitives happens in sub-unit 6, once the gate can flip. */}
+      {DARK_MODE_READY && (
+        <div>
+          <div className="flex items-center gap-2 mb-2.5">
+            <Palette className="w-3.5 h-3.5 text-[#b0c6ff]" />
+            <span className="text-[10px] font-bold uppercase tracking-wider text-[#8c90a1]">Appearance</span>
+          </div>
+          <div className="grid grid-cols-3 gap-2">
+            {THEME_OPTIONS.map(({ id, label, Icon }) => (
+              <button
+                key={id}
+                onClick={() => setTheme(id)}
+                className={`flex flex-col items-center gap-1.5 py-3 rounded-xl border text-xs font-semibold transition-all cursor-pointer ${theme === id ? 'border-[#568dff] bg-[#568dff]/10 text-[#b0c6ff]' : 'border-[#424655] text-[#8c90a1] hover:text-[#e5e2e1] hover:border-[#424655]'}`}
+              >
+                <Icon className="w-4 h-4" />
+                {label}
+              </button>
+            ))}
+          </div>
         </div>
-        <div className="grid grid-cols-3 gap-2">
-          {THEME_OPTIONS.map(({ id, label, Icon }) => (
-            <button
-              key={id}
-              onClick={() => setTheme(id)}
-              className={`flex flex-col items-center gap-1.5 py-3 rounded-xl border text-xs font-semibold transition-all cursor-pointer ${theme === id ? 'border-[#568dff] bg-[#568dff]/10 text-[#b0c6ff]' : 'border-[#424655] text-[#8c90a1] hover:text-[#e5e2e1] hover:border-[#424655]'}`}
-            >
-              <Icon className="w-4 h-4" />
-              {label}
-            </button>
-          ))}
-        </div>
-      </div>
+      )}
 
       {/* Custom status */}
       <div>
