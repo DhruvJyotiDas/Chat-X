@@ -131,6 +131,19 @@ directly with no light-mode mapping, rendering near-invisible on white backgroun
 those four mappings). The live-call screen (`ActiveMeetingView`, Meet/Zoom-style `#202124`/`#8ab4f8`
 palette) is intentionally excluded from the retrofit and stays dark in both themes.
 
+**Correction, 2026-09-19 (light-theme redesign, step 7):** the paragraph above describes
+`ActiveMeetingView`'s state before this redesign reached it. As of commits `ae1be11`..`da9e7ae`
+on `feat/light-theme-redesign`, only the **video** stays dark — the tile frame (`#202124` family),
+camera-off/connecting states, and name-chip/mute-icon overlays on top of video are deliberately
+untouched. Everything that is chrome rather than video content (the floating control bar, tile
+borders/pin buttons/quality badges, screen-share chrome, the chat/participants/captions side
+panel, and the evicted/media/silent-mic toasts and host admit/deny prompt) now uses the same
+`--ib-*` tokens as the rest of the app and renders light, per `DESIGN_SYSTEM.md`'s "light chrome,
+dark video" brief. See `ibconnect-planning/CHANGELOG.md`'s six step-7 sub-unit entries for exactly
+what changed in each area. `UI_REDESIGN_PLAN.md`'s equivalent note (§3, "explicitly excluded from
+the existing light-mode retrofit") is stale in the same way — read this correction, not that line,
+for the current state.
+
 ## WebRTC / video calls
 
 Mesh topology, one `RTCPeerConnection` per remote peer (`src/hooks/useWebRTC.ts`), signaled over the
