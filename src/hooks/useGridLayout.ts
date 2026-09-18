@@ -1,4 +1,4 @@
-import { useMemo } from 'react';
+import { useMemo, type RefObject } from 'react';
 import { useElementSize } from './useElementSize';
 import { GRID_LAYOUTS, selectGridLayout, type GridLayoutInfo } from '../lib/gridLayout';
 
@@ -7,7 +7,7 @@ import { GRID_LAYOUTS, selectGridLayout, type GridLayoutInfo } from '../lib/grid
  * `ref` to the grid div and apply `layout.columns`/`layout.rows` as CSS grid-template.
  */
 export function useGridLayout(tileCount: number): {
-  ref: ReturnType<typeof useElementSize>['ref'];
+  ref: RefObject<HTMLDivElement>;
   layout: GridLayoutInfo;
   size: { width: number; height: number };
 } {

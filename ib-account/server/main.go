@@ -127,6 +127,10 @@ func (a *App) routes() http.Handler {
 	mux.HandleFunc("POST "+b+"/oauth/token", a.handleToken)
 	mux.HandleFunc("GET "+b+"/oauth/jwks.json", a.handleJWKS)
 	mux.HandleFunc("GET "+b+"/.well-known/openid-configuration", a.handleDiscovery)
+	// Optional additional login: IB Account authenticates through the intranet,
+	// then resumes the original authorize request or account page.
+	mux.HandleFunc("GET "+b+"/upstream/login", a.handleUpstreamLogin)
+	mux.HandleFunc("GET "+b+"/upstream/callback", a.handleUpstreamCallback)
 
 	// account API
 	mux.HandleFunc("POST "+b+"/api/register", a.apiRegister)

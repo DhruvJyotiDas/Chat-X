@@ -51,6 +51,25 @@ ib-account/
 `email`, `email_verified`, `name`, `nonce`. Verified by IB Connect against
 `/oauth/jwks.json` in `server/main.go`'s `verifyIDToken`.
 
+### Optional intranet SSO
+
+IB Account can expose a second login option that authenticates through an
+external OIDC provider without changing the existing password or IB Connect
+OIDC flow. Configure these variables in the IB Account service environment:
+
+```env
+UPSTREAM_OIDC_ISSUER=https://icebrkr.space
+UPSTREAM_OIDC_CLIENT_ID=ib-account
+UPSTREAM_OIDC_CLIENT_SECRET=...
+UPSTREAM_OIDC_REDIRECT_URI=https://meet.icebrkr.space/auth/upstream/callback
+UPSTREAM_OIDC_ALLOWED_DOMAINS=icebrkr.one,icebrkr.space
+```
+
+Register the exact redirect URI with the intranet provider. The provider must
+support discovery, authorization-code exchange, PKCE S256, RS256 ID tokens,
+and a JWKS endpoint. The existing IB Account login remains available when the
+upstream provider is configured.
+
 ## Security model
 
 - Passwords: PBKDF2-HMAC-SHA256, 600k iterations, per-user 16-byte salt,

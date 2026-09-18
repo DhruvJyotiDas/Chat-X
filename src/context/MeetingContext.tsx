@@ -10,7 +10,7 @@ import { config } from '../config';
 
 export interface AppUser { id: string; name: string; isGuest: boolean; }
 export interface LiveChatMessage { id: string; fromId: string; fromName: string; text: string; time: string; isSelf: boolean; }
-export interface ScheduledMeeting { id: string; title: string; date: string; time: string; code: string; }
+export interface ScheduledMeeting { id: string; title: string; date: string; time: string; code: string; creatorId: string; }
 /** One knock-to-join request, as seen by someone already in the call. */
 export interface JoinRequest { requestId: string; userId: string; userName: string; }
 

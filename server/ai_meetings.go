@@ -1,9 +1,9 @@
 package main
 
-// AI Calendar Intelligence, made live: automatic meeting detection from chat,
-// posted back into the conversation as a card both participants see, kept in
-// sync as the time is revised mid-conversation, plus a 5-minutes-before
-// reminder to both participants.
+// AI Calendar Intelligence: automatic meeting detection from chat creates a
+// durable, private opportunity for the sender to review. Detection never
+// writes a calendar event, changes an existing event, or invites another user;
+// those effects remain behind the single-use confirmation flow in calendar.go.
 //
 // HONEST LATENCY NOTE, load-bearing for anyone touching this: the model this
 // runs on measures 60-200+ seconds per call (see gpu/AI_CONTRACT.md's own
@@ -15,15 +15,8 @@ package main
 // before it ever reaches the GPU) and never blocking the message-send request
 // on it (always fired as its own goroutine).
 //
-// The calendar itself is still per-user localStorage (calendarLocal.ts) —
-// this file does NOT move that server-side. What IS server-side is exactly
-// one row per thread's currently-active AI-detected meeting (ai_meetings),
-// which both participants' clients read the SAME resolved date/time from (via
-// the meeting-card message embedded in the thread) and use to create/update/
-// cancel their own local calendar event with a shared, deterministic id. That
-// row is also what the reminder ticker below queries — a real per-thread
-// source of truth is what makes "notify both people once, at the right time"
-// possible at all when the display store is otherwise per-user.
+// ai_meetings and its reminder ticker remain for legacy detected meetings that
+// were persisted before the confirmation model was introduced.
 
 import (
 	"context"
@@ -137,7 +130,10 @@ var (
 	meetingDetectSlots    = make(chan struct{}, 3)
 )
 
-func detectAndSyncMeeting(threadID string) {
+func detectAndSyncMeeting(threadID, requestedBy string) {
+	if !proactiveMeetingSuggestionsEnabled(requestedBy) {
+		return
+	}
 	meetingDetectMu.Lock()
 	if meetingDetectInFlight[threadID] {
 		meetingDetectMu.Unlock()
@@ -225,42 +221,163 @@ func detectAndSyncMeeting(threadID string) {
 		return
 	}
 
-	var existingID, existingTitle, existingDate, existingTime string
-	err = db.QueryRow(`SELECT id, title, meeting_date, start_time FROM ai_meetings WHERE thread_id=? AND status='scheduled'`, threadID).
-		Scan(&existingID, &existingTitle, &existingDate, &existingTime)
-	hasExisting := err == nil
-
 	members := threadMembers(threadID)
+	dedupeKey := "meeting:" + threadID
+	state, _ := findOpportunityState(requestedBy, dedupeKey)
+	if detected.Cancelled {
+		// A cancelled proposal that was never confirmed has no shared state to
+		// mutate. Retire the suggestion. If a confirmed event exists, prepare a
+		// reviewable cancellation instead of deleting it automatically.
+		if state.ResultRef == "" {
+			_, _ = db.Exec(`UPDATE aipa_opportunities SET status='dismissed',action_token=NULL,updated_at=NOW(6) WHERE user_id=? AND dedupe_key=?`, requestedBy, dedupeKey)
+			return
+		}
+		event, eventErr := getCalendarEvent(requestedBy, state.ResultRef)
+		if eventErr != nil || !event.CanEdit {
+			return
+		}
+		proposal := CalendarActionProposal{Action: "delete", EventID: state.ResultRef, Title: event.Title,
+			Date: event.Date, StartTime: event.StartTime, EndTime: event.EndTime, TimeZone: event.TimeZone}
+		fingerprint := opportunityFingerprint("delete", state.ResultRef, event.Title, event.Date, event.StartTime)
+		if state.Fingerprint == fingerprint {
+			return
+		}
+		token, tokenErr := storeCalendarActionProposalFor(requestedBy, proposal, 7*24*time.Hour)
+		if tokenErr != nil {
+			return
+		}
+		saved, changed, saveErr := saveProactiveOpportunity(requestedBy, "meeting_cancellation", "Review meeting cancellation",
+			fmt.Sprintf("The conversation may have cancelled %s. Confirm before the calendar is changed.", event.Title),
+			"chat_thread", threadID, dedupeKey, fingerprint, "Cancel meeting", token, 0.9, 90, proposal, time.Now().Add(7*24*time.Hour))
+		if saveErr == nil && changed {
+			deliverProactiveOpportunity(requestedBy, saved.ID, "meeting_cancellation", "Review meeting cancellation")
+		}
+		return
+	}
+	if !detected.HasMeeting || detected.Date == "" || detected.Time == "" {
+		return
+	}
 
-	switch {
-	case detected.Cancelled && hasExisting:
-		db.Exec(`UPDATE ai_meetings SET status='cancelled', updated_at=NOW(6) WHERE id=?`, existingID) //nolint
-		postMeetingCard(threadID, members, meetingCardPayload{MeetingID: existingID, Title: existingTitle, Action: "cancelled"})
-
-	case detected.HasMeeting && detected.Date != "" && detected.Time != "":
-		if hasExisting {
-			// existingTime comes back from MariaDB's TIME column as HH:MM:SS;
-			// compare against the model's HH:MM by trimming seconds, not by
-			// reformatting the model's output to match — the DB's format is
-			// the implementation detail here, not the model's.
-			existingTimeShort := existingTime
-			if len(existingTimeShort) >= 5 {
-				existingTimeShort = existingTimeShort[:5]
-			}
-			if existingDate == detected.Date && existingTimeShort == detected.Time {
-				return // genuinely unchanged — no card, no notification reset, no spam
-			}
-			db.Exec(`UPDATE ai_meetings SET title=?, meeting_date=?, start_time=?, notified_5min=0, updated_at=NOW(6) WHERE id=?`, //nolint
-				detected.Title, detected.Date, detected.Time, existingID)
-			postMeetingCard(threadID, members, meetingCardPayload{MeetingID: existingID, Title: detected.Title, Date: detected.Date, Time: detected.Time, Action: "updated"})
-		} else {
-			id := newID()
-			db.Exec(`INSERT INTO ai_meetings(id, thread_id, title, meeting_date, start_time) VALUES (?,?,?,?,?)`, //nolint
-				id, threadID, detected.Title, detected.Date, detected.Time)
-			postMeetingCard(threadID, members, meetingCardPayload{MeetingID: id, Title: detected.Title, Date: detected.Date, Time: detected.Time, Action: "created"})
+	timezone := proactiveUserTimeZone(requestedBy)
+	start, parseErr := parseLocalDateTime(detected.Date, detected.Time, timezone)
+	if parseErr != nil || start.Before(time.Now().Add(-15*time.Minute)) {
+		return
+	}
+	if strings.TrimSpace(detected.Title) == "" {
+		detected.Title = "Conversation follow-up"
+	}
+	attendeeIDs := []string{}
+	attendeeNames := []string{}
+	for _, memberID := range members {
+		if memberID == requestedBy {
+			continue
+		}
+		var displayName string
+		if db.QueryRow(`SELECT display_name FROM users WHERE id=?`, memberID).Scan(&displayName) == nil {
+			attendeeIDs = append(attendeeIDs, memberID)
+			attendeeNames = append(attendeeNames, displayName)
 		}
 	}
-	// hasMeeting:false and no existing row -> genuinely nothing to do, silently.
+	action := "create"
+	end := start.Add(time.Hour)
+	if state.ResultRef != "" {
+		if event, eventErr := getCalendarEvent(requestedBy, state.ResultRef); eventErr == nil && event.CanEdit {
+			action = "update"
+			duration := eventDurationMinutes(event)
+			end = start.Add(time.Duration(duration) * time.Minute)
+		}
+	}
+	proposal := CalendarActionProposal{Action: action, EventID: state.ResultRef, Title: detected.Title, Date: detected.Date,
+		StartTime: detected.Time, EndTime: end.In(start.Location()).Format("15:04"), TimeZone: timezone,
+		AttendeeIDs: attendeeIDs, AttendeeNames: attendeeNames}
+	if action == "create" {
+		proposal.EventID = ""
+	}
+	if len(busyForUsers(append([]string{requestedBy}, attendeeIDs...), start.UTC(), end.UTC(), proposal.EventID)) > 0 {
+		proposal.Warning = "This time conflicts with at least one participant's calendar. Review alternatives before confirming."
+	}
+	fingerprint := opportunityFingerprint(action, proposal.EventID, proposal.Title, proposal.Date, proposal.StartTime,
+		proposal.EndTime, strings.Join(attendeeIDs, ","))
+	if state.Fingerprint == fingerprint {
+		return
+	}
+	proposalTTL := time.Until(start) + 24*time.Hour
+	if proposalTTL < 24*time.Hour {
+		proposalTTL = 24 * time.Hour
+	}
+	token, tokenErr := storeCalendarActionProposalFor(requestedBy, proposal, proposalTTL)
+	if tokenErr != nil {
+		return
+	}
+	verb := "Create"
+	if action == "update" {
+		verb = "Reschedule"
+	}
+	summary := fmt.Sprintf("%s %s on %s at %s", verb, proposal.Title, proposal.Date, proposal.StartTime)
+	if len(attendeeNames) > 0 {
+		summary += " with " + strings.Join(attendeeNames, ", ")
+	}
+	saved, changed, saveErr := saveProactiveOpportunity(requestedBy, "meeting_proposal", "Review a meeting suggestion", summary,
+		"chat_thread", threadID, dedupeKey, fingerprint, verb+" meeting", token, 0.9, 85, proposal, start)
+	if saveErr == nil && changed {
+		deliverProactiveOpportunity(requestedBy, saved.ID, "meeting_proposal", "Review a meeting suggestion")
+	}
+}
+
+// Keep proactive meeting detection in the same server calendar used by the
+// Calendar page and AIPA. The chat card remains for conversational context;
+// it is no longer the only durable synchronization mechanism.
+func syncDetectedMeetingCalendar(meetingID string, members []string, title, date, clock, action string) {
+	if len(members) == 0 {
+		return
+	}
+	eventID := "evt-ai-" + meetingID
+	if action == "cancelled" {
+		_, _ = db.Exec(`DELETE FROM calendar_events WHERE id=?`, eventID)
+		pushTo(members, "calendar_cancelled", map[string]any{"eventId": eventID, "title": title})
+		return
+	}
+	organizer := members[0]
+	calendarID, err := ensureDefaultCalendar(organizer, "Asia/Kolkata")
+	if err != nil {
+		log.Printf("[AI meetings] calendar sync: %v", err)
+		return
+	}
+	if len(clock) > 5 {
+		clock = clock[:5]
+	}
+	start, err := parseLocalDateTime(date, clock, "Asia/Kolkata")
+	if err != nil {
+		return
+	}
+	end := start.Add(time.Hour)
+	_, err = db.Exec(`INSERT INTO calendar_events(id,calendar_id,creator_id,organizer_id,title,description,start_at,end_at,timezone,reminder_minutes)
+		VALUES(?,?,?,?,?,'Detected from an IB Connect conversation by AIPA.',?,?,?,5)
+		ON DUPLICATE KEY UPDATE title=VALUES(title),start_at=VALUES(start_at),end_at=VALUES(end_at),version=version+1,updated_at=NOW(6)`,
+		eventID, calendarID, organizer, organizer, title, start.UTC(), end.UTC(), "Asia/Kolkata")
+	if err != nil {
+		log.Printf("[AI meetings] calendar event sync: %v", err)
+		return
+	}
+	wanted := map[string]bool{}
+	for _, member := range members {
+		if member == organizer {
+			continue
+		}
+		wanted[member] = true
+		_, _ = db.Exec(`INSERT IGNORE INTO calendar_event_attendees(event_id,user_id) VALUES(?,?)`, eventID, member)
+	}
+	if rows, queryErr := db.Query(`SELECT user_id FROM calendar_event_attendees WHERE event_id=?`, eventID); queryErr == nil {
+		for rows.Next() {
+			var attendeeID string
+			if rows.Scan(&attendeeID) == nil && !wanted[attendeeID] {
+				_, _ = db.Exec(`DELETE FROM calendar_event_attendees WHERE event_id=? AND user_id=?`, eventID, attendeeID)
+			}
+		}
+		rows.Close()
+	}
+	rebuildEventReminders(eventID)
+	pushTo(members, "calendar_updated", map[string]any{"eventId": eventID, "title": title})
 }
 
 // postMeetingCard writes the card as a real, persisted chat message (sender_id
@@ -317,6 +434,7 @@ func checkMeetingReminders() {
 	rows, err := db.Query(`
 		SELECT id, thread_id, title, meeting_date, start_time FROM ai_meetings
 		WHERE status='scheduled' AND notified_5min=0
+		AND NOT EXISTS (SELECT 1 FROM calendar_events ce WHERE ce.id=CONCAT('evt-ai-',ai_meetings.id))
 		AND TIMESTAMP(meeting_date, start_time) BETWEEN NOW() AND DATE_ADD(NOW(), INTERVAL 5 MINUTE)
 	`)
 	if err != nil {

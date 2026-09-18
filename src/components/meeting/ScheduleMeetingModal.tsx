@@ -69,19 +69,6 @@ export default function ScheduleMeetingModal({ onClose }: Props) {
         } catch (err) {}
       }
 
-      // Add to personal calendar view immediately
-      if (currentUser) {
-        try {
-          const calKey = `ibconnect_calendar_${currentUser.id}`;
-          const calEvents = JSON.parse(localStorage.getItem(calKey) || '[]');
-          const calEvent = {
-            id: `sched-${code}-cal`, creatorId: currentUser.id, title: title.trim(),
-            date, startTime: time, endTime: time, description: `Meeting code: ${code}`, color: '#b0c6ff',
-          };
-          localStorage.setItem(calKey, JSON.stringify([...calEvents, calEvent]));
-        } catch {}
-      }
-
       setGeneratedCode(code);
     } catch (err) {
       console.error("Failed to schedule", err);

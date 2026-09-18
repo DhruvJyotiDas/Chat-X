@@ -3,14 +3,13 @@ import {
   Paperclip, Sparkles, Bold, Send, FileText, Download, Video,
   PlusCircle, Search, Users, X, Check, ArrowLeft,
   Smile, MoreVertical, MessageSquare, ChevronsRight, ChevronsLeft, Share2,
-  Wand2, Loader2, RotateCcw, Trash2, Brain, ListChecks, Mic, Play, Pause
+  Wand2, Loader2, RotateCcw, Trash2, Brain, ListChecks, Mic, Play, Pause, ShieldCheck
 } from 'lucide-react';
 import { IBUser, RealChatMessage, RealChatThread, ExtractedItem } from '../../types';
 import { useAuth } from '../../context/AuthContext';
 import { useChat } from '../../context/ChatContext';
 import { useMeeting } from '../../context/MeetingContext';
 import { api, AIThreadAnalysis, AIMemoryItem, AITaskItem, AIReminderItem, AIMeetingSuggestion, AISearchResult } from '../../lib/api';
-import { addCalendarEvent } from '../../lib/calendarLocal';
 import { parseWhenPhrase } from '../../lib/aiDateParse';
 import { parseMeetingCard, type MeetingCardPayload } from '../../lib/aiMeetingCard';
 import { CalendarClock, CalendarX2, Palette } from 'lucide-react';
@@ -19,6 +18,7 @@ import { extractIntelligence, ITEM_ICONS, ITEM_COLORS } from '../../lib/intellig
 import { REWRITE_MODES } from '../../lib/aiWriting';
 import { CAPTION_LANGUAGES } from '../../lib/captions';
 import UserProfileModal from '../chat/UserProfileModal';
+import ConversationInfoPanel from '../chat/ConversationInfoPanel';
 import GuestNameModal from '../meeting/GuestNameModal';
 
 // ── Emoji Picker Data ──────────────────────────────────────────────────────
@@ -1043,19 +1043,20 @@ function IntelligenceSidebar({ intelligence, messages, activeThread, currentUser
   // Best-effort date parsing (see aiDateParse.ts) — the raw phrase always
   // rides along in the saved event's description precisely because the
   // parsed date/time is a guess, not a confirmed fact from the model.
-  const handleAddToCalendar = (m: AIMeetingSuggestion, idx: number) => {
+  const handleAddToCalendar = async (m: AIMeetingSuggestion, idx: number) => {
     if (!currentUser) return;
     const { date, startTime } = parseWhenPhrase(m.when);
-    addCalendarEvent(currentUser.id, {
-      id: `ai-${Date.now()}-${idx}`,
-      title: m.title,
-      date,
-      startTime,
-      description: `Suggested by AI from this conversation — mentioned as "${m.when}". Double-check the date/time.`,
-      color: '#b0c6ff',
-      creatorId: currentUser.id,
-    });
-    setAddedToCalendar((prev) => new Set(prev).add(idx));
+    try {
+      const calendars = await api.getCalendars();
+      const calendar = calendars.find(item => item.isDefault && item.role !== 'viewer') ?? calendars.find(item => item.role !== 'viewer');
+      if (!calendar) return;
+      await api.createCalendarEvent({ calendarId: calendar.id, title: m.title, date, startTime,
+        endTime: (() => { const [hour, minute] = startTime.split(':').map(Number); const total = Math.min(1439, hour * 60 + minute + 60); return `${String(Math.floor(total / 60)).padStart(2, '0')}:${String(total % 60).padStart(2, '0')}`; })(),
+        allDay: false, description: `Suggested by AI from this conversation — mentioned as "${m.when}". Double-check the date/time.`,
+        location: '', timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone, recurrence: '', attendeeIds: [], reminderMinutes: 10 });
+      setAddedToCalendar((prev) => new Set(prev).add(idx));
+      window.dispatchEvent(new CustomEvent('ibconnect_calendar_changed'));
+    } catch {}
   };
 
   return (
@@ -1300,7 +1301,7 @@ type MobilePanel = 'list' | 'chat';
 
 export default function ChatsView({ onJoinMeeting, searchFilter }: ChatsViewProps) {
   const { currentUser, getUserById } = useAuth();
-  const { threads, getMessages, sendMessage, startDM, createGroup, typingUsers, setTyping, markRead, setActiveThreadId } = useChat();
+  const { threads, getMessages, sendMessage, startDM, createGroup, typingUsers, setTyping, markRead, setActiveThreadId, refreshThreads } = useChat();
   const { createMeeting, meetingError, clearMeetingError } = useMeeting();
 
   const [mobilePanel, setMobilePanel] = useState<MobilePanel>('list');
@@ -1309,6 +1310,7 @@ export default function ChatsView({ onJoinMeeting, searchFilter }: ChatsViewProp
   const [showNewThread, setShowNewThread] = useState(false);
   const [showNewGroup, setShowNewGroup] = useState(false);
   const [viewingUser, setViewingUser] = useState<IBUser | null>(null);
+  const [showConversationInfo, setShowConversationInfo] = useState(false);
   const [previewFile, setPreviewFile] = useState<Attachment | null>(null);
   const [showGuestModal, setShowGuestModal] = useState(false);
   const [isJoining, setIsJoining] = useState(false);
@@ -1437,6 +1439,7 @@ export default function ChatsView({ onJoinMeeting, searchFilter }: ChatsViewProp
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
   const activeThread = threads.find(t => t.id === selectedThreadId) || null;
+  const canSendToActiveThread = !activeThread?.adminsSend || activeThread.createdBy === currentUser?.id;
 
   // FIX: activeTypingUsers is moved safely to the top before the useEffect!
   const activeTypingUsers = activeThread ? (typingUsers[activeThread.id] || []) : [];
@@ -1504,6 +1507,7 @@ export default function ChatsView({ onJoinMeeting, searchFilter }: ChatsViewProp
     setMessages(msgs);
     setIntelligence(extractIntelligence(msgs));
     setMobilePanel('chat');
+    setShowConversationInfo(false);
   };
 
   const handleMobileBack = () => setMobilePanel('list');
@@ -1541,7 +1545,7 @@ export default function ChatsView({ onJoinMeeting, searchFilter }: ChatsViewProp
   };
 
   const handleSend = () => {
-    if (!inputText.trim() || !activeThread) return;
+    if (!inputText.trim() || !activeThread || !canSendToActiveThread) return;
     sendMessage(activeThread.id, inputText.trim());
     setInputText('');
     setTyping(activeThread.id, false);
@@ -1883,7 +1887,7 @@ export default function ChatsView({ onJoinMeeting, searchFilter }: ChatsViewProp
               const threadUser = getThreadUser(activeThread);
               const { name: headerName, avatar: headerAvatar } = getThreadDisplay(activeThread);
               return (
-                <div className="relative cursor-pointer flex-shrink-0" onClick={() => threadUser && setViewingUser(threadUser)}>
+                <div className="relative cursor-pointer flex-shrink-0" onClick={() => setShowConversationInfo(true)}>
                   {activeThread.type === 'group' ? (
                     <div className="w-9 h-9 rounded-xl bg-[#8083ff]/15 text-[#c0c1ff] flex items-center justify-center"><Users className="w-4 h-4" /></div>
                   ) : headerAvatar ? (
@@ -1896,7 +1900,9 @@ export default function ChatsView({ onJoinMeeting, searchFilter }: ChatsViewProp
               );
             })()}
             <div className="flex-1 min-w-0">
-              <h3 className="font-bold text-sm text-[#e5e2e1] truncate">{getThreadDisplay(activeThread).name}</h3>
+              <button onClick={() => setShowConversationInfo(true)} className="block max-w-full text-left">
+                <h3 className="font-bold text-sm text-[#e5e2e1] truncate hover:text-white">{getThreadDisplay(activeThread).name}</h3>
+              </button>
               <p className="text-[10px] text-[#8c90a1] truncate">
                 {activeTypingUsers.length > 0 ? `${activeTypingUsers.map(u => u.userName).join(', ')} is typing...` : (() => { const u = getThreadUser(activeThread); return u ? (u.status === 'online' ? 'Online' : 'Offline') : `${activeThread.participants.length} participants`; })()}
               </p>
@@ -1919,6 +1925,9 @@ export default function ChatsView({ onJoinMeeting, searchFilter }: ChatsViewProp
             <button onClick={handleQuickJoin} disabled={isJoining} className="flex items-center gap-1.5 bg-[#568dff]/10 text-[#b0c6ff] border border-[#568dff]/30 px-2.5 sm:px-3 py-1.5 rounded-lg text-xs font-bold hover:bg-[#568dff]/20 transition-colors disabled:opacity-50 flex-shrink-0">
               <Video className="w-3.5 h-3.5" />
               <span className="hidden sm:inline">{isJoining ? '...' : 'Start Call'}</span>
+            </button>
+            <button onClick={() => setShowConversationInfo(true)} title={activeThread.type === 'group' ? 'Group info' : 'Contact info'} aria-label={activeThread.type === 'group' ? 'Open group info' : 'Open contact info'} className="grid h-8 w-8 shrink-0 place-items-center rounded-lg text-[#8c90a1] transition-colors hover:bg-[#201f1f] hover:text-[#e5e2e1]">
+              <MoreVertical className="h-4 w-4" />
             </button>
           </div>
 
@@ -2010,7 +2019,7 @@ export default function ChatsView({ onJoinMeeting, searchFilter }: ChatsViewProp
             {/* AI Reply: only worth offering when there's something to reply TO and the
                 composer isn't already mid-draft — filling suggestions into someone's own
                 half-written message would be more annoying than helpful. */}
-            {!inputText.trim() && messages.length > 0 && messages[messages.length - 1]?.senderId !== currentUser?.id && (
+            {canSendToActiveThread && !inputText.trim() && messages.length > 0 && messages[messages.length - 1]?.senderId !== currentUser?.id && (
               replySuggestions ? (
                 <div className="flex flex-wrap gap-1.5 mb-2">
                   {replySuggestions.map((s, i) => (
@@ -2036,7 +2045,11 @@ export default function ChatsView({ onJoinMeeting, searchFilter }: ChatsViewProp
                 </button>
               )
             )}
-            <div className="bg-[#131313] rounded-xl border border-[#424655] shadow-lg focus-within:border-[#568dff] focus-within:ring-1 focus-within:ring-[#568dff]/50 transition-all flex flex-col">
+            {!canSendToActiveThread ? (
+              <div className="flex items-center justify-center gap-2 rounded-xl border border-[#718cff]/20 bg-[#111827]/95 px-4 py-3 text-xs text-[#9aa4b8] shadow-lg">
+                <ShieldCheck className="h-4 w-4 text-[#9bafff]" /> Only group admins can send messages in this conversation.
+              </div>
+            ) : <div className="bg-[#131313] rounded-xl border border-[#424655] shadow-lg focus-within:border-[#568dff] focus-within:ring-1 focus-within:ring-[#568dff]/50 transition-all flex flex-col">
               {isRecording ? (
                 <div className="flex items-center gap-3 px-4 py-3">
                   <button onClick={() => finishRecording(false)} title="Cancel recording" aria-label="Cancel recording" className="text-[#8c90a1] hover:text-[#ffb4ab] transition-colors flex-shrink-0">
@@ -2120,7 +2133,7 @@ export default function ChatsView({ onJoinMeeting, searchFilter }: ChatsViewProp
                   </div>
                 </>
               )}
-            </div>
+            </div>}
             {meetingError && <p className="text-[10px] text-[#ffb4ab] mt-1 text-center">{meetingError}</p>}
             {aiError && <p className="text-[10px] text-[#ffb4ab] mt-1 text-center">{aiError}</p>}
           </div>
@@ -2136,6 +2149,17 @@ export default function ChatsView({ onJoinMeeting, searchFilter }: ChatsViewProp
       {showNewThread && <NewDMModal currentUserId={currentUser?.id} onClose={() => setShowNewThread(false)} onSelect={handleNewDM} />}
       {showNewGroup && <NewGroupModal currentUserId={currentUser?.id} onClose={() => setShowNewGroup(false)} onCreate={handleNewGroup} />}
       {viewingUser && <UserProfileModal user={viewingUser} onClose={() => setViewingUser(null)} onStartChat={() => { handleNewDM(viewingUser.id); setViewingUser(null); }} />}
+      {showConversationInfo && activeThread && currentUser && (
+        <ConversationInfoPanel
+          thread={activeThread}
+          currentUser={currentUser}
+          contact={getThreadUser(activeThread)}
+          messages={messages}
+          getUserById={getUserById}
+          onClose={() => setShowConversationInfo(false)}
+          onGroupUpdated={refreshThreads}
+        />
+      )}
       {/* Rendered here, alongside the other modals, so the lg:hidden and desktop branches
           below don't each mount their own copy. */}
       {previewFile && <AttachmentPreviewModal file={previewFile} onClose={() => setPreviewFile(null)} />}

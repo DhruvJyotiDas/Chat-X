@@ -63,7 +63,15 @@ function AppContent({ pendingRoomCode }: { pendingRoomCode?: string }) {
   const [currentView, setCurrentView] = useState<AppView>('dashboard');
   const [logs, setLogs] = useState<ComplianceLog[]>([]);
   const [searchFilter, setSearchFilter] = useState('');
-  const [autoJoinCode, setAutoJoinCode] = useState<string | undefined>(pendingRoomCode);
+  const ssoParams = new URLSearchParams(window.location.search);
+  const ssoRequested = ssoParams.get('sso') === '1';
+  // room is optional: ?sso=1 alone means "just sign in" (e.g. an intranet
+  // "Connect" button with no meeting in mind); ?sso=1&room=CODE auto-joins
+  // that room once signed in, same as before.
+  const ssoRoomCode = ssoRequested ? ssoParams.get('room')?.trim() : undefined;
+  const launchRoomCode = pendingRoomCode || ssoRoomCode;
+  const ssoLaunch = !pendingRoomCode && ssoRequested;
+  const [autoJoinCode, setAutoJoinCode] = useState<string | undefined>(launchRoomCode);
 
   // A reload mid-call must land back in the call, not on the dashboard. This is
   // the one-shot redial: sessionStorage still knows which room this tab was in
@@ -73,7 +81,7 @@ function AppContent({ pendingRoomCode }: { pendingRoomCode?: string }) {
     const saved = readActiveMeeting();
     if (!saved) return null;
     // A stale record from another room shouldn't hijack an explicit /:roomCode link.
-    if (pendingRoomCode && saved.roomId !== pendingRoomCode.toUpperCase()) return null;
+    if (launchRoomCode && saved.roomId !== launchRoomCode.toUpperCase()) return null;
     return saved.roomId;
   });
   // 'pending' only covers the in-flight redial. It must settle to 'idle' on success
@@ -180,7 +188,7 @@ function AppContent({ pendingRoomCode }: { pendingRoomCode?: string }) {
   // through IB Account sign-in) goes straight into the room. Guests get the lobby
   // instead — see the PreJoinScreen branch below. Falls back to the Meetings page
   // with the code prefilled if the room turns out to be gone.
-  const linkCode = pendingRoomCode?.trim().toUpperCase();
+  const linkCode = launchRoomCode?.trim().toUpperCase();
   const linkJoinRef = useRef(false);
   useEffect(() => {
     const target = linkCode ?? autoJoinCode;
@@ -282,7 +290,7 @@ function AppContent({ pendingRoomCode }: { pendingRoomCode?: string }) {
   }
 
   // Anyone with just a share link: name in, camera check, join. No account needed.
-  if (!currentUser && linkCode && !forceLogin) {
+  if (!currentUser && linkCode && !forceLogin && !ssoLaunch) {
     return (
       <PreJoinScreen
         roomCode={linkCode}
@@ -294,7 +302,7 @@ function AppContent({ pendingRoomCode }: { pendingRoomCode?: string }) {
   }
 
   if (!currentUser) {
-    return <LoginPage pendingJoinCode={pendingRoomCode} />;
+    return <LoginPage pendingJoinCode={linkCode} autoStart={ssoLaunch} />;
   }
 
   const handleAddLog = (event: string, status: 'SUCCESS' | 'FLAGGED') => {

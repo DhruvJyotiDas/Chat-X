@@ -10,9 +10,10 @@ export interface ChatPersonalization {
   font: string; // a key into FONTS
 }
 
-export const DEFAULT_PERSONALIZATION: ChatPersonalization = { wallpaper: 'none', accent: 'blue', font: 'default' };
+export const DEFAULT_PERSONALIZATION: ChatPersonalization = { wallpaper: 'ib-connect', accent: 'blue', font: 'default' };
 
 export const WALLPAPERS: { key: string; label: string; css: string }[] = [
+  { key: 'ib-connect', label: 'IB Connect', css: "linear-gradient(rgba(8, 12, 21, .2), rgba(8, 12, 21, .2)), url('/chat/ib-connect-wallpaper.png') center / 627px 627px repeat" },
   { key: 'none', label: 'None', css: '' },
   { key: 'midnight', label: 'Midnight', css: 'linear-gradient(160deg, #0e0e0e 0%, #14203a 100%)' },
   { key: 'forest', label: 'Forest', css: 'linear-gradient(160deg, #0e0e0e 0%, #0f2a1c 100%)' },
@@ -22,9 +23,9 @@ export const WALLPAPERS: { key: string; label: string; css: string }[] = [
 ];
 
 export const ACCENTS: { key: string; label: string; hex: string }[] = [
-  { key: 'blue', label: 'Blue', hex: '#568dff' },
-  { key: 'violet', label: 'Violet', hex: '#8083ff' },
-  { key: 'teal', label: 'Teal', hex: '#2dd4bf' },
+  { key: 'blue', label: 'Periwinkle', hex: '#718cff' },
+  { key: 'violet', label: 'Violet', hex: '#9b87f5' },
+  { key: 'teal', label: 'Teal', hex: '#35cdb0' },
   { key: 'rose', label: 'Rose', hex: '#fb7185' },
   { key: 'amber', label: 'Amber', hex: '#f5a524' },
 ];

@@ -34,6 +34,10 @@ export interface RealChatThread {
   type: 'dm' | 'group';
   name: string;
   avatar?: string;
+  description?: string;
+  createdBy?: string;
+  adminsEditInfo?: boolean;
+  adminsSend?: boolean;
   participants: string[];
   lastMessage: string;
   lastTimestamp: number;
@@ -42,13 +46,28 @@ export interface RealChatThread {
 
 export interface CalendarEvent {
   id: string;
+  seriesId?: string;
+  calendarId?: string;
+  calendarName?: string;
   title: string;
   date: string;
   startTime: string;
   endTime?: string;
+  allDay?: boolean;
   description?: string;
+  location?: string;
   color: string;
   creatorId: string;
+  organizerId?: string;
+  timeZone?: string;
+  recurrence?: '' | 'DAILY' | 'WEEKLY' | 'WEEKDAYS' | 'MONTHLY';
+  attendeeIds?: string[];
+  attendees?: { userId: string; displayName: string; email: string; response: 'needs_action' | 'accepted' | 'declined' | 'tentative' }[];
+  reminderMinutes?: number;
+  responseStatus?: 'needs_action' | 'accepted' | 'declined' | 'tentative';
+  canEdit?: boolean;
+  meetingCode?: string;
+  version?: number;
 }
 
 export interface CallRecord {

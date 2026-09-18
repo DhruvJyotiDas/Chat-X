@@ -113,7 +113,9 @@ func fetchTranscriptLines(roomID string) ([]transcriptLineRow, error) {
 		return nil, err
 	}
 	defer rows.Close()
-	var lines []transcriptLineRow
+	// JSON [] rather than null keeps the API contract stable for a meeting
+	// where captions were never enabled.
+	lines := []transcriptLineRow{}
 	for rows.Next() {
 		var l transcriptLineRow
 		var createdAt time.Time

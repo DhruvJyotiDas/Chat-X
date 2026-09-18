@@ -1,6 +1,6 @@
 # IB Connect user-facing feature status
 
-Audited against the repository and live deployment on 2026-09-10.
+Audited against the repository and live deployment on 2026-09-15.
 
 Current snapshot: **38 complete**, **28 partial**, **52 not implemented**, and **1 infrastructure claim unverified** across 119 requested capabilities.
 
@@ -19,7 +19,7 @@ Status meanings:
 | Stay securely signed in across sessions | **Complete** | IB Account maintains server sessions and IB Connect restores its signed session token. Token rotation/revocation could still be stronger. |
 | Control what personal data and features IB Connect can access | **Partial** | Settings cover profile, presence status, notifications, devices, and personalization. There is no unified permissions/privacy center for AI, transcripts, files, calendar, or connectors. |
 | Give or revoke consent for recording and analysis | **Not implemented** | Call recording is absent and there is no durable consent ledger for transcription or AI analysis. Captions are a local on/off action, not multi-party consent. |
-| Choose individual AI features to enable or disable | **Not implemented** | AIPA features are manually triggered in several places, but there is no per-feature AI preference policy. |
+| Choose individual AI features to enable or disable | **Partial** | Server-synchronized controls cover proactive meeting, planning, task/reminder, reply, preparation, and post-meeting signals. The broader assistant, transcription, document AI, and interview AI still lack one unified policy. |
 | Delete your session data and related information | **Not implemented** | Users can delete individual AI memory/reminders and some local items. There is no complete account/session export-and-delete flow. |
 | Keep private data separate from other participants | **Partial** | Thread membership and meeting transcript ACLs isolate normal access. Formal tenant isolation, connector ACLs, retention policy, and complete guest identity hardening remain. |
 | Store data within India | **Unverified** | The current application VM is in the Mumbai environment, but the repository does not enforce or prove residency for database backups, AI/ASR providers, logs, or future object storage. |
@@ -28,13 +28,13 @@ Status meanings:
 
 | Requested capability | Status | Current implementation and remaining gap |
 |---|---|---|
-| Use AIPA throughout IB Connect | **Partial** | A global Ask AIPA panel is available from the top bar, plus chat, dashboard, document, meeting, and interview AI surfaces. It is not yet a shared context layer across every product. |
-| Help with conversations, calls, meetings, tasks, documents, and information | **Partial** | Conversation Q&A/analysis, meeting summaries, tasks/reminders, document extraction/Q&A, rewriting, translation, Daily Focus, and interviews work. General tool execution across these products does not. |
-| Proactive assistance without asking first | **Partial** | Meeting mentions can create meeting cards; the dashboard surfaces Daily Focus, AI tasks, and reminders. There is no general ranked proactive suggestion engine, preference model, cooldown system, or feedback loop. |
+| Use AIPA throughout IB Connect | **Partial** | The global panel receives a bounded, permission-scoped snapshot of chats, synchronized calendars, appointments, memory, tasks, reminders, transcripts, document summaries, interviews and recent local call history, with source badges. Calendar create/reschedule actions require confirmation; a general action layer across every product is still absent. |
+| Help with conversations, calls, meetings, tasks, documents, and information | **Partial** | The global assistant can reason over those available snapshots; conversation analysis, meeting summaries, tasks/reminders, document Q&A, rewriting, translation, Daily Focus and interviews also work. Complete history retrieval and general authorized tool execution do not. |
+| Proactive assistance without asking first | **Partial** | A five-minute background detector creates durable private opportunities for meeting mentions/prep/follow-up, invitations, due or stale tasks/reminders, and older unread replies. AIPA Now supports confirmation, snooze, dismiss, usefulness feedback, quiet hours, and daily nudge limits. Semantic cross-product ranking and learned personalization remain. |
 | Suggestions based on the current conversation | **Complete** | Smart replies, conversation analysis, local conversation intelligence, task/reminder extraction, and meeting detection are implemented. |
-| Find information from personal conversations and documents | **Partial** | Thread Q&A, keyword message search, and per-attachment document Q&A exist. There is no cross-conversation/document semantic retrieval or RAG index. |
-| Search the external web when needed | **Not implemented** | AIPA has no web-search provider or browsing tool. |
-| Cite web sources | **Not implemented** | No external web retrieval means there is no web citation pipeline. Daily Focus source references are internal IDs and are not equivalent to web citations. |
+| Find information from personal conversations and documents | **Partial** | Global AIPA now receives recent permissioned chat lines and document summaries in addition to thread Q&A, keyword search and per-attachment Q&A. There is no full-history semantic retrieval, chunk index, reranking or RAG. |
+| Search the external web when needed | **Not implemented** | A bounded Brave Search adapter, current-information intent gate, and source UI now exist, but production has no `BRAVE_SEARCH_API_KEY`; therefore users still have no working live web-search flow. |
+| Cite web sources | **Not implemented** | Safe numbered citation links and source cards are implemented, but they cannot display live sources until the production Brave credential is configured. Daily Focus references remain separate internal IDs. |
 
 ## Direct messaging
 
@@ -113,23 +113,23 @@ Status meanings:
 | Requested capability | Status | Current implementation and remaining gap |
 |---|---|---|
 | Detect meeting discussions and scheduling phrases | **Complete** | A deterministic gate plus AI extraction detects, updates, and cancels proposed meetings in chat. |
-| Automatically begin a scheduling flow | **Partial** | A meeting card/calendar event is produced automatically. There is no guided availability negotiation flow. |
-| Connect a calendar | **Not implemented** | The existing calendar is browser-local and has no external OAuth connection. |
-| Check everybody's availability | **Not implemented** | No Free/Busy connector or server calendar model. |
-| Respect working hours | **Not implemented** | No working-hours preferences or scheduling constraint engine. |
-| Handle time zones | **Partial** | AIPA receives the user's IANA timezone in some requests, but detected meeting scheduling currently uses server time and shared events do not preserve attendee time zones. |
-| Suggest common meeting slots in the conversation | **Partial** | AIPA can extract/suggest a discussed date/time and create a meeting card. It does not compare participant availability. |
-| Compare slots across participants | **Not implemented** | Requires connected calendars and private Free/Busy queries. |
-| Pick a proposed slot | **Partial** | Users can accept detected cards into their local calendar or use the schedule modal. There is no multi-party slot-voting workflow. |
-| One-tap meeting confirmation | **Partial** | Detected meeting cards provide one-action local calendar creation. Confirmation is not a durable participant acceptance workflow. |
-| Add to all participant calendars | **Partial** | Each online/offline client syncs the shared card into its own browser-local calendar. No external or server calendar is updated. |
-| Automatically include a meeting link | **Partial** | Manually scheduled meetings receive an IB Connect room code/link. AI-detected local calendar cards are not backed by a durable scheduled-room object. |
+| Automatically begin a scheduling flow | **Partial** | AIPA detects requests, prepares reviewable create/reschedule actions, and waits for confirmation. Multi-party slot voting is not present. |
+| Connect a calendar | **Partial** | IB Connect now has server-synchronized personal and shared calendars. External OAuth connectors are not implemented. |
+| Check everybody's availability | **Complete** | Permission-safe internal Free/Busy returns only occupied intervals and alternative slots across selected IB Connect users. External providers remain unavailable. |
+| Respect working hours | **Complete** | Users configure working days, start/end hours, and timezone; availability suggestions enforce all participants' settings. |
+| Handle time zones | **Complete** | Events preserve IANA timezones, convert to UTC for storage/comparison, and render in their event timezone. External calendar interop remains future work. |
+| Suggest common meeting slots in the conversation | **Partial** | The event editor checks attendee conflicts and offers working-hour-aware alternatives. AIPA does not yet run a multi-turn slot-negotiation conversation. |
+| Compare slots across participants | **Complete** | Internal Free/Busy compares up to 25 participants without exposing event titles or details. External calendars require connectors. |
+| Pick a proposed slot | **Partial** | Alternative slots can be applied in the event editor and AIPA proposals can be confirmed. There is no participant voting workflow. |
+| One-tap meeting confirmation | **Complete** | AIPA calendar mutations use expiring, single-use proposals and explicit Confirm/Cancel controls; invitations have Accept/Tentative/Decline responses. |
+| Add to all participant calendars | **Complete** | Events and invitations are server-authoritative and visible to invitees across sessions. External calendars are not updated. |
+| Automatically include a meeting link | **Partial** | Manually scheduled meetings and confirmed AIPA-created meetings receive IB Connect links. Chat detection only prepares a private review action; no event, room, or invitation is created until confirmation. |
 | Generate title | **Complete** | AI detection and manual scheduling produce a title. |
 | Generate description and agenda | **Not implemented** | AI-detected cards use a fixed description and do not generate an editable agenda. |
-| Edit generated meeting details before confirmation | **Not implemented** | Manual meetings can be entered by the user, but AI-generated cards do not have an edit-before-save review step. |
-| Detect calendar conflicts and suggest alternatives | **Not implemented** | No server calendar/Free-Busy layer. |
-| Keep private calendar details hidden | **Not implemented** | There is no multi-user calendar integration yet; future Free/Busy must expose availability without titles/details. |
-| Show appointments created during a session | **Partial** | Detected meeting cards remain in chat and local calendar. There is no dedicated end-of-session appointment recap. |
+| Edit generated meeting details before confirmation | **Partial** | AIPA shows the exact proposed action and requires confirmation. Direct editing inside the confirmation card is still needed. |
+| Detect calendar conflicts and suggest alternatives | **Complete** | The editor checks organizer/attendee overlaps and offers working-hour-aware alternatives. |
+| Keep private calendar details hidden | **Complete** | Free/Busy exposes user/time intervals without event titles, descriptions, locations, or calendar membership. |
+| Show appointments created during a session | **Partial** | Confirmed appointments are immediately synchronized and searchable; a dedicated end-of-session appointment recap is still absent. |
 | Google Calendar connection | **Not implemented** | No connector. |
 | Outlook Calendar connection | **Not implemented** | No connector. |
 | Apple Calendar connection | **Not implemented** | No connector or CalDAV/ICS sync. |
@@ -179,28 +179,28 @@ Status meanings:
 
 | Requested capability | Status | Current implementation and remaining gap |
 |---|---|---|
-| Notice relevant information from the past | **Partial** | Daily Focus, persisted decisions, reminders, and conversation intelligence surface some past context. Relevance is not computed against the user's current activity. |
+| Notice relevant information from the past | **Partial** | Automatic daily-cached Focus, persisted decisions, reminders, stale-work signals, waiting-reply detection, and post-meeting follow-up surface past context. Semantic relevance against the user's live activity is still absent. |
 | Surface an old message at the right moment | **Not implemented** | Search is user-triggered; there is no semantic proactive retrieval. |
 | Surface a relevant document | **Not implemented** | No indexed document corpus or contextual suggestion engine. |
-| Remind users about prior discussions | **Partial** | AI reminders and five-minute meeting reminders exist. General commitment follow-up timing is not normalized or scheduled. |
-| Show floating contextual suggestions | **Partial** | Ask AIPA is globally available and AI meeting cards appear in chat, but no ranked floating suggestion system exists. |
+| Remind users about prior discussions | **Partial** | AI reminders, task/reminder urgency signals, reply-needed nudges, post-meeting follow-up, and five-minute meeting reminders exist. Free-text commitment timing is not yet normalized into reliable scheduled dates. |
+| Show floating contextual suggestions | **Partial** | Ask AIPA is globally available; AIPA Now receives background realtime opportunities and hidden tabs can receive browser nudges within quiet-hour/daily limits. Suggestions are not yet embedded contextually inside every product view. |
 
 ## Web assistance
 
 | Requested capability | Status | Current implementation and remaining gap |
 |---|---|---|
-| Answer questions requiring current external information | **Not implemented** | The model has no controlled web retrieval tool. |
-| Search externally when private sources are insufficient | **Not implemented** | No source-routing policy or web search provider. |
-| Ground answers in external sources | **Not implemented** | No retrieval or evidence validation layer. |
-| Display citations for web answers | **Not implemented** | No citation model/UI. |
-| Use external search only when needed | **Not implemented** | Requires an intent/router policy, privacy controls, allowlists, budgets, and citations before release. |
+| Answer questions requiring current external information | **Not implemented** | The server-side Brave Search adapter is implemented, but the production key is not configured, so the live user flow remains unavailable. |
+| Search externally when private sources are insufficient | **Not implemented** | Explicit web requests and clearly volatile categories are routed by a deterministic intent gate once configured. Automatic insufficiency detection and the production credential remain missing. |
+| Ground answers in external sources | **Not implemented** | The adapter supplies bounded snippets as untrusted evidence and asks for numbered citations, but production cannot exercise this without the provider key and a retrieval evaluation. |
+| Display citations for web answers | **Not implemented** | Safe numbered citation links and source cards are implemented in the Ask AIPA panel, but no live production results are available until configuration. |
+| Use external search only when needed | **Not implemented** | Private queries stay internal and only explicit/current-information patterns route externally. Production configuration, user web preference, privacy redaction, quotas, and monitoring remain. |
 
 ## Highest-value next implementation order
 
 1. Add recording/transcription/AI consent policy, a durable consent ledger, and meeting roles. These are prerequisites for recording and trustworthy meeting intelligence.
 2. Change long summaries and document analysis to durable background jobs with progress events, cached results, retries, and model fallback.
 3. Add task review-before-save, normalized due dates/time zones, priority, deduplication, source links, assignment acceptance, and notifications.
-4. Build a server-side calendar and Google/Outlook connectors using Free/Busy-only access first; add working hours, time zones, conflict detection, and confirmation.
+4. Add Google/Outlook connectors using least-privilege Free/Busy access, then external event synchronization and recurrence exceptions.
 5. Add ACL-filtered hybrid search across messages, transcript segments, and document chunks with exact citations.
 6. Add a permission-aware proactive ranking service with confidence thresholds, cooldowns, user controls, explanations, and feedback.
 7. Add a controlled web-search tool with domain/source policy, citations, privacy redaction, rate limits, and clear separation from private-source answers.
