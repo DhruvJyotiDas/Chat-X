@@ -1,45 +1,31 @@
 @import "tailwindcss";
 
+/* Removed 2026-09-18: a Material-Design-3 color palette (--color-primary,
+ * --color-surface-*, --color-secondary/tertiary/error, --color-background)
+ * that predates the --ib-* tokens below. Confirmed dead before deletion, two
+ * ways: no component uses the Tailwind utility classes it would generate
+ * (bg-primary, text-on-surface, ...), and no raw var(--color-*) reference
+ * exists anywhere in src/ either. Superseding it is what this file now does.
+ *
+ * --font-sans/--font-mono kept and moved here unchanged in kind (values
+ * updated) -- these are NOT dead the way the colors were: Tailwind v4
+ * recognizes --font-sans/--font-mono as real theme namespaces and generates
+ * the font-sans/font-mono utility classes from them, and font-mono
+ * specifically is live in ~15 files. --font-sans's old value led with
+ * "Inter", which index.html never actually loads (it loads Geist and
+ * JetBrains Mono instead, and NEITHER of those is referenced by name
+ * anywhere in this stylesheet either -- two Google Fonts requests on every
+ * page load currently render nothing; flagged, not fixed in this unit).
+ * Inter being unavailable meant this always fell through to the system
+ * stack in practice regardless -- dropped the dead name rather than keep
+ * citing a font that was never being used. */
 @theme {
-  --color-primary: #0066FF;
-  --color-on-primary: #ffffff;
-  --color-primary-container: #0044cc;
-  --color-on-primary-container: #ffffff;
-  --color-surface-dim: #070a11;
-  --color-surface-bright: #20293a;
-  --color-surface-container-lowest: #080b12;
-  --color-surface-container-low: #0c111b;
-  --color-surface-container: #111827;
-  --color-surface-container-high: #182132;
-  --color-surface-container-highest: #222c3f;
-  --color-on-surface: #f3f6ff;
-  --color-on-surface-variant: #9aa4b8;
-  --color-inverse-surface: #ffffff;
-  --color-inverse-on-surface: #0e0e0e;
-  --color-outline: rgba(255, 255, 255, 0.15);
-  --color-outline-variant: rgba(255, 255, 255, 0.08);
-  --color-surface-tint: #718cff;
-  
-  --color-secondary: #35cdb0;
-  --color-on-secondary: #041914;
-  --color-secondary-container: rgba(53, 205, 176, 0.12);
-  --color-on-secondary-container: #54d6c8;
-  
-  --color-tertiary: #c0c1ff;
-  --color-on-tertiary: #1000a9;
-  --color-tertiary-container: #8083ff;
-  --color-on-tertiary-container: #0d0096;
-  
-  --color-error: #ffb4ab;
-  --color-on-error: #690005;
-  --color-error-container: #93000a;
-  --color-on-error-container: #ffdad6;
-  
-  --color-background: #080b12;
-  --color-on-background: #f3f6ff;
-  --color-surface-variant: #182132;
-
-  --font-sans: Inter, ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  /* Literal value, not var(--ib-font-body) -- @theme is a distinct Tailwind
+   * v4 construct from the plain :root block below holding that token, and
+   * cross-referencing between them isn't something worth relying on
+   * unverified. Same string either way; keep them in sync by hand if the
+   * body font stack ever changes. */
+  --font-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
   --font-mono: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
 }
 
@@ -137,13 +123,24 @@
   border-radius: 24px !important;
 }
 
-/* Base body styles */
+/* Base body styles -- light by default (2026-09-18 redesign). The old
+ * #080b12/#f3f6ff pair was already dead in practice: the unconditional
+ * "Bento Grid" !important override a few dozen lines down was the value
+ * actually rendering (#0c111b), every time, regardless of theme -- traced
+ * through the real cascade, not assumed from this rule alone. Preserved
+ * exactly as :root[data-theme="dark"] below, so an existing user who has
+ * explicitly saved "dark" sees zero change. */
 body {
-  background-color: #080b12;
-  color: #f3f6ff;
+  background-color: var(--ib-gray-50);
+  color: var(--ib-gray-900);
   font-family: var(--font-sans);
   -webkit-font-smoothing: antialiased;
   text-rendering: optimizeLegibility;
+}
+
+:root[data-theme="dark"] body {
+  background-color: #0c111b;
+  color: #f3f6ff;
 }
 
 button, input, textarea, select { font: inherit; }
@@ -154,8 +151,20 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
 
 ::selection { background: rgba(113, 140, 255, 0.32); color: #fff; }
 
+/* Real screens (Dashboard/Security/Support/Debrief), light by default
+ * (2026-09-18). Had NO light-mode override of any kind before this --
+ * confirmed by grep -- so today's manual dark<->light toggle already
+ * silently fails to lighten these four screens; this fixes that as a side
+ * effect of flipping the default, not a separately-scoped bug fix. The
+ * radial-gradient glows were tuned for a dark ground and would read as
+ * muddy smudges on white, so light gets a flat token instead of a
+ * lightened version of the same gradients. */
 .dashboard-surface {
   position: relative;
+  background: var(--ib-gray-50);
+}
+
+:root[data-theme="dark"] .dashboard-surface {
   background:
     radial-gradient(circle at 78% -10%, rgba(92, 111, 221, 0.12), transparent 32rem),
     radial-gradient(circle at 15% 35%, rgba(99, 65, 170, 0.055), transparent 30rem),
@@ -186,7 +195,11 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
 /* Bento Grid System-Wide Color Mapping Strategy */
 
 /* 1. Global background overrides */
-body,
+/* body removed 2026-09-18 -- it now has its own rule (above, with an
+ * explicit :root[data-theme="dark"] override) rather than being caught by
+ * this unconditional sweep. .bg-[#131313]/.bg-background are per-screen
+ * Tailwind classes, out of scope for this unit -- they migrate onto tokens
+ * when their own screens do, per UI_REDESIGN_PLAN.md's phase ordering. */
 .bg-\[\#131313\],
 .bg-background {
   background-color: #0c111b !important;
@@ -318,9 +331,11 @@ body,
  * The live call screen (ActiveMeetingView's #202124/#3c4043/#8ab4f8 palette)
  * intentionally stays dark in both themes, matching Zoom/Meet/Teams convention.
  */
-:root[data-theme="light"] body { background-color: #f4f5f7; color: #14151a; }
+/* :root[data-theme="light"] body removed 2026-09-18 -- redundant now that
+ * body's own unscoped rule (above) IS the light values; light stopped being
+ * a toggled-in special case and became the default. */
 
-:root[data-theme="light"] .bg-\[\#0e0e0e\] { background-color: #f4f5f7 !important; }
+:root[data-theme="light"] .bg-\[\#0e0e0e\] { background-color: var(--ib-gray-50) !important; }
 :root[data-theme="light"] .bg-\[\#131313\] { background-color: #ffffff !important; }
 :root[data-theme="light"] .bg-\[\#1c1b1b\] { background-color: #ffffff !important; }
 :root[data-theme="light"] .bg-\[\#201f1f\] { background-color: #eef0f3 !important; }
@@ -378,7 +393,7 @@ body,
 :root[data-theme="light"] .border-\[\#424655\]\/50 { border-color: rgba(15, 23, 42, 0.14) !important; }
 :root[data-theme="light"] .border-\[\#424655\]\/60 { border-color: rgba(15, 23, 42, 0.16) !important; }
 
-:root[data-theme="light"] .text-\[\#e5e2e1\] { color: #14151a !important; }
+:root[data-theme="light"] .text-\[\#e5e2e1\] { color: var(--ib-gray-900) !important; }
 :root[data-theme="light"] .text-\[\#c2c6d8\] { color: #3f4657 !important; }
 :root[data-theme="light"] .text-\[\#8c90a1\] { color: #64687a !important; }
 :root[data-theme="light"] .text-\[\#424655\] { color: #9aa1b0 !important; }

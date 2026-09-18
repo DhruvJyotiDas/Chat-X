@@ -2055,7 +2055,7 @@ export default function ChatsView({ onJoinMeeting, searchFilter }: ChatsViewProp
                   <button onClick={() => finishRecording(false)} title="Cancel recording" aria-label="Cancel recording" className="text-[#8c90a1] hover:text-[#ffb4ab] transition-colors flex-shrink-0">
                     <Trash2 className="w-4 h-4" />
                   </button>
-                  <span className="w-2 h-2 rounded-full bg-[#ffb4ab] animate-pulse flex-shrink-0" />
+                  <span className="w-2 h-2 rounded-full bg-[var(--ib-bad-dot)] animate-pulse flex-shrink-0" />
                   <span className="text-xs text-[#e5e2e1] flex-shrink-0 tabular-nums">
                     {String(Math.floor(recordSeconds / 60)).padStart(2, '0')}:{String(recordSeconds % 60).padStart(2, '0')}
                   </span>

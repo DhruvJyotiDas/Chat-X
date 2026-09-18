@@ -16,8 +16,11 @@ function apply(pref: ThemePreference) {
 }
 
 export function useTheme() {
+  // Default flipped dark -> light 2026-09-18: the redesign in
+  // DESIGN_SYSTEM.md is a full departure from dark, not an opt-in toggle.
+  // An existing user's saved localStorage preference is untouched either way.
   const [theme, setThemeState] = useState<ThemePreference>(() => {
-    try { return (localStorage.getItem(KEY) as ThemePreference) ?? 'dark'; } catch { return 'dark'; }
+    try { return (localStorage.getItem(KEY) as ThemePreference) ?? 'light'; } catch { return 'light'; }
   });
 
   useEffect(() => { apply(theme); }, [theme]);

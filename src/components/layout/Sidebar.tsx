@@ -86,7 +86,7 @@ export default function Sidebar({ currentView, onViewChange, unreadCount = 0, is
         <Icon className="w-[18px] h-[18px] transition-transform duration-200 group-hover:scale-110" strokeWidth={isActive ? 2.25 : 2} />
 
         {showBadge && (
-          <span className="absolute top-1.5 right-1.5 w-2 h-2 rounded-full bg-[#ffb4ab] ring-2 ring-[#1c1b1b]" />
+          <span className="absolute top-1.5 right-1.5 w-2 h-2 rounded-full bg-[var(--ib-bad-dot)] ring-2 ring-[#1c1b1b]" />
         )}
         {id === 'debrief' && isInMeeting && (
           <span className="absolute -top-1 -right-1 text-[7px] font-black bg-[#4dffb1] text-[#002661] px-1 py-px rounded-full leading-tight tracking-wide">LIVE</span>

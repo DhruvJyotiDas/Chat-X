@@ -147,7 +147,7 @@ export default function TopBar({ currentView, onViewChange, searchFilter, onSear
           className="w-8 h-8 flex items-center justify-center rounded-lg text-[#8c90a1] hover:bg-[#201f1f] hover:text-[#b0c6ff] transition-colors relative"
         >
           <Bell className="w-4 h-4" />
-          {showNotifDot && <span className="absolute top-1.5 right-1.5 w-1.5 h-1.5 rounded-full bg-[#ffb4ab]" />}
+          {showNotifDot && <span className="absolute top-1.5 right-1.5 w-1.5 h-1.5 rounded-full bg-[var(--ib-bad-dot)]" />}
         </button>
 
         {notifOpen && (

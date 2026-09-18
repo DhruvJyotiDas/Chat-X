@@ -13,6 +13,7 @@ import { watchDevices, resolveSelection, loadDevicePrefs, EMPTY_SNAPSHOT, type D
 import { isSpeakerSelectionSupported, setPreferredSpeaker } from '../../lib/audioOutput';
 import ConnectionTestPanel from '../meeting/ConnectionTestPanel';
 import { config } from '../../config';
+import Badge from '../ui/Badge';
 
 type Tab = 'profile' | 'preferences' | 'devices' | 'security' | 'account';
 
@@ -448,9 +449,8 @@ function AccountTab({ onClose }: { onClose: () => void }) {
         <div className="grid grid-cols-2 gap-2 text-center">
           <div className="bg-[#131313] rounded-xl py-2.5 px-3">
             <p className="text-[10px] text-[#8c90a1] uppercase font-bold tracking-wider">Status</p>
-            <div className="flex items-center justify-center gap-1.5 mt-1">
-              <span className="w-2 h-2 rounded-full bg-[#4dffb1]" />
-              <span className="text-xs font-semibold text-[#4dffb1]">Online</span>
+            <div className="flex items-center justify-center mt-1">
+              <Badge status="good">Online</Badge>
             </div>
           </div>
           <div className="bg-[#131313] rounded-xl py-2.5 px-3">

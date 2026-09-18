@@ -31,8 +31,8 @@ export default function IncomingCallModal({ call, onAccept, onDecline }: Props) 
               onClick={onDecline}
               className="flex flex-col items-center gap-1.5"
             >
-              <div className="w-14 h-14 rounded-full bg-[#ffb4ab]/10 border border-[#ffb4ab]/30 flex items-center justify-center hover:bg-[#ffb4ab]/20 transition-colors active:scale-95">
-                <PhoneOff className="w-6 h-6 text-[#ffb4ab]" />
+              <div className="w-14 h-14 rounded-full bg-[var(--ib-bad-dot)]/10 border border-[var(--ib-bad-dot)]/30 flex items-center justify-center hover:bg-[var(--ib-bad-dot)]/20 transition-colors active:scale-95">
+                <PhoneOff className="w-6 h-6 text-[var(--ib-bad-dot)]" />
               </div>
               <span className="text-[10px] text-[#8c90a1] font-semibold">Decline</span>
             </button>
@@ -40,10 +40,10 @@ export default function IncomingCallModal({ call, onAccept, onDecline }: Props) 
               onClick={onAccept}
               className="flex flex-col items-center gap-1.5"
             >
-              <div className="w-14 h-14 rounded-full bg-[#4dffb1]/10 border border-[#4dffb1]/30 flex items-center justify-center hover:bg-[#4dffb1]/20 transition-colors active:scale-95 animate-bounce">
-                {call.callType === 'audio' ? <Phone className="w-6 h-6 text-[#4dffb1]" /> : <Video className="w-6 h-6 text-[#4dffb1]" />}
+              <div className="w-14 h-14 rounded-full bg-[var(--ib-good-dot)]/10 border border-[var(--ib-good-dot)]/30 flex items-center justify-center hover:bg-[var(--ib-good-dot)]/20 transition-colors active:scale-95 animate-bounce">
+                {call.callType === 'audio' ? <Phone className="w-6 h-6 text-[var(--ib-good-dot)]" /> : <Video className="w-6 h-6 text-[var(--ib-good-dot)]" />}
               </div>
-              <span className="text-[10px] text-[#4dffb1] font-semibold">Accept</span>
+              <span className="text-[10px] text-[var(--ib-good-dot)] font-semibold">Accept</span>
             </button>
           </div>
         </div>
