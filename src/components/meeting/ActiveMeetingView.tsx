@@ -196,7 +196,7 @@ function ReactionBar({ onPick, onClose }: { onPick: (emoji: string) => void; onC
     // Tighter on mobile — 36px is still at the tap-target minimum used elsewhere in
     // this file — and wrapping as a last resort rather than spilling off screen.
     <div
-      className="absolute bottom-20 left-1/2 -translate-x-1/2 flex flex-wrap justify-center items-center gap-1 p-1.5 md:p-2 rounded-2xl bg-[#202124] border border-[#5f6368] shadow-2xl z-30 max-w-[92vw]"
+      className="absolute bottom-20 left-1/2 -translate-x-1/2 flex flex-wrap justify-center items-center gap-1 p-1.5 md:p-2 rounded-2xl bg-white border border-[var(--ib-gray-100)] shadow-[var(--ib-shadow-lg)] z-30 max-w-[92vw]"
       role="group"
       aria-label="Send a reaction"
     >
@@ -204,7 +204,7 @@ function ReactionBar({ onPick, onClose }: { onPick: (emoji: string) => void; onC
         <button
           key={emoji}
           onClick={() => { onPick(emoji); onClose(); }}
-          className="w-9 h-9 md:w-10 md:h-10 flex items-center justify-center rounded-xl text-lg md:text-xl hover:bg-[#3c4043] active:scale-90 transition-all cursor-pointer"
+          className="w-9 h-9 md:w-10 md:h-10 flex items-center justify-center rounded-xl text-lg md:text-xl hover:bg-[var(--ib-gray-100)] active:scale-90 transition-all cursor-pointer"
           aria-label={`React with ${emoji}`}
         >
           {emoji}
@@ -801,14 +801,14 @@ function DeviceSelect({ label, Icon, devices, selected, onChange }: {
 }) {
   return (
     <div className="flex flex-col gap-1.5">
-      <div className="flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-wider text-[#9aa0a6]">
+      <div className="flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-wider text-[var(--ib-gray-600)]">
         <Icon className="w-3 h-3" />{label}
       </div>
       <div className="relative">
         <select
           value={selected}
           onChange={(e) => onChange(e.target.value)}
-          className="w-full bg-[#3c4043] border border-[#5f6368] rounded-lg px-3 py-2 text-xs text-[#e8eaed] outline-none appearance-none cursor-pointer"
+          className="w-full bg-[var(--ib-gray-50)] border border-[var(--ib-gray-200)] rounded-lg px-3 py-2 text-xs text-[var(--ib-gray-900)] outline-none appearance-none cursor-pointer focus:border-[var(--ib-blue-500)]"
         >
           {devices.length === 0 && <option value="">No devices found</option>}
           {devices.map(d => (
@@ -817,7 +817,7 @@ function DeviceSelect({ label, Icon, devices, selected, onChange }: {
             </option>
           ))}
         </select>
-        <ChevronDown className="w-3 h-3 text-[#9aa0a6] absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
+        <ChevronDown className="w-3 h-3 text-[var(--ib-gray-600)] absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
       </div>
     </div>
   );
@@ -837,27 +837,32 @@ function SettingsPanel({
 }) {
   const [tab, setTab] = useState<'bg' | 'devices' | 'keys'>('bg');
   return (
-    <div className="absolute bottom-20 right-4 w-[90vw] md:w-72 max-w-sm bg-[#202124] border border-[#5f6368] rounded-2xl shadow-2xl z-30 overflow-hidden">
-      <div className="flex items-center justify-between px-4 py-3 border-b border-[#3c4043]">
-        <div className="flex gap-1">
+    <div className="absolute bottom-20 right-4 w-[90vw] md:w-72 max-w-sm bg-white border border-[var(--ib-gray-100)] rounded-2xl shadow-[var(--ib-shadow-lg)] z-30 overflow-hidden">
+      {/* gap-1 -> gap-0.5, px-3 -> px-2: pre-existing tightness, not
+          introduced by this retheme (only colors changed elsewhere in this
+          panel) -- three tab labels plus the outer panel's overflow-hidden
+          was clipping "Shortcuts" to "Shortcu", caught while screenshotting
+          this sub-unit at 1280px. */}
+      <div className="flex items-center justify-between px-4 py-3 border-b border-[var(--ib-gray-100)]">
+        <div className="flex gap-0.5">
           {(['bg', 'devices', 'keys'] as const).map(t => (
-            <button key={t} onClick={() => setTab(t)} className={`px-3 py-1 rounded-lg text-xs font-semibold transition-colors ${tab === t ? 'bg-[#8ab4f8]/20 text-[#8ab4f8]' : 'text-[#9aa0a6] hover:text-[#e8eaed]'}`}>
+            <button key={t} onClick={() => setTab(t)} className={`px-2 py-1 rounded-lg text-xs font-semibold transition-colors ${tab === t ? 'bg-[var(--ib-blue-50)] text-[var(--ib-blue-500)]' : 'text-[var(--ib-gray-600)] hover:text-[var(--ib-gray-900)]'}`}>
               {t === 'bg' ? 'Backgrounds' : t === 'devices' ? 'Devices' : 'Shortcuts'}
             </button>
           ))}
         </div>
-        <button onClick={onClose} className="text-[#9aa0a6] hover:text-[#e8eaed] cursor-pointer"><X className="w-4 h-4" /></button>
+        <button onClick={onClose} className="text-[var(--ib-gray-600)] hover:text-[var(--ib-gray-900)] cursor-pointer"><X className="w-4 h-4" /></button>
       </div>
       <div className="p-4">
         {tab === 'bg' && (
           <div className="flex flex-col gap-3">
-            <p className="text-[10px] text-[#9aa0a6] uppercase font-bold tracking-wider">Virtual Background</p>
+            <p className="text-[10px] text-[var(--ib-gray-600)] uppercase font-bold tracking-wider">Virtual Background</p>
             <div className="grid grid-cols-5 gap-2">
               {BG_OPTIONS.map(opt => (
                 <button
                   key={opt.mode}
                   onClick={() => onBgChange(opt.mode)}
-                  className={`flex flex-col items-center gap-1 p-2 rounded-xl text-[10px] font-semibold cursor-pointer transition-all ${bgMode === opt.mode ? 'bg-[#8ab4f8]/20 text-[#8ab4f8] border border-[#8ab4f8]/50' : 'bg-[#3c4043] text-[#9aa0a6] hover:bg-[#4a4d51] border border-transparent'}`}
+                  className={`flex flex-col items-center gap-1 p-2 rounded-xl text-[10px] font-semibold cursor-pointer transition-all ${bgMode === opt.mode ? 'bg-[var(--ib-blue-50)] text-[var(--ib-blue-500)] border border-[var(--ib-blue-100)]' : 'bg-[var(--ib-gray-50)] text-[var(--ib-gray-600)] hover:bg-[var(--ib-gray-100)] border border-transparent'}`}
                 >
                   <span className="text-base md:text-xl">{opt.icon}</span>
                   <span className="hidden md:inline">{opt.label}</span>
@@ -877,8 +882,8 @@ function SettingsPanel({
               <DeviceSelect label="Speaker" Icon={Volume2} devices={outputDevices} selected={selectedSpeaker} onChange={onSpeakerChange} />
             ) : (
               <div className="flex flex-col gap-1">
-                <span className="text-[10px] text-[#9aa0a6] uppercase font-bold tracking-wider">Speaker</span>
-                <p className="text-[11px] text-[#9aa0a6] leading-snug">
+                <span className="text-[10px] text-[var(--ib-gray-600)] uppercase font-bold tracking-wider">Speaker</span>
+                <p className="text-[11px] text-[var(--ib-gray-600)] leading-snug">
                   This browser can't choose an output device. Pick your speaker in the operating system's sound settings.
                 </p>
               </div>
@@ -889,8 +894,8 @@ function SettingsPanel({
           <div className="flex flex-col gap-2">
             {SHORTCUT_HINTS.map((s) => (
               <div key={s.keys} className="flex items-center justify-between gap-3">
-                <span className="text-xs text-[#e8eaed]">{s.action}</span>
-                <kbd className="px-2 py-0.5 rounded-md bg-[#3c4043] border border-[#5f6368] text-[10px] font-mono text-[#9aa0a6] whitespace-nowrap">{s.keys}</kbd>
+                <span className="text-xs text-[var(--ib-gray-900)]">{s.action}</span>
+                <kbd className="px-2 py-0.5 rounded-md bg-[var(--ib-gray-100)] border border-[var(--ib-gray-200)] text-[10px] font-mono text-[var(--ib-gray-600)] whitespace-nowrap">{s.keys}</kbd>
               </div>
             ))}
           </div>
@@ -1956,8 +1961,11 @@ export default function ActiveMeetingView({ onLeaveMeeting, onMinimize }: Props)
               anyone's speech produces a caption, and disappears again on its own. */}
           <CaptionBar liveCaptions={liveCaptions} myLang={myCaptionLang} size={captionSize} />
 
-          {/* FLOATING CONTROLS */}
-          <div className="absolute bottom-3 md:bottom-6 left-1/2 -translate-x-1/2 flex items-center gap-1.5 md:gap-2 bg-[#202124]/90 backdrop-blur-xl border border-[#5f6368]/40 rounded-2xl p-1.5 md:p-2 shadow-2xl z-20 w-[max-content] max-w-[95vw] overflow-x-auto scrollbar-hide">
+          {/* FLOATING CONTROLS -- white pill, two-layer shadow (theme brief D).
+              bottom offset adds env(safe-area-inset-bottom) on mobile so the
+              bar clears a home indicator (viewport-fit=cover already set in
+              index.html) -- unaffected on desktop, no notch to clear there. */}
+          <div className="absolute bottom-[calc(0.75rem+env(safe-area-inset-bottom))] md:bottom-6 left-1/2 -translate-x-1/2 flex items-center gap-1.5 md:gap-2 bg-white/95 backdrop-blur-xl border border-[var(--ib-gray-100)] rounded-2xl p-1.5 md:p-2 shadow-[var(--ib-shadow-lg)] z-20 w-[max-content] max-w-[95vw] overflow-x-auto scrollbar-hide">
             <CtrlBtn onClick={toggleMic} danger={isMuted} title={isMuted ? 'Unmute' : 'Mute'}>
               {isMuted ? <MicOff className="w-4 h-4 md:w-5 md:h-5" /> : <Mic className="w-4 h-4 md:w-5 md:h-5" />}
             </CtrlBtn>
@@ -1966,14 +1974,14 @@ export default function ActiveMeetingView({ onLeaveMeeting, onMinimize }: Props)
             </CtrlBtn>
             {/* Desktop: every secondary action inline, as before. */}
             <div className="hidden md:flex items-center gap-2">
-              <div className="w-px h-8 bg-[#5f6368]/50 mx-1 shrink-0" />
+              <div className="w-px h-8 bg-[var(--ib-gray-200)] mx-1 shrink-0" />
               {/* Keyed wrapper, not a key on CtrlBtn: React 19's bundled types reject
                   `key` on a custom component inside .map() (see CLAUDE.md). */}
               {secondaryActions.map(({ key, label, Icon, onClick, active, badge }) => (
                 <div key={key} className="contents">
                   <CtrlBtn onClick={onClick} highlight={active} title={label}>
                     <Icon className="w-5 h-5" />
-                    {badge && <span className="absolute top-1 right-1 w-2 h-2 rounded-full bg-[#f28b82] border-2 border-[#202124]" />}
+                    {badge && <span className="absolute top-1 right-1 w-2 h-2 rounded-full bg-[var(--ib-bad-dot)] border-2 border-white" />}
                   </CtrlBtn>
                 </div>
               ))}
@@ -1985,13 +1993,16 @@ export default function ActiveMeetingView({ onLeaveMeeting, onMinimize }: Props)
               <CtrlBtn onClick={() => setMoreOpen((v) => !v)} highlight={moreOpen} title="More options">
                 <MoreVertical className="w-4 h-4" />
                 {secondaryActions.some((x) => x.badge) && !moreOpen && (
-                  <span className="absolute top-1 right-1 w-2 h-2 rounded-full bg-[#f28b82] border-2 border-[#202124]" />
+                  <span className="absolute top-1 right-1 w-2 h-2 rounded-full bg-[var(--ib-bad-dot)] border-2 border-white" />
                 )}
               </CtrlBtn>
             </div>
 
-            <div className="w-px h-6 md:h-8 bg-[#5f6368]/50 mx-0.5 md:mx-1 shrink-0" />
-            <button onClick={handleLeave} className="px-3 md:px-5 h-9 md:h-11 flex items-center gap-1.5 rounded-xl bg-[#f28b82] text-[#202124] hover:bg-[#f06e62] active:scale-95 font-bold text-[10px] md:text-xs cursor-pointer transition-all shadow-sm shrink-0">
+            <div className="w-px h-6 md:h-8 bg-[var(--ib-gray-200)] mx-0.5 md:mx-1 shrink-0" />
+            {/* Leave: the one place a solid, saturated bad-dot fill is correct --
+                everywhere else danger states use the soft fill+dot pairing, but
+                this is a terminal action that should read as unambiguously final. */}
+            <button onClick={handleLeave} className="px-3 md:px-5 h-9 md:h-11 flex items-center gap-1.5 rounded-xl bg-[var(--ib-bad-dot)] text-white hover:bg-[var(--ib-bad-text)] active:scale-95 font-bold text-[10px] md:text-xs cursor-pointer transition-all shadow-sm shrink-0">
               <PhoneOff className="w-3.5 h-3.5 md:w-4 md:h-4" /><span className="hidden sm:inline">Leave</span>
             </button>
           </div>
@@ -2005,18 +2016,18 @@ export default function ActiveMeetingView({ onLeaveMeeting, onMinimize }: Props)
                 aria-label="Close options"
                 onClick={() => setMoreOpen(false)}
               />
-              <div className="md:hidden absolute bottom-20 left-1/2 -translate-x-1/2 w-[min(88vw,20rem)] bg-[#202124] border border-[#5f6368] rounded-2xl shadow-2xl z-30 overflow-hidden">
+              <div className="md:hidden absolute bottom-20 left-1/2 -translate-x-1/2 w-[min(88vw,20rem)] bg-white border border-[var(--ib-gray-100)] rounded-2xl shadow-[var(--ib-shadow-lg)] z-30 overflow-hidden">
                 {secondaryActions.map(({ key, label, Icon, onClick, active, badge }) => (
                   <button
                     key={key}
                     onClick={() => { onClick(); setMoreOpen(false); }}
-                    className={`w-full flex items-center gap-3 px-4 py-3 text-left border-b border-[#3c4043] last:border-b-0 active:bg-[#3c4043] cursor-pointer transition-colors ${
-                      active ? 'text-[#8ab4f8]' : 'text-[#e8eaed]'
+                    className={`w-full flex items-center gap-3 px-4 py-3 text-left border-b border-[var(--ib-gray-100)] last:border-b-0 active:bg-[var(--ib-gray-50)] cursor-pointer transition-colors ${
+                      active ? 'text-[var(--ib-blue-500)]' : 'text-[var(--ib-gray-800)]'
                     }`}
                   >
                     <Icon className="w-4 h-4 shrink-0" />
                     <span className="text-xs font-medium flex-1">{label}</span>
-                    {badge && <span className="w-2 h-2 rounded-full bg-[#f28b82] shrink-0" />}
+                    {badge && <span className="w-2 h-2 rounded-full bg-[var(--ib-bad-dot)] shrink-0" />}
                   </button>
                 ))}
               </div>
@@ -2073,11 +2084,19 @@ export default function ActiveMeetingView({ onLeaveMeeting, onMinimize }: Props)
 }
 
 function CtrlBtn({ onClick, children, danger, highlight, title }: { onClick: () => void; children: React.ReactNode; danger?: boolean; highlight?: boolean; title?: string; }) {
-  const cls = danger ? 'bg-[#f28b82]/15 text-[#f28b82] hover:bg-[#f28b82]/25' : highlight ? 'bg-[#8ab4f8]/20 text-[#8ab4f8]' : 'bg-[#3c4043] text-[#e8eaed] hover:bg-[#4a4d51]';
+  // Light redesign, 2026-09-18: the bar itself inverted from a dark pill with
+  // light icons to a white pill with dark icons (theme brief D) -- every
+  // state here follows. highlight mirrors Sidebar's own active-nav pairing
+  // (--ib-blue-50 fill, --ib-blue-500 icon) for the same "this is on" meaning
+  // in both places. danger (muted mic / camera off -- NOT the Leave button,
+  // that's separate below) uses the same fill/dot pairing Badge uses.
+  const cls = danger ? 'bg-[var(--ib-bad-fill)] text-[var(--ib-bad-dot)] hover:bg-[var(--ib-bad-fill)] hover:brightness-95' : highlight ? 'bg-[var(--ib-blue-50)] text-[var(--ib-blue-500)]' : 'bg-[var(--ib-gray-100)] text-[var(--ib-gray-800)] hover:bg-[var(--ib-gray-200)]';
   return (
     // Tooltips don't exist on touch, so `title` alone leaves every call control
     // unnamed for screen readers and on phones — mirror it into aria-label.
-    <button onClick={onClick} title={title} aria-label={title} className={`relative w-9 h-9 md:w-11 md:h-11 flex items-center justify-center rounded-xl transition-all active:scale-90 cursor-pointer shrink-0 ${cls}`}>
+    // 48px on mobile (was 36px, under the 44px tap-target floor), 44px desktop
+    // -- theme brief D's explicit sizing, touch needs more room than a pointer.
+    <button onClick={onClick} title={title} aria-label={title} className={`relative w-12 h-12 md:w-11 md:h-11 flex items-center justify-center rounded-xl transition-all active:scale-90 cursor-pointer shrink-0 ${cls}`}>
       {children}
     </button>
   );
