@@ -41,18 +41,20 @@ export default function TopBar({ currentView, onViewChange, searchFilter, onSear
   // for a meeting_reminder ws event — this fires regardless of whether that
   // succeeded (no permission granted, browser doesn't support it, etc.), so
   // there's always at least one visible signal while the app is open.
-  const [reminderBanner, setReminderBanner] = useState<{ title: string; time: string } | null>(null);
+  const [reminderBanner, setReminderBanner] = useState<{ title: string; time: string; location?: string; kind?: 'meeting' | 'calendar' } | null>(null);
   useEffect(() => {
     let dismissTimer: ReturnType<typeof setTimeout> | null = null;
     const handler = (e: Event) => {
-      const detail = (e as CustomEvent).detail as { title: string; time: string };
-      setReminderBanner(detail);
+      const detail = (e as CustomEvent).detail as { title: string; time: string; location?: string };
+      setReminderBanner({ ...detail, kind: e.type === 'ibconnect_calendar_reminder' ? 'calendar' : 'meeting' });
       if (dismissTimer) window.clearTimeout(dismissTimer);
       dismissTimer = setTimeout(() => setReminderBanner(null), 20000);
     };
     window.addEventListener('ibconnect_meeting_reminder', handler);
+    window.addEventListener('ibconnect_calendar_reminder', handler);
     return () => {
       window.removeEventListener('ibconnect_meeting_reminder', handler);
+      window.removeEventListener('ibconnect_calendar_reminder', handler);
       if (dismissTimer) window.clearTimeout(dismissTimer);
     };
   }, []);
@@ -61,7 +63,7 @@ export default function TopBar({ currentView, onViewChange, searchFilter, onSear
 
   const handleAction = () => {
     if (currentView === 'calls') { onViewChange('calls'); return; }
-    if (currentView === 'calendar') { /* CalendarView handles internally */ return; }
+    if (currentView === 'calendar') { window.dispatchEvent(new CustomEvent('ibconnect_calendar_create')); return; }
     onNewChatClicked?.();
   };
 
@@ -75,7 +77,7 @@ export default function TopBar({ currentView, onViewChange, searchFilter, onSear
         <div className="fixed top-3 left-1/2 -translate-x-1/2 z-[110] flex items-center gap-2.5 bg-[#1c1b1b] border border-[#568dff]/40 shadow-2xl rounded-xl px-4 py-2.5 max-w-[92vw]">
           <Bell className="w-4 h-4 text-[#b0c6ff] flex-shrink-0" />
           <span className="text-xs text-[#e5e2e1] truncate">
-            <strong className="font-bold">{reminderBanner.title}</strong> starts at {reminderBanner.time} — in 5 minutes
+            <strong className="font-bold">{reminderBanner.title}</strong> starts at {reminderBanner.time}{reminderBanner.location ? ` · ${reminderBanner.location}` : ''}
           </span>
           <button onClick={() => setReminderBanner(null)} className="text-[#8c90a1] hover:text-[#e5e2e1] flex-shrink-0"><X className="w-3.5 h-3.5" /></button>
         </div>

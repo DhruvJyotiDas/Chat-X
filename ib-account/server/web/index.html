@@ -37,6 +37,9 @@
   a.link,button.link{background:0;border:0;color:#7fb0ff;cursor:pointer;font-size:12px;
     text-decoration:none;padding:0}
   a.link:hover,button.link:hover{text-decoration:underline}
+  a.secondary{display:block;margin-top:12px;padding:11px;border:1px solid var(--blue);
+    border-radius:11px;color:#9fc0ff;text-align:center;text-decoration:none;font-size:13px}
+  a.secondary:hover{background:rgba(0,102,255,.12)}
   .msg{margin-top:14px;font-size:13px;min-height:18px}
   .msg.err{color:var(--err)} .msg.ok{color:var(--ok)}
   .foot{text-align:center;font-size:10px;color:rgba(140,144,161,.5);margin-top:20px}
@@ -61,6 +64,7 @@
 
 <script>
 const BASE = "__BASE_PATH__";
+const UPSTREAM_SSO = "__UPSTREAM_SSO__" === "1";
 const qs = new URLSearchParams(location.search);
 const OAUTH = qs.has("client_id") && qs.has("redirect_uri") && qs.get("response_type") === "code";
 const ACCOUNT_PATH = location.pathname.replace(/\/+$/,"").endsWith("/account");
@@ -119,6 +123,7 @@ function render(){
       <button class="primary" type="submit">Sign in</button>
       ${msgEl()}
     </form>
+    ${UPSTREAM_SSO ? `<a class="secondary" href="${BASE}/upstream/login?return=${encodeURIComponent(location.href)}">Continue with Icebrkr Intranet</a>` : ''}
     <div class="links">
       <button class="link" onclick="go('forgot')">Forgot password?</button>
       <button class="link" onclick="go('register')">Create account</button>

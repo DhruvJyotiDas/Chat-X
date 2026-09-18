@@ -30,6 +30,13 @@ type Config struct {
 	SeedClientSecret string
 	SeedRedirectURIs []string
 
+	// Optional upstream OIDC provider used by the additional intranet login.
+	UpstreamIssuer       string
+	UpstreamClientID     string
+	UpstreamClientSecret string
+	UpstreamRedirectURI  string
+	UpstreamDomains      []string
+
 	SessionTTL time.Duration
 	OTPTTL     time.Duration
 	CodeTTL    time.Duration
@@ -85,6 +92,12 @@ func loadConfig() *Config {
 		SeedClientID:     os.Getenv("IB_ACCOUNT_CLIENT_ID"),
 		SeedClientSecret: os.Getenv("IB_ACCOUNT_CLIENT_SECRET"),
 		SeedRedirectURIs: splitList(env("IB_ACCOUNT_REDIRECT_URIS", env("IB_ACCOUNT_REDIRECT_URI", "https://meet.icebrkr.space/"))),
+
+		UpstreamIssuer:       strings.TrimRight(os.Getenv("UPSTREAM_OIDC_ISSUER"), "/"),
+		UpstreamClientID:     os.Getenv("UPSTREAM_OIDC_CLIENT_ID"),
+		UpstreamClientSecret: os.Getenv("UPSTREAM_OIDC_CLIENT_SECRET"),
+		UpstreamRedirectURI:  env("UPSTREAM_OIDC_REDIRECT_URI", issuer+"/upstream/callback"),
+		UpstreamDomains:      splitList(env("UPSTREAM_OIDC_ALLOWED_DOMAINS", "icebrkr.one,icebrkr.space")),
 
 		SessionTTL: 30 * 24 * time.Hour,
 		OTPTTL:     10 * time.Minute,

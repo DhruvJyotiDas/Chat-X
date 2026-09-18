@@ -28,6 +28,19 @@ export default function DebriefView({ onJoinMeeting, autoJoinCode, onAutoJoinCon
   const historyKey = `ibconnect_meeting_history_${currentUser?.id ?? 'guest'}`;
   const history: MeetingRecord[] = (() => { try { return JSON.parse(localStorage.getItem(historyKey) || '[]'); } catch { return []; } })();
 
+  React.useEffect(() => {
+	const roomCode = sessionStorage.getItem('ibconnect_open_meeting_notes');
+	if (!roomCode) return;
+	sessionStorage.removeItem('ibconnect_open_meeting_notes');
+	const record = history.find(item => item.roomCode === roomCode) ?? {
+	  id: `aipa-${roomCode}`, roomCode, title: `Meeting ${roomCode}`, isHost: false,
+	  startedAt: new Date().toISOString(), participantCount: 0,
+	};
+	setNotesMeeting(record);
+	// history is a localStorage snapshot; the room-code handoff is consumed once.
+	// eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [currentUser?.id]);
+
   const handleCreate = async () => { setIsCreating(true); clearMeetingError(); try { await createMeeting(); onJoinMeeting(); } catch {} finally { setIsCreating(false); } };
   const handleJoin = async (code?: string) => { const target = (code ?? meetingCode).trim().toUpperCase(); if (!target) return; setIsJoining(true); clearMeetingError(); try { await joinMeeting(target); onJoinMeeting(); } catch {} finally { setIsJoining(false); } };
 

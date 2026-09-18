@@ -110,14 +110,18 @@ type User struct {
 }
 
 type Thread struct {
-	ID            string   `json:"id"`
-	Type          string   `json:"type"`
-	Name          string   `json:"name"`
-	Avatar        string   `json:"avatar,omitempty"`
-	Participants  []string `json:"participants"`
-	LastMessage   string   `json:"lastMessage"`
-	LastTimestamp int64    `json:"lastTimestamp"`
-	UnreadCount   int      `json:"unreadCount"`
+	ID             string   `json:"id"`
+	Type           string   `json:"type"`
+	Name           string   `json:"name"`
+	Avatar         string   `json:"avatar,omitempty"`
+	Description    string   `json:"description,omitempty"`
+	CreatedBy      string   `json:"createdBy,omitempty"`
+	AdminsEditInfo bool     `json:"adminsEditInfo"`
+	AdminsSend     bool     `json:"adminsSend"`
+	Participants   []string `json:"participants"`
+	LastMessage    string   `json:"lastMessage"`
+	LastTimestamp  int64    `json:"lastTimestamp"`
+	UnreadCount    int      `json:"unreadCount"`
 }
 
 type FileAttachment struct {
@@ -383,7 +387,8 @@ func loadThread(threadID, forUID string) (Thread, error) {
 	var ts sql.NullFloat64
 	var lastMsg sql.NullString
 	err := db.QueryRow(`
-		SELECT t.id, t.type, t.name, COALESCE(t.avatar,''),
+		SELECT t.id, t.type, t.name, COALESCE(t.avatar,''), COALESCE(t.description,''), COALESCE(t.created_by,''),
+			t.only_admins_edit_info, t.only_admins_send,
 			(SELECT text FROM messages WHERE thread_id=t.id ORDER BY created_at DESC LIMIT 1),
 			UNIX_TIMESTAMP((SELECT created_at FROM messages WHERE thread_id=t.id ORDER BY created_at DESC LIMIT 1))*1000,
 			(SELECT COUNT(*) FROM messages m
@@ -391,7 +396,8 @@ func loadThread(threadID, forUID string) (Thread, error) {
 			 WHERE m.thread_id=t.id AND m.sender_id <> tm.user_id
 			   AND (tm.last_read_at IS NULL OR m.created_at > tm.last_read_at))
 		FROM threads t WHERE t.id=?
-	`, forUID, threadID).Scan(&t.ID, &t.Type, &t.Name, &t.Avatar, &lastMsg, &ts, &t.UnreadCount)
+	`, forUID, threadID).Scan(&t.ID, &t.Type, &t.Name, &t.Avatar, &t.Description, &t.CreatedBy,
+		&t.AdminsEditInfo, &t.AdminsSend, &lastMsg, &ts, &t.UnreadCount)
 	if err != nil {
 		return t, err
 	}
@@ -788,6 +794,7 @@ func handleScheduleMeeting(w http.ResponseWriter, r *http.Request) {
 		Date         string   `json:"date"`
 		Time         string   `json:"time"`
 		InvitedUsers []string `json:"invitedUsers"`
+		TimeZone     string   `json:"timeZone"`
 	}
 	json.NewDecoder(r.Body).Decode(&b) //nolint
 
@@ -798,6 +805,7 @@ func handleScheduleMeeting(w http.ResponseWriter, r *http.Request) {
 
 	code := "SCHED-" + strings.ToUpper(newID()[:4])
 	id := "sm-" + newID()
+	b.InvitedUsers = uniqueUserIDs(b.InvitedUsers, uid)
 
 	invJSON, _ := json.Marshal(b.InvitedUsers)
 	_, err = db.Exec(
@@ -806,6 +814,27 @@ func handleScheduleMeeting(w http.ResponseWriter, r *http.Request) {
 	)
 	if err != nil {
 		fail(w, "failed to schedule meeting", 500)
+		return
+	}
+	calendarID, calendarErr := ensureDefaultCalendar(uid, b.TimeZone)
+	if calendarErr != nil {
+		_, _ = db.Exec(`DELETE FROM scheduled_meetings WHERE id=?`, id)
+		fail(w, "failed to open calendar", 500)
+		return
+	}
+	start, parseErr := parseLocalDateTime(b.Date, b.Time, b.TimeZone)
+	if parseErr != nil {
+		_, _ = db.Exec(`DELETE FROM scheduled_meetings WHERE id=?`, id)
+		fail(w, "invalid meeting date or time", 400)
+		return
+	}
+	_, calendarErr = createCalendarEvent(uid, CalendarEventInput{CalendarID: calendarID, Title: b.Title,
+		Description: "IB Connect meeting", Location: "https://meet.icebrkr.space/" + code,
+		Date: b.Date, StartTime: b.Time, EndTime: start.Add(time.Hour).In(start.Location()).Format("15:04"),
+		TimeZone: validTimeZone(b.TimeZone), AttendeeIDs: b.InvitedUsers, ReminderMinutes: 10, MeetingCode: code})
+	if calendarErr != nil {
+		_, _ = db.Exec(`DELETE FROM scheduled_meetings WHERE id=?`, id)
+		fail(w, "failed to add meeting to calendar", 500)
 		return
 	}
 
@@ -821,10 +850,15 @@ func handleDeleteScheduledMeeting(w http.ResponseWriter, r *http.Request) {
 	}
 
 	id := strings.TrimPrefix(r.URL.Path, "/api/meetings/scheduled/")
+	var code string
+	_ = db.QueryRow(`SELECT code FROM scheduled_meetings WHERE id=? AND creator_id=?`, id, uid).Scan(&code)
 	_, err = db.Exec(`DELETE FROM scheduled_meetings WHERE id=? AND creator_id=?`, id, uid)
 	if err != nil {
 		fail(w, "failed to delete meeting", 500)
 		return
+	}
+	if code != "" {
+		_, _ = db.Exec(`DELETE FROM calendar_events WHERE meeting_code=? AND organizer_id=?`, code, uid)
 	}
 	ok(w, map[string]string{"message": "deleted"})
 }
@@ -969,6 +1003,58 @@ func handleMessages(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// PUT /api/threads/{id} updates group identity and permissions. The group
+	// creator is its administrator, giving each group a deterministic owner
+	// without requiring a separate role table.
+	if !strings.Contains(path, "/") && r.Method == http.MethodPut {
+		var kind, createdBy string
+		var adminsEditInfo bool
+		if err := db.QueryRow(`SELECT type,COALESCE(created_by,''),only_admins_edit_info FROM threads WHERE id=?`, threadID).Scan(&kind, &createdBy, &adminsEditInfo); err != nil {
+			fail(w, "thread not found", http.StatusNotFound)
+			return
+		}
+		if kind != "group" || (createdBy != uid && adminsEditInfo) {
+			fail(w, "you do not have permission to change group info", http.StatusForbidden)
+			return
+		}
+		var b struct {
+			Name           string `json:"name"`
+			Description    string `json:"description"`
+			Avatar         string `json:"avatar"`
+			AdminsEditInfo bool   `json:"adminsEditInfo"`
+			AdminsSend     bool   `json:"adminsSend"`
+		}
+		if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&b); err != nil {
+			fail(w, "invalid or oversized group info", http.StatusBadRequest)
+			return
+		}
+		b.Name = strings.TrimSpace(b.Name)
+		b.Description = strings.TrimSpace(b.Description)
+		if b.Name == "" || len(b.Name) > 100 || len(b.Description) > 500 || len(b.Avatar) > 800000 {
+			fail(w, "group name, description, or icon is too large", http.StatusBadRequest)
+			return
+		}
+		if createdBy != uid {
+			// Members may edit identity only when the admin enabled it; permission
+			// fields themselves remain administrator-only.
+			b.AdminsEditInfo = adminsEditInfo
+			_ = db.QueryRow(`SELECT only_admins_send FROM threads WHERE id=?`, threadID).Scan(&b.AdminsSend)
+		}
+		if _, err := db.Exec(`UPDATE threads SET name=?,description=?,avatar=?,only_admins_edit_info=?,only_admins_send=? WHERE id=?`,
+			b.Name, b.Description, b.Avatar, b.AdminsEditInfo, b.AdminsSend, threadID); err != nil {
+			fail(w, "db error", http.StatusInternalServerError)
+			return
+		}
+		for _, memberID := range threadMembers(threadID) {
+			if updated, loadErr := loadThread(threadID, memberID); loadErr == nil {
+				pushTo([]string{memberID}, "thread_updated", updated)
+			}
+		}
+		updated, _ := loadThread(threadID, uid)
+		ok(w, updated)
+		return
+	}
+
 	// POST /api/threads/{id}/read — the only way to clear unread for messages that arrived while
 	// the thread was already open. Those come in over the chat WS, which never touches the DB, so
 	// without this the client zeroes the badge locally and the server still counts them: the badge
@@ -1016,6 +1102,14 @@ func handleMessages(w http.ResponseWriter, r *http.Request) {
 		// what made a thread you had just opened (or posted in) keep a stuck unread badge.
 		db.Exec(`UPDATE thread_members SET last_read_at=NOW(6) WHERE thread_id=? AND user_id=?`, threadID, uid) //nolint
 		ok(w, msgs)
+		return
+	}
+
+	var adminsSend bool
+	var createdBy string
+	_ = db.QueryRow(`SELECT only_admins_send,COALESCE(created_by,'') FROM threads WHERE id=?`, threadID).Scan(&adminsSend, &createdBy)
+	if adminsSend && createdBy != uid {
+		fail(w, "only group admins can send messages", http.StatusForbidden)
 		return
 	}
 
@@ -1078,13 +1172,11 @@ func handleMessages(w http.ResponseWriter, r *http.Request) {
 	members := threadMembers(threadID)
 	pushTo(members, "new_message", map[string]any{"threadId": threadID, "message": m})
 	db.Exec(`UPDATE thread_members SET last_read_at=NOW(6) WHERE thread_id=? AND user_id=?`, threadID, uid) //nolint
-	// AI Calendar Intelligence, live: a cheap keyword check on the just-sent
-	// message decides whether it's worth an (expensive, slow — this model
-	// measures 60-200s per call) meeting-detection pass. Fired async so
-	// sending a message is never blocked on it; the eventual result (if any)
-	// arrives as its own chat message a couple of minutes later, not inline.
+	// A cheap keyword check decides whether an async meeting-opportunity pass
+	// is worthwhile. Detection is non-blocking and only prepares a private,
+	// reviewable opportunity for the sender; it never changes a calendar.
 	if looksLikeMeetingMention(b.Text) {
-		go detectAndSyncMeeting(threadID)
+		go detectAndSyncMeeting(threadID, uid)
 	}
 	ok(w, m)
 }
@@ -1269,6 +1361,9 @@ func migrate() {
 		`ALTER TABLE users ADD COLUMN IF NOT EXISTS ib_sub VARCHAR(255) UNIQUE`,
 		`ALTER TABLE users ADD COLUMN IF NOT EXISTS auth_provider VARCHAR(20) DEFAULT 'local'`,
 		`ALTER TABLE users MODIFY password_hash TEXT NULL`,
+		`ALTER TABLE threads ADD COLUMN IF NOT EXISTS description TEXT`,
+		`ALTER TABLE threads ADD COLUMN IF NOT EXISTS only_admins_edit_info BOOLEAN NOT NULL DEFAULT TRUE`,
+		`ALTER TABLE threads ADD COLUMN IF NOT EXISTS only_admins_send BOOLEAN NOT NULL DEFAULT FALSE`,
 	} {
 		if _, err := db.Exec(s); err != nil {
 			log.Fatalf("migration: %v", err)
@@ -1627,18 +1722,24 @@ func scheduleReap(room *Room) {
 	cancelReapLocked(room)
 	room.reap = time.AfterFunc(emptyRoomGrace, func() {
 		roomsMu.Lock()
-		defer roomsMu.Unlock()
 		room.mu.RLock()
 		empty := len(room.clients) == 0
 		room.mu.RUnlock()
 		// Somebody rejoined during the grace window — keep the room.
 		if !empty {
+			roomsMu.Unlock()
 			return
 		}
+		closed := false
 		// Only delete if the map still points at this exact Room value.
 		if rooms[room.id] == room {
 			delete(rooms, room.id)
+			closed = true
 			log.Printf("Room %s closed (empty after grace)", room.id)
+		}
+		roomsMu.Unlock()
+		if closed {
+			go createPostMeetingOpportunities(room.id)
 		}
 	})
 }
@@ -2259,7 +2360,11 @@ func main() {
 	migrateAIMeetings()
 	migrateAIDocuments()
 	migrateMeetingTranscripts()
+	migrateCalendar()
+	migrateProactive()
 	startMeetingReminderTicker()
+	startCalendarReminderTicker()
+	startProactiveTicker()
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/ws", handleSignaling)
@@ -2290,10 +2395,14 @@ func main() {
 	mux.HandleFunc("/api/ai/tasks/", handleAITaskComplete)
 	mux.HandleFunc("/api/ai/reminders", handleAIReminders)
 	mux.HandleFunc("/api/ai/reminders/", handleAIReminders)
+	mux.HandleFunc("/api/ai/opportunities", handleProactiveOpportunities)
+	mux.HandleFunc("/api/ai/opportunities/", handleProactiveOpportunityAction)
+	mux.HandleFunc("/api/ai/proactive-preferences", handleProactivePreferences)
 	mux.HandleFunc("/api/ai/search", handleAISearch)
 	mux.HandleFunc("/api/ai/translate", handleAITranslate)
 	mux.HandleFunc("/api/ai/documents/extract", handleAIDocumentExtract)
 	mux.HandleFunc("/api/ai/documents/ask", handleAIDocumentAsk)
+	mux.HandleFunc("/api/calendar/", handleCalendarRoutes)
 	mux.HandleFunc("/api/meetings/", func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case strings.HasSuffix(r.URL.Path, "/transcript"):

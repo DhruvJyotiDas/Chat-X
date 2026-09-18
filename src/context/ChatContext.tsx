@@ -2,7 +2,7 @@ import React, { createContext, useContext, useState, useEffect, useCallback, use
 import { RealChatMessage, RealChatThread } from '../types';
 import { useAuth } from './AuthContext';
 import { api, connectChatWS, ChatWSEvent, sendCallInvite, sendCallDeclined, sendCallAccepted } from '../lib/api';
-import { syncMeetingCardsToCalendar, friendlyMessagePreview } from '../lib/aiMeetingCard';
+import { friendlyMessagePreview } from '../lib/aiMeetingCard';
 import { loadNotifications } from '../lib/preferences';
 
 interface TypingState {
@@ -43,6 +43,10 @@ function toRealThread(t: import('../lib/api').ApiThread): RealChatThread {
     type: t.type,
     name: t.name,
     avatar: t.avatar,
+    description: t.description,
+    createdBy: t.createdBy,
+    adminsEditInfo: t.adminsEditInfo,
+    adminsSend: t.adminsSend,
     participants: t.participants ?? [],
     lastMessage: t.lastMessage ?? '',
     lastTimestamp: t.lastTimestamp ?? Date.now(),
@@ -116,10 +120,6 @@ export function ChatProvider({ children }: { children: React.ReactNode }) {
           if (!existing.find(m => m.id === msg.id)) {
             msgCache.current.set(threadId, [...existing, msg]);
           }
-          // A meeting card arrives as a plain message — sync it into this
-          // viewer's own local calendar the instant it's seen, same as a
-          // history replay does in loadMessages above.
-          if (currentUser) syncMeetingCardsToCalendar([msg], currentUser.id);
           // Update thread last message
           setThreads(prev => {
             const found = prev.find(t => t.id === threadId);
@@ -148,6 +148,11 @@ export function ChatProvider({ children }: { children: React.ReactNode }) {
         case 'thread_created': {
           const newThread = toRealThread(event.payload);
           setThreads(prev => [newThread, ...prev.filter(t => t.id !== newThread.id)]);
+          break;
+        }
+        case 'thread_updated': {
+          const updated = toRealThread(event.payload);
+          setThreads(prev => prev.map(thread => thread.id === updated.id ? updated : thread));
           break;
         }
         case 'typing_start': {
@@ -196,6 +201,37 @@ export function ChatProvider({ children }: { children: React.ReactNode }) {
           window.dispatchEvent(new CustomEvent('ibconnect_meeting_reminder', { detail: event.payload }));
           break;
         }
+        case 'calendar_reminder': {
+          if (!currentUser || !loadNotifications(currentUser.id).meetingReminders) break;
+          const { title, time, location } = event.payload;
+          const body = `${title} at ${time}${location ? ` · ${location}` : ''}`;
+          if (typeof Notification !== 'undefined' && Notification.permission === 'granted') {
+            new Notification('Calendar reminder', { body });
+          }
+          window.dispatchEvent(new CustomEvent('ibconnect_calendar_reminder', { detail: event.payload }));
+          api.readCalendarNotification(event.payload.notificationId).catch(() => {});
+          break;
+        }
+        case 'calendar_invitation':
+        case 'calendar_updated':
+        case 'calendar_cancelled':
+        case 'calendar_shared':
+        case 'calendar_response': {
+          window.dispatchEvent(new CustomEvent('ibconnect_calendar_changed', { detail: event.payload }));
+          break;
+        }
+        case 'aipa_opportunity': {
+          window.dispatchEvent(new CustomEvent('ibconnect_aipa_opportunity', { detail: event.payload }));
+		  if (typeof Notification !== 'undefined' && Notification.permission === 'granted' && document.hidden) {
+			const payload = event.payload as { id?: string; title?: string };
+			const notification = new Notification(payload.title ? `AIPA · ${payload.title}` : 'AIPA found something for you', {
+			  body: 'Open AIPA Now to review it. Nothing changes without your confirmation.',
+			  tag: payload.id ? `aipa-${payload.id}` : 'aipa-opportunity',
+			});
+			notification.onclick = () => { window.focus(); notification.close(); };
+		  }
+          break;
+        }
       }
     }, (ws) => { wsRef.current = ws; }); // reuse the same WS for typing — avoids opening a second connection
 
@@ -203,6 +239,26 @@ export function ChatProvider({ children }: { children: React.ReactNode }) {
       disconnect();
       wsRef.current = null;
     };
+  }, [currentUser?.id]);
+
+  // Recover reminders that became due while the user was offline. The server
+  // persists these, so reconnecting does not silently lose a notification.
+  useEffect(() => {
+    if (!currentUser) return;
+    let cancelled = false;
+    const recover = async () => {
+      try {
+        const notifications = await api.getCalendarNotifications();
+        if (cancelled) return;
+        for (const notification of notifications) {
+          window.dispatchEvent(new CustomEvent('ibconnect_calendar_reminder', { detail: notification }));
+          await api.readCalendarNotification(notification.id).catch(() => {});
+        }
+      } catch {}
+    };
+    recover();
+    const timer = window.setInterval(recover, 60_000);
+    return () => { cancelled = true; window.clearInterval(timer); };
   }, [currentUser?.id]);
 
   // Listen for status events from WebSocket (forwarded by ChatContext)
@@ -230,15 +286,8 @@ export function ChatProvider({ children }: { children: React.ReactNode }) {
     const msgs = await api.getMessages(threadId);
     const realMsgs = msgs.map(toRealMessage);
     msgCache.current.set(threadId, realMsgs);
-    // A meeting card is a normal persisted message — replaying history (e.g.
-    // after being offline when it was first posted) must sync the calendar
-    // exactly the same way the live "new_message" event below does, or a
-    // participant who wasn't connected at the time never gets the event at
-    // all. syncMeetingCardsToCalendar is idempotent, so re-running it here on
-    // every load of an already-synced thread is harmless.
-    if (currentUser) syncMeetingCardsToCalendar(realMsgs, currentUser.id);
     return realMsgs;
-  }, [currentUser]);
+  }, []);
 
   const sendMessage = useCallback(async (
     threadId: string,

@@ -4,6 +4,10 @@ import { config } from '../config';
 
 const BASE = config.apiBase.replace(/\/$/, '');
 
+function localDateISO(date = new Date()): string {
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
+}
+
 function token(): string {
   return localStorage.getItem('ibconnect_jwt') ?? '';
 }
@@ -60,6 +64,9 @@ export const api = {
   createGroup: (name: string, memberIds: string[]) =>
     request<ApiThread>('POST', '/threads', { type: 'group', name, memberIds }),
 
+  updateGroup: (threadId: string, fields: { name: string; description: string; avatar: string; adminsEditInfo: boolean; adminsSend: boolean }) =>
+    request<ApiThread>('PUT', `/threads/${threadId}`, fields),
+
   // ── Messages ──────────────────────────────────────────────────────────────
   getMessages: (threadId: string) =>
     request<ApiMessage[]>('GET', `/threads/${threadId}/messages`),
@@ -75,13 +82,47 @@ export const api = {
     request<ApiScheduledMeeting[]>('GET', '/meetings/scheduled'),
 
   scheduleMeeting: (payload: { title: string; date: string; time: string; invitedUsers?: string[] }) =>
-    request<ApiScheduledMeeting>('POST', '/meetings/schedule', payload),
+    request<ApiScheduledMeeting>('POST', '/meetings/schedule', { ...payload, timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone }),
 
   deleteScheduledMeeting: (id: string) =>
     request<{ message: string }>('DELETE', `/meetings/scheduled/${id}`),
 
   validateRoomCode: (code: string) =>
     request<{ valid: boolean }>('GET', `/meetings/validate/${code}`),
+
+  // ── Calendar ─────────────────────────────────────────────────────────────
+  getCalendars: () => request<ApiCalendar[]>('GET', `/calendar/calendars?timeZone=${encodeURIComponent(Intl.DateTimeFormat().resolvedOptions().timeZone)}`),
+  createCalendar: (payload: Pick<ApiCalendar, 'name' | 'color' | 'timeZone'>) =>
+    request<ApiCalendar>('POST', '/calendar/calendars', payload),
+  shareCalendar: (calendarId: string, userId: string, role: 'viewer' | 'editor' | 'remove') =>
+    request<{ ok: boolean }>('POST', `/calendar/calendars/${encodeURIComponent(calendarId)}/members`, { userId, role }),
+  getCalendarEvents: (from: string, to: string, q = '', calendarId = '') => {
+    const params = new URLSearchParams({ from, to });
+    if (q) params.set('q', q);
+    if (calendarId) params.set('calendarId', calendarId);
+    return request<ApiCalendarEvent[]>('GET', `/calendar/events?${params}`);
+  },
+  createCalendarEvent: (payload: ApiCalendarEventInput) => request<ApiCalendarEvent>('POST', '/calendar/events', payload),
+  updateCalendarEvent: (id: string, payload: ApiCalendarEventInput) =>
+    request<ApiCalendarEvent>('PUT', `/calendar/events/${encodeURIComponent(id)}`, payload),
+  deleteCalendarEvent: (id: string) => request<{ ok: boolean }>('DELETE', `/calendar/events/${encodeURIComponent(id)}`),
+  respondCalendarEvent: (id: string, response: CalendarResponse) =>
+    request<{ response: CalendarResponse }>('POST', `/calendar/events/${encodeURIComponent(id)}/response`, { response }),
+  getWorkingHours: () => request<ApiWorkingHours>('GET', '/calendar/working-hours'),
+  updateWorkingHours: (payload: ApiWorkingHours) => request<ApiWorkingHours>('PUT', '/calendar/working-hours', payload),
+  getAvailability: (userIds: string[], from: string, to: string, duration: number) => {
+    const params = new URLSearchParams({ userIds: userIds.join(','), from, to, duration: String(duration), timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone });
+    return request<ApiAvailability>('GET', `/calendar/availability?${params}`);
+  },
+  getCalendarConflicts: (userIds: string[], from: string, to: string, excludeEventId = '') => {
+    const params = new URLSearchParams({ userIds: userIds.join(','), from, to });
+    if (excludeEventId) params.set('excludeEventId', excludeEventId);
+    return request<ApiConflicts>('GET', `/calendar/conflicts?${params}`);
+  },
+  getCalendarNotifications: () => request<ApiCalendarNotification[]>('GET', '/calendar/notifications'),
+  readCalendarNotification: (id: string) => request<{ ok: boolean }>('POST', `/calendar/notifications/${encodeURIComponent(id)}/read`),
+  confirmCalendarAction: (confirmationToken: string, approve: boolean) =>
+    request<{ ok: boolean; message: string; event?: ApiCalendarEvent }>('POST', '/calendar/actions/confirm', { token: confirmationToken, approve }),
 
   // ── LiveKit (media transport) ────────────────────────────────────────────
   // Called only AFTER the /ws create_room/join_room round trip has already
@@ -114,17 +155,24 @@ export const api = {
   // `action` comes back set (e.g. "schedule_meeting") when the message was
   // recognized as a real request and actually carried out server-side,
   // rather than just answered.
-  aiChat: (text: string, messages: AIAssistantMessage[] = [], personalEvents: AIPACalendarEvent[] = []) =>
-    request<{ result: string; action?: string }>('POST', '/ai/chat', {
+  aiChat: (
+    text: string,
+    messages: AIAssistantMessage[] = [],
+    personalEvents: AIPACalendarEvent[] = [],
+    recentCalls: AIPACallRecord[] = [],
+  ) =>
+    request<AIPAChatResponse>('POST', '/ai/chat', {
       text,
       messages,
       timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone,
-      localNow: new Date().toISOString().slice(0, 10),
+      localNow: localDateISO(),
       personalEvents,
+      recentCalls,
     }),
-  aiDailyBrief: () => request<AIDailyBrief>('POST', '/ai/daily-brief', {
+  aiDailyBrief: (force = false) => request<AIDailyBrief>('POST', '/ai/daily-brief', {
     timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone,
     localNow: new Date().toString(),
+    force,
   }),
   aiRewrite: (text: string, mode: string) =>
     request<{ result: string }>('POST', '/ai/rewrite', { text, mode }),
@@ -142,6 +190,21 @@ export const api = {
   getAIReminders: () => request<{ reminders: AIReminderItem[] }>('GET', '/ai/reminders'),
   completeAIReminder: (id: string) => request<{ ok: boolean }>('POST', `/ai/reminders/${id}/complete`),
   deleteAIReminder: (id: string) => request<{ ok: boolean }>('DELETE', `/ai/reminders/${id}`),
+  getAIPAOpportunities: (limit = 20) =>
+    request<{ opportunities: AIPAOpportunity[] }>('GET', `/ai/opportunities?limit=${limit}`),
+  dismissAIPAOpportunity: (id: string) =>
+    request<{ ok: boolean }>('POST', `/ai/opportunities/${encodeURIComponent(id)}/dismiss`),
+  snoozeAIPAOpportunity: (id: string, minutes = 60) =>
+    request<{ ok: boolean }>('POST', `/ai/opportunities/${encodeURIComponent(id)}/snooze`, { minutes }),
+  completeAIPAOpportunity: (id: string) =>
+    request<{ ok: boolean }>('POST', `/ai/opportunities/${encodeURIComponent(id)}/complete`),
+  acceptAIPAOpportunity: (id: string) =>
+    request<{ ok: boolean }>('POST', `/ai/opportunities/${encodeURIComponent(id)}/accept`),
+  feedbackAIPAOpportunity: (id: string, value: 'helpful' | 'not_relevant') =>
+    request<{ ok: boolean }>('POST', `/ai/opportunities/${encodeURIComponent(id)}/feedback`, { value }),
+  getAIPAProactivePreferences: () => request<AIPAProactivePreferences>('GET', '/ai/proactive-preferences'),
+  updateAIPAProactivePreferences: (preferences: AIPAProactivePreferences) =>
+    request<AIPAProactivePreferences>('PUT', '/ai/proactive-preferences', preferences),
   aiSearch: (query: string, threadId?: string) =>
     request<{ results: AISearchResult[] }>('POST', '/ai/search', { query, threadId }),
   aiTranslate: (text: string, targetLang: string) =>
@@ -161,7 +224,47 @@ export const api = {
 
 export interface AIActionItem { description: string; assignee: string; due: string }
 export interface AIAssistantMessage { role: 'user' | 'assistant'; text: string }
-export interface AIPACalendarEvent { title: string; date: string; startTime: string }
+export interface AIPACalendarEvent {
+  id: string; title: string; date: string; startTime: string; endTime?: string;
+  allDay?: boolean; description?: string; location?: string;
+}
+export interface AIPACallRecord {
+  type: 'incoming' | 'outgoing' | 'missed'; callType: 'video' | 'audio';
+  participantName: string; duration?: string; occurredAt: string;
+}
+export interface AIPAContextSource { kind: string; label: string; count: number }
+export interface AIPAContextSummary {
+  sources: AIPAContextSource[]; unavailable: string[]; webSearchConfigured: boolean;
+}
+export interface AIPAWebSource { title: string; url: string; snippet: string }
+export interface AIPAChatResponse {
+  result: string; action?: string; context?: AIPAContextSummary; sources?: AIPAWebSource[];
+  confirmationToken?: string;
+  proposedAction?: AIPACalendarAction;
+}
+export interface AIPACalendarAction {
+  action: 'create' | 'update' | 'delete'; eventId?: string; title: string; date: string;
+  startTime: string; endTime: string; timeZone: string; attendeeNames?: string[]; warning?: string;
+}
+export interface AIPAOpportunity {
+  id: string; kind: string; title: string; summary: string; sourceType: string; sourceId: string;
+  confidence: number; priority: number; actionLabel?: string; confirmationToken?: string;
+  proposedAction?: AIPACalendarAction; status: 'pending' | 'snoozed' | 'dismissed' | 'completed';
+  resultRef?: string; feedback?: 'helpful' | 'not_relevant'; createdAt: string; updatedAt: string;
+}
+export interface AIPAProactivePreferences {
+  enabled: boolean;
+  meetingSuggestions: boolean;
+  dailyPlanning: boolean;
+  taskSignals: boolean;
+  replySignals: boolean;
+  meetingPrep: boolean;
+  postMeeting: boolean;
+  quietStart: string;
+  quietEnd: string;
+  timeZone: string;
+  dailyLimit: number;
+}
 export interface AIBriefItem { title: string; why: string; sourceRef: string }
 export interface AIDailyBrief {
   headline: string;
@@ -171,6 +274,8 @@ export interface AIDailyBrief {
   watchouts: string[];
   generatedAt: string;
   sourceCount: number;
+  generatedBy?: 'ai' | 'grounded_fallback';
+  notice?: string;
 }
 export interface AIReminderSuggestion { text: string; when: string }
 export interface AIMeetingSuggestion { title: string; when: string }
@@ -215,6 +320,10 @@ export interface ApiThread {
   type: 'dm' | 'group';
   name: string;
   avatar?: string;
+  description?: string;
+  createdBy?: string;
+  adminsEditInfo?: boolean;
+  adminsSend?: boolean;
   participants: string[];
   lastMessage: string;
   lastTimestamp: number;
@@ -247,7 +356,75 @@ export interface ApiScheduledMeeting {
   date: string;
   time: string;
   creatorId: string;
+  inviteeIds?: string[];
 }
+
+export interface ApiCalendar {
+  id: string;
+  name: string;
+  color: string;
+  timeZone: string;
+  ownerId: string;
+  role: 'owner' | 'editor' | 'viewer';
+  isDefault: boolean;
+  memberCount: number;
+}
+
+export type CalendarResponse = 'needs_action' | 'accepted' | 'declined' | 'tentative';
+
+export interface ApiCalendarAttendee {
+  userId: string;
+  displayName: string;
+  email: string;
+  response: CalendarResponse;
+}
+
+export interface ApiCalendarEvent {
+  id: string;
+  seriesId?: string;
+  calendarId: string;
+  calendarName: string;
+  title: string;
+  description: string;
+  location: string;
+  date: string;
+  startTime: string;
+  endTime: string;
+  allDay: boolean;
+  timeZone: string;
+  recurrence?: '' | 'DAILY' | 'WEEKLY' | 'WEEKDAYS' | 'MONTHLY';
+  color: string;
+  creatorId: string;
+  organizerId: string;
+  meetingCode?: string;
+  reminderMinutes: number;
+  responseStatus: CalendarResponse;
+  canEdit: boolean;
+  version: number;
+  attendees: ApiCalendarAttendee[];
+}
+
+export interface ApiCalendarEventInput {
+  calendarId: string;
+  title: string;
+  description: string;
+  location: string;
+  date: string;
+  startTime: string;
+  endTime: string;
+  allDay: boolean;
+  timeZone: string;
+  recurrence: '' | 'DAILY' | 'WEEKLY' | 'WEEKDAYS' | 'MONTHLY';
+  attendeeIds: string[];
+  reminderMinutes: number;
+  meetingCode?: string;
+}
+
+export interface ApiWorkingHours { timeZone: string; days: number[]; startTime: string; endTime: string }
+export interface ApiBusyInterval { userId: string; start: string; end: string }
+export interface ApiAvailability { busy: ApiBusyInterval[]; suggestions: { start: string; end: string }[]; timeZone: string }
+export interface ApiConflicts { hasConflict: boolean; conflicts: ApiBusyInterval[]; suggestions: { start: string; end: string }[] }
+export interface ApiCalendarNotification { id: string; eventId: string; title: string; date: string; time: string; location: string }
 
 // ── Chat WebSocket ────────────────────────────────────────────────────────────
 
@@ -256,12 +433,16 @@ export type ChatWSEvent =
   | { type: 'user_status'; payload: { id: string; status: string } }
   | { type: 'new_message'; payload: { threadId: string; message: ApiMessage } }
   | { type: 'thread_created'; payload: ApiThread }
+  | { type: 'thread_updated'; payload: ApiThread }
   | { type: 'typing_start'; payload: { threadId: string; userId: string; userName: string } }
   | { type: 'typing_stop'; payload: { threadId: string; userId: string } }
   | { type: 'call_invite'; payload: { fromId: string; fromName: string; roomId: string; callType: 'audio' | 'video' } }
   | { type: 'call_declined'; payload: { fromId: string } }
   | { type: 'call_accepted'; payload: { fromId: string } }
-  | { type: 'meeting_reminder'; payload: { threadId: string; meetingId: string; title: string; date: string; time: string } };
+  | { type: 'meeting_reminder'; payload: { threadId: string; meetingId: string; title: string; date: string; time: string } }
+  | { type: 'calendar_reminder'; payload: { notificationId: string; eventId: string; title: string; date: string; time: string; location?: string } }
+  | { type: 'aipa_opportunity'; payload: { id: string; kind: string; title: string } }
+  | { type: 'calendar_invitation' | 'calendar_updated' | 'calendar_cancelled' | 'calendar_shared' | 'calendar_response'; payload: Record<string, unknown> };
 
 export function connectChatWS(
   onEvent: (e: ChatWSEvent) => void,

@@ -3,7 +3,7 @@
 IB Connect is a production communication and AI productivity application. It combines direct and group messaging, LiveKit audio/video meetings, live captions, meeting intelligence, scheduling, AI writing tools, personal AI memory/tasks/reminders, document Q&A, and AI-assisted virtual interviews behind one IB Account identity.
 
 **Production:** [https://meet.icebrkr.space](https://meet.icebrkr.space)<br>
-**Last code and deployment audit:** 10 September 2026<br>
+**Last code and deployment audit:** 15 September 2026<br>
 **Feature inventory:** 119 requested capabilities: **38 complete**, **28 partial/in progress**, **52 not implemented**, and **1 infrastructure claim unverified**.
 
 This README documents the system that exists today. Planned capabilities are labelled explicitly; they are not presented as working features.
@@ -76,7 +76,12 @@ These are complete user flows in the current application.
 #### AIPA
 
 - Global Ask AIPA panel.
-- Daily Focus grounded in the user's recent messages, tasks, reminders, meetings, profile, and browser calendar.
+- Permission-scoped Ask AIPA context across recent chats, personal calendar, scheduled and detected appointments, memory, tasks, reminders, meeting transcripts, document summaries, interview sessions, and recent browser call history.
+- Per-answer source badges, unavailable-source notices, safe Markdown rendering, and clickable numbered web-source cards.
+- Automatic, daily-cached Daily Focus grounded in the user's recent messages, tasks, reminders, meetings, profile, and synchronized calendar.
+- Durable **AIPA now** opportunity inbox for meeting prep/follow-up, invitations, task/reminder urgency, waiting replies, and reviewable chat-extracted actions.
+- Deduplication, explicit confirmation, snooze, dismiss, usefulness feedback, quiet hours, and a per-day realtime nudge budget.
+- Server-synchronized per-signal proactive controls for meetings, planning, tasks, replies, preparation, and post-meeting follow-up.
 - Smart replies, tone-based rewriting, and translation.
 - “Ask this conversation” Q&A and structured conversation analysis.
 - Extraction of decisions, key points, open questions, tasks, reminders, and meeting suggestions.
@@ -104,6 +109,7 @@ These are complete user flows in the current application.
 - Same-origin REST, auth, WebSocket, caption, and LiveKit routing.
 - Explicit CORS/WebSocket origins and baseline Nginx security headers.
 - Lazy-loaded views and upgraded responsive dashboard, chat, calls, meetings, calendar, interview, security, and support UI.
+- Google Calendar-inspired month, week, day, and schedule views with a 24-hour timeline, all-day events, drag-to-reschedule, selected-day details, locations, notes, categories, and responsive event editing.
 
 ### Partially implemented / in progress
 
@@ -114,14 +120,14 @@ These areas work today but do not yet satisfy the full product requirement.
 | Privacy controls | Profile, notification, presence, device, and personalization settings | Unified privacy center, per-AI-feature controls, retention/export/delete, and consent policy |
 | Data isolation | Thread and transcript authorization | Formal tenant/workspace isolation, hardened guest identity, connector ACLs, and retention controls |
 | AIPA everywhere | Global assistant plus chat, meeting, document, dashboard, and interview AI | One context and action layer spanning every product |
-| Proactive AI | Meeting detection, Daily Focus, tasks, reminders, and cards | Confidence ranking, preferences, cooldowns, relevance scoring, feedback, and interruption budgets |
+| Proactive AI | Background meeting/task/reminder/reply signals, meeting follow-up, cached Daily Focus, AIPA Now, confirmation, feedback, quiet hours, and interruption budgets | Semantic cross-product ranking, learned personalization from feedback, contextual suggestions inside every view, and durable distributed workers |
 | Personal knowledge | Thread Q&A, keyword search, memory, attachment Q&A | Cross-conversation semantic retrieval, vector index, reranking, and grounded citations |
 | Read state | Per-member unread state | Per-message delivery/read receipts and group read-by lists |
 | History | Up to 500 messages loaded | Cursor pagination and infinite history |
 | Secure storage | TLS, authentication, authorization, MariaDB | Managed encryption at rest, key policy, object storage, malware scanning, and retention |
-| Calendar | Browser-local calendar, schedule modal, shared cards | Server calendar, connectors, Free/Busy, attendee acceptance, and working hours |
-| Scheduling | Detect/propose a discussed date and time | Slot comparison, voting, normalized time zones, editable agenda, and external calendar updates |
-| AI tasks | Extraction, assignee matching, source IDs, free-text deadlines | Confirm-before-save, normalized deadlines, priority, deduplication, acceptance, and notifications |
+| Calendar | Server-synchronized personal/shared calendars; month/week/day/schedule views; recurring events; invitations and RSVP; indexed search; reminders; working hours; Free/Busy and conflict alternatives | Google, Microsoft, and Apple connectors; recurrence exceptions; push notifications while the app is closed; resource calendars |
+| Scheduling | Timezone-aware internal availability, conflict detection, alternative slots, meeting links, and AIPA create/reschedule proposals with explicit confirmation | Multi-party slot voting and external calendar updates |
+| AI tasks | Extraction, assignee matching, source IDs, deduplicated confirm-before-save proposals, acceptance, and urgency nudges | Normalized deadlines, editable priority, reassignment workflow, and richer notifications |
 | Documents | Extraction and per-attachment Q&A | OCR, object storage, scanning, chunking, library, cross-document RAG, and citations |
 | Caption translation | Final English lines can use Qwen translation | Dedicated low-latency translation, batching, and predictable multilingual quality |
 | Call scale | Multi-participant SFU on one node | Multi-node LiveKit, placement/draining, capacity tests, and regional resilience |
@@ -143,10 +149,10 @@ These areas work today but do not yet satisfy the full product requirement.
 - Embeddings, vector storage, hybrid search, reranking, and a unified ACL-aware RAG pipeline.
 - Search across messages, transcripts, meetings, documents, tasks, and connected data.
 - Citations that open the exact message, transcript time, or document span.
-- Controlled web search with source routing, citations, privacy rules, budgets, and prompt-injection defenses.
+- Configure the implemented Brave Search adapter in production, then add provider quotas, domain policy, privacy redaction, and search-quality monitoring.
 - Google Drive with a scoped picker, ACL-aware ingestion, search, and AIPA Q&A.
 - Google Calendar, Outlook Calendar, and Apple Calendar/CalDAV or ICS.
-- Free/Busy, working hours, timezone-safe conflict detection, and participant acceptance.
+- External-provider Free/Busy and attendee updates once Google/Microsoft connectors are added.
 
 #### Communication and workspace
 
@@ -312,7 +318,8 @@ IB Connect has three separate server-side inference paths. The application can r
 - Feature-specific token budgets and deadlines bound model usage.
 - Daily Focus validates every internal `source:kind:id` reference against supplied data.
 - The current base model can be slow and less reliable than an instruction-tuned model with schema-constrained output.
-- No embeddings, vector database, semantic index, unified RAG, web-search tool, web citations, general autonomous agent, or text-to-speech model exists.
+- No embeddings, vector database, semantic index, unified RAG, general autonomous agent, or text-to-speech model exists.
+- A bounded Brave Search adapter, intent gate, citation metadata, and safe source UI are implemented. Live web answers remain unavailable until `BRAVE_SEARCH_API_KEY` is configured on the server.
 - General image/OCR inference is not production-ready; the current `/query` service rejects `mm_token_type_ids`.
 - NLLB is no longer deployed. Caption translation uses the separate Qwen text service and can lag.
 
@@ -426,7 +433,7 @@ Scanned PDFs have no OCR. Files are not chunked or embedded. Attachments are cur
 |---|---|
 | Users | `users` |
 | Messaging | `threads`, `thread_members`, `messages` |
-| Scheduling | `scheduled_meetings` |
+| Scheduling | `scheduled_meetings`, `calendars`, `calendar_members`, `calendar_events`, `calendar_event_attendees`, `calendar_working_hours`, `calendar_reminders`, `calendar_action_proposals` |
 | AI workspace | `ai_memory`, `ai_tasks`, `ai_reminders`, `ai_meetings`, `ai_documents` |
 | Meeting intelligence | `meeting_transcripts`, `meeting_participants` |
 | Interviews | `interview_profiles`, `interview_sessions`, `interview_questions`, `interview_answers` |
@@ -444,6 +451,11 @@ erDiagram
     USERS ||--o{ AI_REMINDERS : owns
     THREADS ||--o{ AI_MEETINGS : proposes
     THREADS ||--o{ AI_DOCUMENTS : attaches
+    USERS ||--o{ CALENDARS : owns
+    CALENDARS ||--o{ CALENDAR_MEMBERS : shares
+    CALENDARS ||--o{ CALENDAR_EVENTS : contains
+    CALENDAR_EVENTS ||--o{ CALENDAR_EVENT_ATTENDEES : invites
+    CALENDAR_EVENTS ||--o{ CALENDAR_REMINDERS : schedules
     USERS ||--o{ MEETING_PARTICIPANTS : attends
     MEETING_PARTICIPANTS ||--o{ MEETING_TRANSCRIPTS : authorizes
     INTERVIEW_PROFILES ||--o{ INTERVIEW_SESSIONS : starts
@@ -453,7 +465,7 @@ erDiagram
 
 Schemas are initialized with idempotent `CREATE TABLE IF NOT EXISTS` and `ALTER TABLE` statements at startup. Versioned migrations are still required. The main API uses up to 25 open and 5 idle DB connections; this is a conservative single-instance setting, not a capacity promise.
 
-Personal calendar entries, call/meeting history, devices, theme, personalization, status, and notification preferences remain in `localStorage`. They are not synchronized or server-authoritative.
+Calendar entries are server-authoritative and permission-scoped. A one-time client migration imports legacy browser events into the user's default calendar. Call history, devices, theme, personalization, status, and notification preferences remain in `localStorage`.
 
 ## Repository structure
 
@@ -563,7 +575,7 @@ Templates:
 | `LIVEKIT_API_KEY`, `LIVEKIT_API_SECRET` | LiveKit and token signing |
 | `TURN_STATIC_AUTH_SECRET` | coturn HMAC credentials |
 
-Optional integrations use `AI_GPU_*`, `ASR_GPU_*`, `INTERVIEW_GPU_*`, `GITHUB_TOKEN`, `EMAIL_API_*`, and `SMTP_*`. Deployment policy uses `PUBLIC_ORIGIN`, `IBCONNECT_ALLOWED_ORIGINS`, `IB_ACCOUNT_*`, `LIVEKIT_URL`, `TURN_HOST`, and `MAX_ROOM_SIZE`.
+Optional integrations use `AI_GPU_*`, `ASR_GPU_*`, `INTERVIEW_GPU_*`, `BRAVE_SEARCH_API_KEY`, `GITHUB_TOKEN`, `EMAIL_API_*`, and `SMTP_*`. Deployment policy uses `PUBLIC_ORIGIN`, `IBCONNECT_ALLOWED_ORIGINS`, `IB_ACCOUNT_*`, `LIVEKIT_URL`, `TURN_HOST`, and `MAX_ROOM_SIZE`.
 
 Never place a secret in `VITE_*`; Vite embeds those values into public JavaScript.
 
@@ -704,14 +716,14 @@ There is no automated CI/CD or complete test pyramid. `tests/` contains targeted
 1. Durable queue/workers for summaries, interviews, documents, reminders, notifications, and indexing.
 2. External realtime coordination for safe API replicas.
 3. Multi-node LiveKit with placement, draining, capacity limits, and synthetic media tests.
-4. Confirmed-task review, normalized due dates, priority, dedupe, acceptance, and notifications.
-5. Server calendar plus Google/Microsoft Free/Busy.
+4. Normalized task due dates, editable priority, reassignment workflow, and richer notifications.
+5. Google/Microsoft calendar connectors, external Free/Busy, recurrence exceptions, and background push delivery.
 6. Instruction-tuned, schema-constrained models; routing, budgets, cache, quotas, telemetry, and evaluations.
 
 ### P2 — AI-native expansion
 
 1. ACL-aware hybrid search and RAG across chat, transcripts, meetings, documents, tasks, and Drive.
-2. Proactive ranking with confidence, urgency, relevance, preference, cooldown, interruption cost, and feedback.
+2. Semantic proactive ranking with richer relevance, learned personalization from stored feedback, contextual surfaces, and cooldown tuning.
 3. Controlled web retrieval with citations, source policy, prompt isolation, and budgets.
 4. Meeting recording, searchable playback, speaker-aware notes, decisions, tasks, and “What did I miss?”
 5. AIPA Drive with permissions, previews, versions, lifecycle rules, and semantic indexing.

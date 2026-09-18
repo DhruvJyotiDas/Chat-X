@@ -16,5 +16,6 @@ func (a *App) serveApp(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.Header().Set("Cache-Control", "no-cache")
 	body := strings.ReplaceAll(string(indexHTML), "__BASE_PATH__", a.cfg.BasePath)
+	body = strings.ReplaceAll(body, "__UPSTREAM_SSO__", map[bool]string{true: "1", false: "0"}[upstreamConfigured(a.cfg)])
 	w.Write([]byte(body))
 }

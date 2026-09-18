@@ -27,8 +27,9 @@ export default function MeetingNotesDialog({ roomId, title, onClose }: Props) {
     setError('');
     try {
       const transcriptResult = await api.getMeetingTranscript(roomId);
-      setTranscript(transcriptResult.lines);
-      if (!transcriptResult.lines.length) throw new Error('No saved transcript is available. Turn on captions during the meeting to save spoken lines.');
+	  const lines = transcriptResult.lines ?? [];
+      setTranscript(lines);
+      if (!lines.length) throw new Error('No saved transcript is available. Turn on captions during the meeting to save spoken lines.');
       setSummary(await api.getMeetingSummary(roomId));
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : 'Could not load meeting intelligence.');

@@ -1,16 +1,18 @@
 package main
 
 // Daily Focus turns the user's recent, permissioned activity into a compact
-// briefing. It is deliberately user-triggered: the current model is relatively
-// slow and there is no durable job queue yet, so generating this on every
-// dashboard render would waste GPU capacity and make the home screen feel slow.
+// briefing. One brief is cached per user-local day, which makes dashboard load
+// automatic without spending another slow GPU call on every render. The user
+// can still explicitly force a refresh.
 
 import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"log"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -28,6 +30,37 @@ type aiDailyBrief struct {
 	Watchouts   []string      `json:"watchouts"`
 	GeneratedAt string        `json:"generatedAt"`
 	SourceCount int           `json:"sourceCount"`
+	GeneratedBy string        `json:"generatedBy,omitempty"`
+	Notice      string        `json:"notice,omitempty"`
+}
+
+type dailyBriefFlight struct {
+	done chan struct{}
+}
+
+var dailyBriefFlights = struct {
+	sync.Mutex
+	items map[string]*dailyBriefFlight
+}{items: make(map[string]*dailyBriefFlight)}
+
+func beginDailyBriefFlight(key string) (*dailyBriefFlight, bool) {
+	dailyBriefFlights.Lock()
+	defer dailyBriefFlights.Unlock()
+	if flight := dailyBriefFlights.items[key]; flight != nil {
+		return flight, false
+	}
+	flight := &dailyBriefFlight{done: make(chan struct{})}
+	dailyBriefFlights.items[key] = flight
+	return flight, true
+}
+
+func finishDailyBriefFlight(key string, flight *dailyBriefFlight) {
+	dailyBriefFlights.Lock()
+	if dailyBriefFlights.items[key] == flight {
+		delete(dailyBriefFlights.items, key)
+		close(flight.done)
+	}
+	dailyBriefFlights.Unlock()
 }
 
 func appendBriefRows(dst *strings.Builder, rows *sql.Rows, kind string, columns int, validRefs map[string]struct{}) int {
@@ -111,6 +144,98 @@ func normalizeDailyBrief(brief *aiDailyBrief) {
 	}
 }
 
+func fallbackDailyBrief(contextText string, sourceCount int) aiDailyBrief {
+	brief := aiDailyBrief{
+		Headline:    "Your workspace focus is ready",
+		Summary:     fmt.Sprintf("AIPA found %d current workspace items. This reliable view is ordered directly from their verified source data.", sourceCount),
+		Priorities:  []aiBriefItem{},
+		FollowUps:   []aiBriefItem{},
+		Watchouts:   []string{},
+		GeneratedAt: time.Now().UTC().Format(time.RFC3339),
+		SourceCount: sourceCount,
+		GeneratedBy: "grounded_fallback",
+		Notice:      "The AI-generated refresh was temporarily unavailable, so AIPA kept your focus useful with a source-grounded view.",
+	}
+	for _, line := range strings.Split(contextText, "\n") {
+		line = strings.TrimSpace(line)
+		if !strings.HasPrefix(line, "source:") {
+			continue
+		}
+		separator := strings.IndexByte(line, ' ')
+		if separator < 0 {
+			continue
+		}
+		ref, detail := line[:separator], strings.TrimSpace(line[separator+1:])
+		parts := strings.Split(detail, " | ")
+		if len(parts) == 0 || strings.TrimSpace(parts[0]) == "" {
+			continue
+		}
+		why := "From your current IB Connect activity."
+		if len(parts) > 1 && strings.TrimSpace(parts[1]) != "" {
+			why = strings.TrimSpace(strings.Join(parts[1:], " · "))
+		}
+		item := aiBriefItem{Title: trimBriefText(parts[0], 140), Why: trimBriefText(why, 240), SourceRef: ref}
+		switch {
+		case strings.HasPrefix(ref, "source:task:") || strings.HasPrefix(ref, "source:meeting:") || strings.HasPrefix(ref, "source:calendar:"):
+			if len(brief.Priorities) < 5 {
+				brief.Priorities = append(brief.Priorities, item)
+			}
+		case strings.HasPrefix(ref, "source:reminder:") || strings.HasPrefix(ref, "source:message:"):
+			if len(brief.FollowUps) < 5 {
+				brief.FollowUps = append(brief.FollowUps, item)
+			}
+		}
+	}
+	normalizeDailyBrief(&brief)
+	return brief
+}
+
+func serveDailyBriefFallback(w http.ResponseWriter, uid, localDate, contextText string, sourceCount int, cause error) {
+	if cached, found := loadCachedDailyBrief(uid, localDate); found {
+		cached.Notice = "AIPA could not complete the refresh, so your last successful focus remains on screen. You can try again later."
+		if cached.GeneratedBy == "" {
+			cached.GeneratedBy = "ai"
+		}
+		log.Printf("[DailyFocus] refresh fallback to cache user=%s: %v", uid, cause)
+		ok(w, cached)
+		return
+	}
+	brief := fallbackDailyBrief(contextText, sourceCount)
+	storeCachedDailyBrief(uid, localDate, brief)
+	log.Printf("[DailyFocus] generated grounded fallback user=%s: %v", uid, cause)
+	ok(w, brief)
+}
+
+func dailyBriefDate(timeZone string, now time.Time) string {
+	location, err := time.LoadLocation(validTimeZone(timeZone))
+	if err != nil {
+		location = time.UTC
+	}
+	return now.In(location).Format("2006-01-02")
+}
+
+func loadCachedDailyBrief(uid, localDate string) (aiDailyBrief, bool) {
+	var raw string
+	if db.QueryRow(`SELECT brief_json FROM aipa_daily_briefs WHERE user_id=? AND local_date=?`, uid, localDate).Scan(&raw) != nil {
+		return aiDailyBrief{}, false
+	}
+	var brief aiDailyBrief
+	if json.Unmarshal([]byte(raw), &brief) != nil {
+		return aiDailyBrief{}, false
+	}
+	normalizeDailyBrief(&brief)
+	return brief, true
+}
+
+func storeCachedDailyBrief(uid, localDate string, brief aiDailyBrief) {
+	raw, err := json.Marshal(brief)
+	if err != nil {
+		return
+	}
+	_, _ = db.Exec(`INSERT INTO aipa_daily_briefs(user_id,local_date,brief_json) VALUES(?,?,?)
+		ON DUPLICATE KEY UPDATE brief_json=VALUES(brief_json),generated_at=NOW(6)`, uid, localDate, string(raw))
+}
+
 func handleAIDailyBrief(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		fail(w, "method not allowed", http.StatusMethodNotAllowed)
@@ -121,14 +246,10 @@ func handleAIDailyBrief(w http.ResponseWriter, r *http.Request) {
 		fail(w, "Unauthorized", http.StatusUnauthorized)
 		return
 	}
-	if !aiGPUConfigured() {
-		fail(w, ErrAIGPUNotConfigured.Error(), http.StatusServiceUnavailable)
-		return
-	}
-
 	var req struct {
 		TimeZone string `json:"timeZone"`
 		LocalNow string `json:"localNow"`
+		Force    bool   `json:"force"`
 	}
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4096)).Decode(&req); err != nil {
 		fail(w, "invalid request", http.StatusBadRequest)
@@ -138,7 +259,37 @@ func handleAIDailyBrief(w http.ResponseWriter, r *http.Request) {
 		fail(w, "invalid date context", http.StatusBadRequest)
 		return
 	}
-
+	localDate := dailyBriefDate(req.TimeZone, time.Now())
+	if !req.Force {
+		if cached, found := loadCachedDailyBrief(uid, localDate); found {
+			ok(w, cached)
+			return
+		}
+	}
+	flightKey := uid + ":" + localDate
+	flight, leader := beginDailyBriefFlight(flightKey)
+	if !leader {
+		select {
+		case <-flight.done:
+			if cached, found := loadCachedDailyBrief(uid, localDate); found {
+				ok(w, cached)
+				return
+			}
+			fail(w, "AIPA could not build your focus right now", http.StatusBadGateway)
+		case <-r.Context().Done():
+			fail(w, "Daily Focus request was cancelled", http.StatusRequestTimeout)
+		}
+		return
+	}
+	defer finishDailyBriefFlight(flightKey, flight)
+	// A concurrent request may have populated the cache before this request
+	// acquired leadership.
+	if !req.Force {
+		if cached, found := loadCachedDailyBrief(uid, localDate); found {
+			ok(w, cached)
+			return
+		}
+	}
 	var contextText strings.Builder
 	sourceCount := 0
 	validRefs := make(map[string]struct{})
@@ -181,13 +332,32 @@ func handleAIDailyBrief(w http.ResponseWriter, r *http.Request) {
 		sourceCount += appendBriefRows(&contextText, rows, "meeting", 3, validRefs)
 	}
 
+	if events, calendarErr := queryCalendarEvents(uid, time.Now().Add(-24*time.Hour), time.Now().AddDate(0, 1, 0), "", ""); calendarErr == nil && len(events) > 0 {
+		contextText.WriteString("\nUPCOMING CALENDAR EVENTS\n")
+		for i, event := range events {
+			if i >= 20 {
+				break
+			}
+			ref := fmt.Sprintf("source:calendar:%s", event.ID)
+			validRefs[ref] = struct{}{}
+			fmt.Fprintf(&contextText, "%s %s | %s %s-%s | %s\n", ref, trimBriefText(event.Title, 160), event.Date, event.StartTime, event.EndTime, trimBriefText(event.Location, 120))
+			sourceCount++
+		}
+	}
+
 	if sourceCount == 0 {
-		ok(w, aiDailyBrief{
+		brief := aiDailyBrief{
 			Headline:   "You're ready for a fresh start",
 			Summary:    "There is no recent activity to prioritize yet. Start a conversation, add a task, or schedule a meeting and AIPA can build your focus brief.",
 			Priorities: []aiBriefItem{}, FollowUps: []aiBriefItem{}, Watchouts: []string{},
 			GeneratedAt: time.Now().UTC().Format(time.RFC3339), SourceCount: 0,
-		})
+		}
+		storeCachedDailyBrief(uid, localDate, brief)
+		ok(w, brief)
+		return
+	}
+	if !aiGPUConfigured() {
+		serveDailyBriefFallback(w, uid, localDate, contextText.String(), sourceCount, ErrAIGPUNotConfigured)
 		return
 	}
 
@@ -195,14 +365,14 @@ func handleAIDailyBrief(w http.ResponseWriter, r *http.Request) {
 	prompt := fmt.Sprintf("User local time: %s\nTimezone: %s\n\nBEGIN UNTRUSTED SOURCES\n%sEND UNTRUSTED SOURCES\n\nCreate the brief.",
 		trimBriefText(req.LocalNow, 80), trimBriefText(req.TimeZone, 100), contextText.String())
 
-	result, err := aiChatBudgetedTimed(r.Context(), system, nil, prompt, json.RawMessage(`{}`), 1800, 180*time.Second)
+	result, err := aiChatBudgetedTimed(r.Context(), system, nil, prompt, json.RawMessage(`{}`), 1100, 90*time.Second)
 	if err != nil {
-		fail(w, err.Error(), http.StatusBadGateway)
+		serveDailyBriefFallback(w, uid, localDate, contextText.String(), sourceCount, err)
 		return
 	}
 	var brief aiDailyBrief
 	if err := json.Unmarshal([]byte(result), &brief); err != nil {
-		fail(w, "AI service returned an invalid daily brief", http.StatusBadGateway)
+		serveDailyBriefFallback(w, uid, localDate, contextText.String(), sourceCount, err)
 		return
 	}
 	normalizeDailyBrief(&brief)
@@ -210,5 +380,7 @@ func handleAIDailyBrief(w http.ResponseWriter, r *http.Request) {
 	brief.FollowUps = filterBriefItems(brief.FollowUps, validRefs)
 	brief.GeneratedAt = time.Now().UTC().Format(time.RFC3339)
 	brief.SourceCount = sourceCount
+	brief.GeneratedBy = "ai"
+	storeCachedDailyBrief(uid, localDate, brief)
 	ok(w, brief)
 }

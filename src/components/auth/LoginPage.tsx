@@ -1,3 +1,4 @@
+import { useEffect, useRef } from 'react';
 import { generatePKCE, randomState } from '../../lib/pkce';
 import BrandMark from '../BrandMark';
 import { config } from '../../config';
@@ -10,7 +11,9 @@ import { config } from '../../config';
 // backend's IB_ACCOUNT_REDIRECT_URI exactly.
 const { issuer: IB_ACCOUNT_ISSUER, clientId: IB_ACCOUNT_CLIENT_ID, redirectUri: REDIRECT_URI } = config.ibAccount;
 
-export default function LoginPage({ pendingJoinCode }: { pendingJoinCode?: string }) {
+export default function LoginPage({ pendingJoinCode, autoStart = false }: { pendingJoinCode?: string; autoStart?: boolean }) {
+  const startedRef = useRef(false);
+
   const continueWithIB = async () => {
     const { verifier, challenge } = await generatePKCE();
     const state = randomState();
@@ -32,6 +35,12 @@ export default function LoginPage({ pendingJoinCode }: { pendingJoinCode?: strin
     });
     window.location.href = `${IB_ACCOUNT_ISSUER}/oauth/authorize?${params.toString()}`;
   };
+
+  useEffect(() => {
+    if (!autoStart || startedRef.current) return;
+    startedRef.current = true;
+    void continueWithIB();
+  }, [autoStart]);
 
   return (
     <div className="min-h-screen bg-[#0e0e0e] flex items-center justify-center p-4">

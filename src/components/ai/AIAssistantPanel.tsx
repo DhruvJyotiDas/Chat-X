@@ -1,8 +1,16 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { ArrowUp, Bot, LoaderCircle, Mic, MicOff, RotateCcw, Sparkles, X } from 'lucide-react';
-import { api, type AIAssistantMessage } from '../../lib/api';
+import { ArrowUp, Bot, Check, Database, Globe2, LoaderCircle, Mic, MicOff, RotateCcw, Sparkles, X } from 'lucide-react';
+import {
+  api,
+  type AIAssistantMessage,
+  type AIPACalendarAction,
+  type AIPAContextSummary,
+  type AIPAWebSource,
+} from '../../lib/api';
 import { useAuth } from '../../context/AuthContext';
 import { loadCalendarEvents } from '../../lib/calendarLocal';
+import { loadCalls } from '../../lib/callsLocal';
+import AIPAMessageContent from './AIPAMessageContent';
 
 interface Props {
   open: boolean;
@@ -11,9 +19,18 @@ interface Props {
 
 const STARTERS = [
   "What's on my calendar this week?",
-  'Schedule a meeting with [name] tomorrow at 11am',
   'Catch me up on my recent chats',
+  'What tasks, reminders and appointments need attention?',
+  'Search the web for the latest technology news',
 ];
+
+type PanelMessage = AIAssistantMessage & {
+  context?: AIPAContextSummary;
+  sources?: AIPAWebSource[];
+  confirmationToken?: string;
+  proposedAction?: AIPACalendarAction;
+  actionResolved?: 'confirmed' | 'cancelled';
+};
 
 // Web Speech API — deliberately NOT the room-scoped /asr nemotron pipeline
 // (that's for live in-call captions, a completely different consumer). This
@@ -39,7 +56,7 @@ const voiceSupported = typeof window !== 'undefined' && !!getSpeechRecognitionCt
 
 export default function AIAssistantPanel({ open, onClose }: Props) {
   const { currentUser } = useAuth();
-  const [messages, setMessages] = useState<AIAssistantMessage[]>([]);
+  const [messages, setMessages] = useState<PanelMessage[]>([]);
   const [input, setInput] = useState('');
   const [isSending, setIsSending] = useState(false);
   const [isListening, setIsListening] = useState(false);
@@ -97,17 +114,48 @@ export default function AIAssistantPanel({ open, onClose }: Props) {
   const send = async (suggested?: string) => {
     const text = (suggested ?? input).trim();
     if (!text || isSending) return;
-    const history = messages.slice(-10);
+    const history: AIAssistantMessage[] = messages.slice(-10).map(({ role, text: messageText }) => ({ role, text: messageText }));
     setMessages(prev => [...prev, { role: 'user', text }]);
     setInput('');
     setError('');
     setIsSending(true);
     try {
+      const now = new Date();
+      const today = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
       const personalEvents = currentUser
-        ? loadCalendarEvents(currentUser.id).map(e => ({ title: e.title, date: e.date, startTime: e.startTime }))
+        ? [
+            ...loadCalendarEvents(currentUser.id)
+              .filter(event => event.date >= today)
+              .sort((a, b) => `${a.date}T${a.startTime}`.localeCompare(`${b.date}T${b.startTime}`))
+              .slice(0, 40),
+            ...loadCalendarEvents(currentUser.id)
+              .filter(event => event.date < today)
+              .sort((a, b) => `${b.date}T${b.startTime}`.localeCompare(`${a.date}T${a.startTime}`))
+              .slice(0, 10),
+          ]
+            .map(e => ({
+              id: e.id, title: e.title, date: e.date, startTime: e.startTime,
+              endTime: e.endTime, allDay: e.allDay, description: e.description, location: e.location,
+            }))
         : [];
-      const response = await api.aiChat(text, history, personalEvents);
-      setMessages(prev => [...prev, { role: 'assistant', text: response.result }]);
+      const recentCalls = currentUser
+        ? loadCalls(currentUser.id)
+            .sort((a, b) => b.timestamp - a.timestamp)
+            .slice(0, 20)
+            .map(call => ({
+              type: call.type, callType: call.callType, participantName: call.participantName,
+              duration: call.duration, occurredAt: new Date(call.timestamp).toISOString(),
+            }))
+        : [];
+      const response = await api.aiChat(text, history, personalEvents, recentCalls);
+      setMessages(prev => [...prev, {
+        role: 'assistant',
+        text: response.result,
+        context: response.context,
+        sources: response.sources,
+        confirmationToken: response.confirmationToken,
+        proposedAction: response.proposedAction,
+      }]);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'AIPA could not respond right now.');
     } finally {
@@ -148,8 +196,8 @@ export default function AIAssistantPanel({ open, onClose }: Props) {
               </div>
               <h3 className="max-w-xs text-xl font-semibold tracking-tight text-white">What can I help you move forward?</h3>
               <p className="mt-2 max-w-sm text-xs leading-5 text-[#8f96a8]">
-                AIPA can see your name, recent chats, tasks, reminders and meetings — ask it anything, or tell it to
-                schedule a meeting and it'll send the link and put it on the calendar for you.
+                AIPA can use your chats, calendar, appointments, memory, tasks, reminders, transcripts, documents,
+                interviews and recent calls. Ask for current web information when web search is connected.
               </p>
               <div className="mt-6 flex flex-col gap-2">
                 {STARTERS.map(starter => (
@@ -164,12 +212,55 @@ export default function AIAssistantPanel({ open, onClose }: Props) {
             <div className="space-y-4">
               {messages.map((message, index) => (
                 <div key={`${message.role}-${index}`} className={`flex ${message.role === 'user' ? 'justify-end' : 'justify-start'}`}>
-                  <div className={`max-w-[88%] whitespace-pre-wrap rounded-2xl px-4 py-3 text-xs leading-5 ${
+                  <div className={`max-w-[88%] rounded-2xl px-4 py-3 text-xs leading-5 ${
                     message.role === 'user'
                       ? 'rounded-br-md bg-[#6d7fff] text-white shadow-[0_8px_24px_rgba(89,106,255,.2)]'
                       : 'rounded-bl-md border border-white/[0.08] bg-white/[0.045] text-[#d9dce5]'
                   }`}>
-                    {message.text}
+                    {message.role === 'assistant'
+                      ? <AIPAMessageContent text={message.text} sources={message.sources} />
+                      : <span className="whitespace-pre-wrap">{message.text}</span>}
+                    {message.role === 'assistant' && message.context && (
+                      <div className="mt-3 border-t border-white/[0.07] pt-2.5">
+                        {message.context.sources.length > 0 && (
+                          <div className="flex flex-wrap items-center gap-1.5" aria-label="IB Connect sources used">
+                            <Database className="mr-0.5 h-3 w-3 text-[#8290aa]" />
+                            {message.context.sources.map(source => (
+                              <span key={source.kind} className="rounded-md border border-white/[0.07] bg-black/15 px-1.5 py-0.5 text-[8px] font-medium text-[#929caf]">
+                                {source.label} · {source.count}
+                              </span>
+                            ))}
+                          </div>
+                        )}
+                        {message.context.unavailable.length > 0 && (
+                          <p className="mt-2 flex items-start gap-1.5 text-[9px] leading-4 text-amber-200/70">
+                            <Globe2 className="mt-0.5 h-3 w-3 shrink-0" />
+                            Unavailable: {message.context.unavailable.join(', ')}
+                          </p>
+                        )}
+                      </div>
+                    )}
+                    {message.role === 'assistant' && message.sources && message.sources.length > 0 && (
+                      <div className="mt-3 space-y-1.5">
+                        <p className="flex items-center gap-1.5 text-[9px] font-semibold uppercase tracking-[.12em] text-[#8995aa]"><Globe2 className="h-3 w-3" />Web sources</p>
+                        {message.sources.map((source, sourceIndex) => (
+                          <a key={source.url} href={source.url} target="_blank" rel="noreferrer" className="block rounded-xl border border-white/[0.07] bg-black/15 px-2.5 py-2 transition hover:border-[#718cff]/25 hover:bg-[#718cff]/[0.06]">
+                            <span className="block truncate text-[10px] font-medium text-[#c7ceff]">[{sourceIndex + 1}] {source.title}</span>
+                            <span className="mt-0.5 block truncate text-[8px] text-[#707b90]">{source.url}</span>
+                          </a>
+                        ))}
+                      </div>
+                    )}
+                    {message.role === 'assistant' && message.confirmationToken && message.proposedAction && (
+                      <div className="mt-3 rounded-xl border border-[#718cff]/20 bg-[#718cff]/[0.06] p-3">
+                        <p className="text-[9px] font-bold uppercase tracking-[.12em] text-[#98a9ff]">Review calendar action</p>
+                        <p className="mt-1.5 text-[11px] font-semibold text-white">{message.proposedAction.action === 'create' ? 'Create' : message.proposedAction.action === 'delete' ? 'Cancel' : 'Reschedule'} · {message.proposedAction.title}</p>
+                        <p className="mt-1 text-[9px] text-[#a3adbf]">{message.proposedAction.date} · {message.proposedAction.startTime}–{message.proposedAction.endTime} · {message.proposedAction.timeZone}</p>
+                        {!!message.proposedAction.attendeeNames?.length && <p className="mt-1 text-[9px] text-[#7f8a9d]">Invite: {message.proposedAction.attendeeNames.join(', ')}</p>}
+                        {message.proposedAction.warning && <p className="mt-2 rounded-lg border border-amber-300/15 bg-amber-300/[0.06] px-2 py-1.5 text-[9px] leading-4 text-amber-100/80">{message.proposedAction.warning}</p>}
+                        {message.actionResolved ? <p className="mt-2 flex items-center gap-1.5 text-[10px] font-semibold text-emerald-300"><Check className="h-3.5 w-3.5" />{message.actionResolved === 'confirmed' ? 'Confirmed and saved' : 'Cancelled'}</p> : <div className="mt-3 flex gap-2"><button onClick={async () => { try { const result = await api.confirmCalendarAction(message.confirmationToken!, true); setMessages(current => current.map(item => item === message ? { ...item, text: result.message, actionResolved: 'confirmed' } : item)); window.dispatchEvent(new CustomEvent('ibconnect_calendar_changed')); } catch (actionError) { setError(actionError instanceof Error ? actionError.message : 'Could not confirm the action.'); } }} className="rounded-lg bg-[#3978ff] px-3 py-1.5 text-[9px] font-semibold text-white">Confirm</button><button onClick={async () => { await api.confirmCalendarAction(message.confirmationToken!, false).catch(() => {}); setMessages(current => current.map(item => item === message ? { ...item, actionResolved: 'cancelled' } : item)); }} className="rounded-lg border border-white/[0.09] px-3 py-1.5 text-[9px] font-semibold text-[#a7b0c0]">Cancel</button></div>}
+                      </div>
+                    )}
                   </div>
                 </div>
               ))}

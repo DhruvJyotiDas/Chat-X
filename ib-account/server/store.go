@@ -155,6 +155,15 @@ func (s *Store) migrate() error {
 			expires_at     DATETIME     NOT NULL,
 			created_at     DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP
 		) ENGINE=InnoDB`,
+
+		`CREATE TABLE IF NOT EXISTS upstream_oidc_states (
+			state_hash       CHAR(64)       NOT NULL PRIMARY KEY,
+			return_url       VARCHAR(2048)  NOT NULL,
+			code_verifier    VARCHAR(255)   NOT NULL,
+			nonce            VARCHAR(255)   NOT NULL,
+			expires_at       DATETIME       NOT NULL,
+			created_at       DATETIME       NOT NULL DEFAULT CURRENT_TIMESTAMP
+		) ENGINE=InnoDB`,
 	}
 	for _, q := range stmts {
 		if _, err := s.db.Exec(q); err != nil {
@@ -167,6 +176,7 @@ func (s *Store) migrate() error {
 func (s *Store) gc() {
 	s.db.Exec(`DELETE FROM otps        WHERE expires_at < UTC_TIMESTAMP() - INTERVAL 1 DAY`)
 	s.db.Exec(`DELETE FROM oauth_codes WHERE expires_at < UTC_TIMESTAMP() - INTERVAL 1 DAY`)
+	s.db.Exec(`DELETE FROM upstream_oidc_states WHERE expires_at < UTC_TIMESTAMP()`)
 	s.db.Exec(`DELETE FROM sessions    WHERE expires_at < UTC_TIMESTAMP()`)
 }
 
@@ -289,6 +299,74 @@ func (s *Store) setPassword(userID, pw string) error {
 func (s *Store) setName(userID, name string) error {
 	_, err := s.db.Exec(`UPDATE users SET display_name=? WHERE id=?`, strings.TrimSpace(name), userID)
 	return err
+}
+
+func (s *Store) provisionOIDCUser(email, name string) (*User, error) {
+	email = normEmail(email)
+	if name == "" {
+		name = strings.Split(email, "@")[0]
+	}
+	u, _, err := s.userByEmail(email)
+	if err == nil {
+		if !u.EmailVerified {
+			_ = s.markVerified(u.ID)
+		}
+		if u.Name == "" {
+			_ = s.setName(u.ID, name)
+			u.Name = name
+		}
+		u.EmailVerified = true
+		return u, nil
+	}
+	if err != errNotFound {
+		return nil, err
+	}
+	// External users authenticate upstream; the random password is never used
+	// for login and prevents creation of a usable blank-password account.
+	u = &User{ID: newUUID(), Email: email, EmailVerified: true, Name: name}
+	_, err = s.db.Exec(`INSERT INTO users(id,email,email_verified,password_hash,display_name) VALUES(?,?,1,?,?)`,
+		u.ID, u.Email, hashPassword(randToken(32)), u.Name)
+	if err != nil {
+		return nil, err
+	}
+	return u, nil
+}
+
+type UpstreamState struct {
+	ReturnURL    string
+	CodeVerifier string
+	Nonce        string
+}
+
+func (s *Store) saveUpstreamState(state string, value UpstreamState, ttl time.Duration) error {
+	_, err := s.db.Exec(
+		`INSERT INTO upstream_oidc_states(state_hash,return_url,code_verifier,nonce,expires_at)
+		 VALUES(?,?,?,?, UTC_TIMESTAMP() + INTERVAL ? SECOND)`,
+		sha256hex(state), value.ReturnURL, value.CodeVerifier, value.Nonce, int(ttl.Seconds()))
+	return err
+}
+
+func (s *Store) consumeUpstreamState(state string) (UpstreamState, error) {
+	tx, err := s.db.Begin()
+	if err != nil {
+		return UpstreamState{}, err
+	}
+	defer tx.Rollback()
+	var value UpstreamState
+	err = tx.QueryRow(
+		`SELECT return_url,code_verifier,nonce FROM upstream_oidc_states
+		 WHERE state_hash=? AND expires_at > UTC_TIMESTAMP() FOR UPDATE`, sha256hex(state),
+	).Scan(&value.ReturnURL, &value.CodeVerifier, &value.Nonce)
+	if err == sql.ErrNoRows {
+		return UpstreamState{}, errNotFound
+	}
+	if err != nil {
+		return UpstreamState{}, err
+	}
+	if _, err = tx.Exec(`DELETE FROM upstream_oidc_states WHERE state_hash=?`, sha256hex(state)); err != nil {
+		return UpstreamState{}, err
+	}
+	return value, tx.Commit()
 }
 
 func (s *Store) noteLoginOK(userID string) {

@@ -3,14 +3,15 @@ import {
   MessageSquare, Video, CalendarPlus, CalendarDays, Sparkles,
   Phone, Users, ChevronRight, PlusCircle, Target, AlertTriangle,
   RefreshCw, ArrowRight, WandSparkles, Check, Clock3, ListTodo,
+  BellRing, CalendarCheck2, X, TimerReset,
+  ThumbsUp, ThumbsDown,
 } from 'lucide-react';
 import { AppView, ExtractedItem } from '../../types';
 import { useAuth } from '../../context/AuthContext';
 import { useChat } from '../../context/ChatContext';
 import { useMeeting } from '../../context/MeetingContext';
-import { api, type AIDailyBrief, type AITaskItem, type AIReminderItem } from '../../lib/api';
+import { api, type AIDailyBrief, type AITaskItem, type AIReminderItem, type AIPAOpportunity } from '../../lib/api';
 import { extractIntelligence, ITEM_ICONS, ITEM_COLORS } from '../../lib/intelligence';
-import { loadCalendarEvents } from '../../lib/calendarLocal';
 import { loadCalls } from '../../lib/callsLocal';
 import ScheduleMeetingModal from '../meeting/ScheduleMeetingModal';
 
@@ -76,6 +77,10 @@ export default function DashboardView({ onNavigate, onJoinMeeting }: Props) {
   const [briefError, setBriefError] = useState('');
   const [aiTasks, setAITasks] = useState<AITaskItem[]>([]);
   const [aiReminders, setAIReminders] = useState<AIReminderItem[]>([]);
+  const [opportunities, setOpportunities] = useState<AIPAOpportunity[]>([]);
+  const [opportunityBusy, setOpportunityBusy] = useState('');
+  const [opportunityError, setOpportunityError] = useState('');
+  const [calendarEventsToday, setCalendarEventsToday] = useState<import('../../lib/api').ApiCalendarEvent[]>([]);
 
   const today = todayStr();
 
@@ -92,10 +97,12 @@ export default function DashboardView({ onNavigate, onJoinMeeting }: Props) {
     return loadCalls(currentUser.id).filter(c => c.timestamp >= weekAgo).length;
   }, [currentUser]);
 
-  const calendarEventsToday = useMemo(() => {
-    if (!currentUser) return [];
-    return loadCalendarEvents(currentUser.id).filter(e => e.date === today);
-  }, [currentUser, today]);
+  useEffect(() => {
+    if (!currentUser) { setCalendarEventsToday([]); return; }
+    const tomorrow = new Date(); tomorrow.setDate(tomorrow.getDate() + 1);
+    const tomorrowISO = `${tomorrow.getFullYear()}-${String(tomorrow.getMonth() + 1).padStart(2, '0')}-${String(tomorrow.getDate()).padStart(2, '0')}`;
+    api.getCalendarEvents(today, tomorrowISO).then(events => setCalendarEventsToday(events.filter(event => event.date === today))).catch(() => setCalendarEventsToday([]));
+  }, [currentUser?.id, today]);
 
   const onlineCount = useMemo(() => allUsers.filter(u => u.status === 'online').length, [allUsers]);
 
@@ -134,6 +141,23 @@ export default function DashboardView({ onNavigate, onJoinMeeting }: Props) {
     return () => { cancelled = true; };
   }, [currentUser]);
 
+  useEffect(() => {
+    if (!currentUser) { setOpportunities([]); return; }
+    let cancelled = false;
+    const load = () => api.getAIPAOpportunities(12).then(result => {
+      if (!cancelled) setOpportunities(result.opportunities ?? []);
+    }).catch(() => { if (!cancelled) setOpportunities([]); });
+    void load();
+    const refresh = () => { void load(); };
+    window.addEventListener('ibconnect_aipa_opportunity', refresh);
+    window.addEventListener('ibconnect_calendar_changed', refresh);
+    return () => {
+      cancelled = true;
+      window.removeEventListener('ibconnect_aipa_opportunity', refresh);
+      window.removeEventListener('ibconnect_calendar_changed', refresh);
+    };
+  }, [currentUser?.id]);
+
   const completeTask = (id: string) => {
     setAITasks(previous => previous.filter(task => task.id !== id));
     void api.completeAITask(id).catch(() => api.getAITasks().then(result => setAITasks([...(result.owedByMe ?? []), ...(result.owedToMe ?? [])].slice(0, 8))).catch(() => {}));
@@ -142,6 +166,73 @@ export default function DashboardView({ onNavigate, onJoinMeeting }: Props) {
   const completeReminder = (id: string) => {
     setAIReminders(previous => previous.filter(reminder => reminder.id !== id));
     void api.completeAIReminder(id).catch(() => api.getAIReminders().then(result => setAIReminders((result.reminders ?? []).slice(0, 6))).catch(() => {}));
+  };
+
+  const dismissOpportunity = async (id: string) => {
+    setOpportunityBusy(id);
+    setOpportunityError('');
+    try {
+      await api.dismissAIPAOpportunity(id);
+      setOpportunities(items => items.filter(item => item.id !== id));
+    } catch (error) {
+      setOpportunityError(error instanceof Error ? error.message : 'Could not dismiss that suggestion.');
+    } finally {
+      setOpportunityBusy('');
+    }
+  };
+
+  const snoozeOpportunity = async (id: string) => {
+    setOpportunityBusy(id);
+    setOpportunityError('');
+    try {
+      await api.snoozeAIPAOpportunity(id, 60);
+      setOpportunities(items => items.filter(item => item.id !== id));
+    } catch (error) {
+      setOpportunityError(error instanceof Error ? error.message : 'Could not snooze that suggestion.');
+    } finally {
+      setOpportunityBusy('');
+    }
+  };
+
+  const actOnOpportunity = async (opportunity: AIPAOpportunity) => {
+    setOpportunityBusy(opportunity.id);
+    setOpportunityError('');
+    try {
+      if (opportunity.confirmationToken) {
+        await api.confirmCalendarAction(opportunity.confirmationToken, true);
+		window.dispatchEvent(new CustomEvent('ibconnect_calendar_changed'));
+	  } else if (opportunity.kind === 'task_proposal' || opportunity.kind === 'reminder_proposal') {
+		await api.acceptAIPAOpportunity(opportunity.id);
+		const [taskResult, reminderResult] = await Promise.all([api.getAITasks(), api.getAIReminders()]);
+		setAITasks([...(taskResult.owedByMe ?? []), ...(taskResult.owedToMe ?? [])].slice(0, 8));
+		setAIReminders((reminderResult.reminders ?? []).slice(0, 6));
+      } else {
+        await api.completeAIPAOpportunity(opportunity.id);
+		if ((opportunity.kind === 'reply_needed' || opportunity.kind === 'task_due' || opportunity.kind === 'reminder_due') && opportunity.sourceId) {
+		  setActiveThreadId(opportunity.sourceId);
+		  onNavigate('chats');
+		} else if (opportunity.kind === 'meeting_followup') {
+		  sessionStorage.setItem('ibconnect_open_meeting_notes', opportunity.sourceId);
+		  onNavigate('debrief');
+		} else {
+		  onNavigate('calendar');
+		}
+      }
+      setOpportunities(items => items.filter(item => item.id !== opportunity.id));
+    } catch (error) {
+      setOpportunityError(error instanceof Error ? error.message : 'AIPA could not complete that action.');
+    } finally {
+      setOpportunityBusy('');
+    }
+  };
+
+  const feedbackOpportunity = async (id: string, value: 'helpful' | 'not_relevant') => {
+	setOpportunities(items => items.map(item => item.id === id ? { ...item, feedback: value } : item));
+	try {
+	  await api.feedbackAIPAOpportunity(id, value);
+	} catch {
+	  setOpportunities(items => items.map(item => item.id === id ? { ...item, feedback: undefined } : item));
+	}
   };
 
   const activity: ActivityEntry[] = useMemo(() => {
@@ -168,18 +259,26 @@ export default function DashboardView({ onNavigate, onJoinMeeting }: Props) {
     try { await createMeeting(); onJoinMeeting(); } catch {} finally { setIsStarting(false); }
   };
 
-  const generateBrief = async () => {
+  const generateBrief = async (force = false) => {
     if (briefLoading) return;
     setBriefLoading(true);
     setBriefError('');
     try {
-      setBrief(await api.aiDailyBrief());
+      setBrief(await api.aiDailyBrief(force));
     } catch (error) {
       setBriefError(error instanceof Error ? error.message : 'AIPA could not create your brief right now.');
     } finally {
       setBriefLoading(false);
     }
   };
+
+  // The server caches one permission-scoped brief per user-local day, so this
+  // is instant after the first build and never regenerates on every render.
+  useEffect(() => {
+	if (!currentUser) { setBrief(null); return; }
+	void generateBrief(false);
+	// eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [currentUser?.id]);
 
   const initials = currentUser
     ? currentUser.displayName.split(' ').map(w => w[0]).join('').toUpperCase().slice(0, 2)
@@ -204,7 +303,7 @@ export default function DashboardView({ onNavigate, onJoinMeeting }: Props) {
                 <p className="mt-1 text-xs text-[#8991a4]">{new Date().toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' })}</p>
               </div>
             </div>
-            <button onClick={() => void generateBrief()} disabled={briefLoading} className="group flex items-center justify-center gap-2 rounded-2xl border border-[#8294ff]/30 bg-[#718cff]/15 px-4 py-3 text-xs font-semibold text-[#c6ceff] transition hover:border-[#8294ff]/55 hover:bg-[#718cff]/25 hover:text-white disabled:opacity-60">
+            <button onClick={() => void generateBrief(true)} disabled={briefLoading} className="group flex items-center justify-center gap-2 rounded-2xl border border-[#8294ff]/30 bg-[#718cff]/15 px-4 py-3 text-xs font-semibold text-[#c6ceff] transition hover:border-[#8294ff]/55 hover:bg-[#718cff]/25 hover:text-white disabled:opacity-60">
               {briefLoading ? <RefreshCw className="h-4 w-4 animate-spin" /> : <WandSparkles className="h-4 w-4 transition-transform group-hover:rotate-12" />}
               {briefLoading ? 'Building your focus…' : brief ? 'Refresh daily focus' : 'Build my daily focus'}
             </button>
@@ -230,13 +329,14 @@ export default function DashboardView({ onNavigate, onJoinMeeting }: Props) {
               </div>
               {brief && <span className="rounded-full border border-white/[0.07] bg-white/[0.035] px-2.5 py-1 text-[9px] font-semibold text-[#7f8799]">{brief.sourceCount} sources</span>}
             </div>
-            {briefLoading && (
+            {briefLoading && !brief && (
               <div className="grid gap-3 p-5 sm:grid-cols-3">
                 {[0, 1, 2].map(item => <div key={item} className="h-28 animate-pulse rounded-2xl bg-white/[0.045]" />)}
               </div>
             )}
             {briefError && <div className="m-5 rounded-2xl border border-red-400/20 bg-red-400/[0.07] px-4 py-3 text-xs text-red-200">{briefError}</div>}
-            {brief && !briefLoading && (
+            {brief?.notice && <div className="mx-5 mt-4 rounded-2xl border border-amber-300/15 bg-amber-300/[0.06] px-4 py-3 text-[11px] leading-5 text-amber-100/80">{brief.notice}</div>}
+            {brief && (
               <div className="p-5">
                 <div className="mb-5 max-w-3xl"><h3 className="text-lg font-semibold tracking-tight text-white">{brief.headline}</h3><p className="mt-1.5 text-xs leading-5 text-[#969daf]">{brief.summary}</p></div>
                 <div className="grid gap-4 lg:grid-cols-3">
@@ -257,6 +357,41 @@ export default function DashboardView({ onNavigate, onJoinMeeting }: Props) {
             )}
           </section>
         )}
+
+        <section className="overflow-hidden rounded-[24px] border border-[#718cff]/15 bg-[linear-gradient(135deg,rgba(113,140,255,.08),rgba(17,19,24,.96)_45%)] shadow-[0_16px_60px_rgba(0,0,0,.16)]">
+          <div className="flex items-center justify-between border-b border-white/[0.07] px-5 py-4">
+            <div className="flex items-center gap-2.5">
+              <span className="grid h-8 w-8 place-items-center rounded-xl bg-[#718cff]/15 text-[#aebaff]"><BellRing className="h-4 w-4" /></span>
+              <div><h2 className="text-sm font-semibold text-white">AIPA now</h2><p className="text-[10px] text-[#7f899d]">Timely suggestions; nothing changes without your confirmation</p></div>
+            </div>
+            {opportunities.length > 0 && <span className="rounded-full border border-[#718cff]/20 bg-[#718cff]/10 px-2.5 py-1 text-[9px] font-semibold text-[#b9c4ff]">{opportunities.length} ready</span>}
+          </div>
+          {opportunityError && <p className="mx-4 mt-4 rounded-xl border border-red-300/15 bg-red-300/[0.06] px-3 py-2 text-[10px] text-red-200">{opportunityError}</p>}
+          {opportunities.length === 0 ? (
+            <div className="flex items-center gap-3 px-5 py-6 text-xs text-[#777f91]"><Check className="h-4 w-4 text-[#91a5ff]" />Nothing needs your attention right now.</div>
+          ) : (
+            <div className="grid gap-3 p-4 md:grid-cols-2">
+              {opportunities.slice(0, 6).map(opportunity => {
+                const proposed = opportunity.proposedAction;
+                const isBusy = opportunityBusy === opportunity.id;
+                return <article key={opportunity.id} className="rounded-2xl border border-white/[0.07] bg-black/15 p-4">
+                  <div className="flex items-start gap-3">
+                    <span className="mt-0.5 grid h-8 w-8 shrink-0 place-items-center rounded-xl bg-[#718cff]/10 text-[#aebaff]">{opportunity.kind === 'meeting_prep' || opportunity.kind === 'calendar_invitation' ? <CalendarCheck2 className="h-4 w-4" /> : <Sparkles className="h-4 w-4" />}</span>
+                    <div className="min-w-0 flex-1"><h3 className="text-xs font-semibold text-white">{opportunity.title}</h3><p className="mt-1 text-[10px] leading-4 text-[#929bad]">{opportunity.summary}</p></div>
+                  </div>
+                  {proposed && <div className="mt-3 rounded-xl border border-white/[0.06] bg-white/[0.025] px-3 py-2 text-[9px] text-[#8f99ac]"><span className="font-semibold capitalize text-[#cbd2df]">{proposed.action}</span> · {proposed.date} · {proposed.startTime}–{proposed.endTime}{proposed.warning && <p className="mt-1.5 text-amber-200/75">{proposed.warning}</p>}</div>}
+                  <div className="mt-3 flex flex-wrap gap-2">
+                    {opportunity.actionLabel && <button disabled={isBusy} onClick={() => void actOnOpportunity(opportunity)} className="rounded-lg bg-[#3978ff] px-3 py-1.5 text-[9px] font-semibold text-white disabled:opacity-50">{isBusy ? 'Working…' : opportunity.actionLabel}</button>}
+                    <button disabled={isBusy} onClick={() => void snoozeOpportunity(opportunity.id)} className="flex items-center gap-1 rounded-lg border border-white/[0.08] px-2.5 py-1.5 text-[9px] font-semibold text-[#aab3c3] disabled:opacity-50"><TimerReset className="h-3 w-3" />1 hour</button>
+					<button onClick={() => void feedbackOpportunity(opportunity.id, 'helpful')} className={`ml-auto grid h-7 w-7 place-items-center rounded-lg ${opportunity.feedback === 'helpful' ? 'bg-emerald-300/15 text-emerald-200' : 'text-[#657085] hover:bg-white/[0.04] hover:text-white'}`} title="Useful suggestion" aria-label="Mark suggestion useful"><ThumbsUp className="h-3 w-3" /></button>
+					<button onClick={() => void feedbackOpportunity(opportunity.id, 'not_relevant')} className={`grid h-7 w-7 place-items-center rounded-lg ${opportunity.feedback === 'not_relevant' ? 'bg-amber-300/15 text-amber-200' : 'text-[#657085] hover:bg-white/[0.04] hover:text-white'}`} title="Not relevant" aria-label="Mark suggestion not relevant"><ThumbsDown className="h-3 w-3" /></button>
+                    <button disabled={isBusy} onClick={() => void dismissOpportunity(opportunity.id)} className="flex items-center gap-1 rounded-lg px-2 py-1.5 text-[9px] text-[#737e91] hover:bg-white/[0.04] hover:text-white disabled:opacity-50"><X className="h-3 w-3" />Dismiss</button>
+                  </div>
+                </article>;
+              })}
+            </div>
+          )}
+        </section>
 
         <section className="overflow-hidden rounded-[24px] border border-white/[0.07] bg-[#111318] shadow-[0_16px_60px_rgba(0,0,0,.16)]">
           <div className="flex items-center justify-between border-b border-white/[0.07] px-5 py-4">

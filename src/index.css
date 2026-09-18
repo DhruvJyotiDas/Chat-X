@@ -5,25 +5,25 @@
   --color-on-primary: #ffffff;
   --color-primary-container: #0044cc;
   --color-on-primary-container: #ffffff;
-  --color-surface-dim: #050505;
-  --color-surface-bright: #1d1d1d;
-  --color-surface-container-lowest: #040404;
-  --color-surface-container-low: #0c0c0c;
-  --color-surface-container: #121212;
-  --color-surface-container-high: #1a1a1a;
-  --color-surface-container-highest: #242424;
-  --color-on-surface: #ffffff;
-  --color-on-surface-variant: #aaaaaa;
+  --color-surface-dim: #070a11;
+  --color-surface-bright: #20293a;
+  --color-surface-container-lowest: #080b12;
+  --color-surface-container-low: #0c111b;
+  --color-surface-container: #111827;
+  --color-surface-container-high: #182132;
+  --color-surface-container-highest: #222c3f;
+  --color-on-surface: #f3f6ff;
+  --color-on-surface-variant: #9aa4b8;
   --color-inverse-surface: #ffffff;
   --color-inverse-on-surface: #0e0e0e;
   --color-outline: rgba(255, 255, 255, 0.15);
   --color-outline-variant: rgba(255, 255, 255, 0.08);
-  --color-surface-tint: #0066FF;
+  --color-surface-tint: #718cff;
   
-  --color-secondary: #00FF41;
-  --color-on-secondary: #000000;
-  --color-secondary-container: rgba(0, 255, 65, 0.1);
-  --color-on-secondary-container: #00FF41;
+  --color-secondary: #35cdb0;
+  --color-on-secondary: #041914;
+  --color-secondary-container: rgba(53, 205, 176, 0.12);
+  --color-on-secondary-container: #54d6c8;
   
   --color-tertiary: #c0c1ff;
   --color-on-tertiary: #1000a9;
@@ -35,9 +35,9 @@
   --color-error-container: #93000a;
   --color-on-error-container: #ffdad6;
   
-  --color-background: #080808;
-  --color-on-background: #ffffff;
-  --color-surface-variant: #1a1a1a;
+  --color-background: #080b12;
+  --color-on-background: #f3f6ff;
+  --color-surface-variant: #182132;
 
   --font-sans: Inter, ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
   --font-mono: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
@@ -71,8 +71,8 @@
 
 /* Base body styles */
 body {
-  background-color: #080808;
-  color: #ffffff;
+  background-color: #080b12;
+  color: #f3f6ff;
   font-family: var(--font-sans);
   -webkit-font-smoothing: antialiased;
   text-rendering: optimizeLegibility;
@@ -121,13 +121,13 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
 body,
 .bg-\[\#131313\],
 .bg-background {
-  background-color: #080808 !important;
+  background-color: #0c111b !important;
 }
 
 /* Sidebar and inner lists backgrounds should be dark and sleek */
 .bg-\[\#0e0e0e\],
 .bg-\[\#131313\/85\] {
-  background-color: #080808 !important;
+  background-color: #080b12 !important;
 }
 
 /* 2. Premium Bento Card containers */
@@ -138,16 +138,16 @@ body,
 .bg-\[\#1c1b1b\/50\],
 .bg-\[\#1c1b1b\/95\],
 .bg-\[\#1c1b1b\/55\] {
-  background: #121212 !important;
-  background-image: linear-gradient(135deg, #1A1A1A 0%, #0D0D0D 100%) !important;
-  border-color: rgba(255, 255, 255, 0.08) !important;
+  background: #111827 !important;
+  background-image: linear-gradient(135deg, #182132 0%, #101621 100%) !important;
+  border-color: rgba(148, 163, 184, 0.12) !important;
 }
 
 /* Active call screens / support blocks */
 .bg-\[\#2a2a2a\],
 .bg-\[\#131313\/55\] {
-  background-color: #121212 !important;
-  border-color: rgba(255, 255, 255, 0.08) !important;
+  background-color: #182132 !important;
+  border-color: rgba(148, 163, 184, 0.12) !important;
 }
 
 /* 3. High-precision separation borders */
@@ -162,7 +162,7 @@ body,
 .border-\[\#424655\/60\],
 .border-\[\#424655\/50\],
 .border-\[\#424655\/30\] {
-  border-color: rgba(255, 255, 255, 0.08) !important;
+  border-color: rgba(148, 163, 184, 0.13) !important;
 }
 
 /* 4. Increase rounded corners to Bento standard 24px */
@@ -171,10 +171,10 @@ body,
   border-radius: 24px !important;
 }
 
-/* 5. Core Bento Accent Color overrides (Primary Blue: #0066FF) */
+/* 5. Core Bento Accent Color overrides */
 .bg-\[\#568dff\],
 .bg-primary {
-  background-color: #0066FF !important;
+  background-color: #718cff !important;
   color: #ffffff !important;
 }
 
@@ -182,37 +182,37 @@ body,
 .text-\[\#568dff\],
 .text-primary,
 .hover\:text-\[\#b0c6ff\]:hover {
-  color: #0066FF !important;
+  color: #9bafff !important;
 }
 
 .bg-\[\#568dff\/10\],
 .bg-\[\#568dff\/20\],
 .bg-\[\#568dff\/15\],
 .bg-\[\#c0c1ff\/5\] {
-  background-color: rgba(0, 102, 255, 0.12) !important;
-  border-color: rgba(0, 102, 255, 0.25) !important;
+  background-color: rgba(113, 140, 255, 0.12) !important;
+  border-color: rgba(113, 140, 255, 0.28) !important;
 }
 
-/* 6. Live Status and Success Tones (Bright cyber green: #00FF41) */
+/* 6. Live Status and Success Tones */
 .bg-\[\#00e296\],
 .bg-\[\#00e598\],
 .bg-\[\#4dffb1\] {
-  background-color: #00FF41 !important;
+  background-color: #35cdb0 !important;
 }
 
 .text-\[\#70ffba\],
 .text-\[\#00e296\] {
-  color: #00FF41 !important;
+  color: #54d6c8 !important;
 }
 
 .bg-\[\#00e598\/10\] {
-  background-color: rgba(0, 255, 65, 0.08) !important;
-  color: #00FF41 !important;
+  background-color: rgba(53, 205, 176, 0.10) !important;
+  color: #54d6c8 !important;
 }
 
 .border-\[\#00e296\/30\],
 .border-\[\#00e296\/20\] {
-  border-color: rgba(0, 255, 65, 0.25) !important;
+  border-color: rgba(53, 205, 176, 0.28) !important;
 }
 
 /* 7. Tags & Accent glowing elements */

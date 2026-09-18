@@ -3,7 +3,7 @@ import {
   X, Camera, User, Lock, Bell, LogOut, Check,
   Loader2, Mail, AtSign, Calendar, ExternalLink,
   ChevronRight, Shield, Palette, Info, Sun, Moon, Monitor,
-  MessageSquare, Video, Volume2, Smile, Activity,
+  MessageSquare, Video, Volume2, Smile, Activity, Sparkles,
 } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
 import { api } from '../../lib/api';
@@ -212,6 +212,18 @@ function PreferencesTab() {
   const { theme, setTheme } = useTheme();
   const [status, setStatus] = useState(() => currentUser ? loadStatus(currentUser.id) : { emoji: '', text: '' });
   const [notifs, setNotifs] = useState<NotificationPreferences>(() => currentUser ? loadNotifications(currentUser.id) : { messageAlerts: true, meetingReminders: true, soundEffects: true });
+  const [proactive, setProactive] = useState<import('../../lib/api').AIPAProactivePreferences>({
+	enabled: true, meetingSuggestions: true, dailyPlanning: true, taskSignals: true,
+	replySignals: true, meetingPrep: true, postMeeting: true, quietStart: '21:00',
+	quietEnd: '08:00', timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone, dailyLimit: 6,
+  });
+  const [proactiveSaving, setProactiveSaving] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    api.getAIPAProactivePreferences().then(value => { if (!cancelled) setProactive(value); }).catch(() => {});
+    return () => { cancelled = true; };
+  }, [currentUser?.id]);
 
   const updateStatus = (next: typeof status) => {
     setStatus(next);
@@ -229,6 +241,20 @@ function PreferencesTab() {
     // see ChatContext's meeting_reminder handler and TopBar's banner).
     if (key === 'meetingReminders' && value && typeof Notification !== 'undefined' && Notification.permission === 'default') {
       Notification.requestPermission().catch(() => {});
+    }
+  };
+
+  const updateProactive = async <K extends keyof typeof proactive>(key: K, value: (typeof proactive)[K]) => {
+    const previous = proactive;
+    const next = { ...proactive, [key]: value };
+    setProactive(next);
+    setProactiveSaving(true);
+    try {
+      setProactive(await api.updateAIPAProactivePreferences(next));
+    } catch {
+      setProactive(previous);
+    } finally {
+      setProactiveSaving(false);
     }
   };
 
@@ -284,6 +310,60 @@ function PreferencesTab() {
           />
         </div>
         <p className="text-[10px] text-[#8c90a1] mt-1.5">Shown to you only — visible on this device.</p>
+      </div>
+
+      {/* Proactive AIPA */}
+      <div>
+        <div className="flex items-center gap-2 mb-2.5">
+          <Sparkles className="w-3.5 h-3.5 text-[#b0c6ff]" />
+          <span className="text-[10px] font-bold uppercase tracking-wider text-[#8c90a1]">Proactive AIPA</span>
+          {proactiveSaving && <Loader2 className="ml-auto h-3 w-3 animate-spin text-[#8c90a1]" />}
+        </div>
+        <p className="mb-2.5 text-[10px] leading-4 text-[#747d92]">AIPA can notice timely opportunities, but calendar changes still require your confirmation.</p>
+        <div className="flex flex-col divide-y divide-[#424655]/40 border border-[#424655] rounded-xl overflow-hidden">
+          <div className="flex items-center justify-between px-3.5 py-3">
+            <div><p className="text-xs text-[#e5e2e1]">Proactive suggestions</p><p className="mt-0.5 text-[9px] text-[#747d92]">Master control for AIPA Now</p></div>
+            <Toggle checked={proactive.enabled} onChange={v => void updateProactive('enabled', v)} />
+          </div>
+          <div className="flex items-center justify-between px-3.5 py-3">
+            <div><p className="text-xs text-[#e5e2e1]">Meeting suggestions</p><p className="mt-0.5 text-[9px] text-[#747d92]">Prepare reviewable actions from chat</p></div>
+            <Toggle checked={proactive.enabled && proactive.meetingSuggestions} onChange={v => void updateProactive('meetingSuggestions', v)} />
+          </div>
+          <div className="flex items-center justify-between px-3.5 py-3">
+            <div><p className="text-xs text-[#e5e2e1]">Daily planning signals</p><p className="mt-0.5 text-[9px] text-[#747d92]">Upcoming meetings and invitations</p></div>
+            <Toggle checked={proactive.enabled && proactive.dailyPlanning} onChange={v => void updateProactive('dailyPlanning', v)} />
+          </div>
+		  <div className="flex items-center justify-between px-3.5 py-3">
+			<div><p className="text-xs text-[#e5e2e1]">Task and reminder signals</p><p className="mt-0.5 text-[9px] text-[#747d92]">Due work and reviewable items found in chat</p></div>
+			<Toggle checked={proactive.enabled && proactive.taskSignals} onChange={v => void updateProactive('taskSignals', v)} />
+		  </div>
+		  <div className="flex items-center justify-between px-3.5 py-3">
+			<div><p className="text-xs text-[#e5e2e1]">Reply-needed signals</p><p className="mt-0.5 text-[9px] text-[#747d92]">Older unread conversations that may need you</p></div>
+			<Toggle checked={proactive.enabled && proactive.replySignals} onChange={v => void updateProactive('replySignals', v)} />
+		  </div>
+		  <div className="flex items-center justify-between px-3.5 py-3">
+			<div><p className="text-xs text-[#e5e2e1]">Pre-meeting preparation</p><p className="mt-0.5 text-[9px] text-[#747d92]">Surface meetings to prepare within 24 hours</p></div>
+			<Toggle checked={proactive.enabled && proactive.meetingPrep} onChange={v => void updateProactive('meetingPrep', v)} />
+		  </div>
+		  <div className="flex items-center justify-between px-3.5 py-3">
+			<div><p className="text-xs text-[#e5e2e1]">Post-meeting follow-up</p><p className="mt-0.5 text-[9px] text-[#747d92]">Prompt for minutes and next actions after calls</p></div>
+			<Toggle checked={proactive.enabled && proactive.postMeeting} onChange={v => void updateProactive('postMeeting', v)} />
+		  </div>
+		  <div className="px-3.5 py-3">
+			<div className="mb-2 flex items-center justify-between"><div><p className="text-xs text-[#e5e2e1]">Quiet hours</p><p className="mt-0.5 text-[9px] text-[#747d92]">Cards stay in AIPA Now; realtime nudges wait</p></div><span className="text-[9px] text-[#747d92]">{proactive.timeZone}</span></div>
+			<div className="grid grid-cols-[1fr_auto_1fr] items-center gap-2">
+			  <input type="time" value={proactive.quietStart} disabled={!proactive.enabled || proactiveSaving} onChange={e => void updateProactive('quietStart', e.target.value)} className="min-w-0 rounded-lg border border-[#424655] bg-[#0e0e0e] px-2 py-1.5 text-[10px] text-[#e5e2e1] outline-none focus:border-[#568dff] disabled:opacity-50" />
+			  <span className="text-[9px] text-[#747d92]">to</span>
+			  <input type="time" value={proactive.quietEnd} disabled={!proactive.enabled || proactiveSaving} onChange={e => void updateProactive('quietEnd', e.target.value)} className="min-w-0 rounded-lg border border-[#424655] bg-[#0e0e0e] px-2 py-1.5 text-[10px] text-[#e5e2e1] outline-none focus:border-[#568dff] disabled:opacity-50" />
+			</div>
+		  </div>
+		  <div className="flex items-center justify-between px-3.5 py-3">
+			<div><p className="text-xs text-[#e5e2e1]">Daily nudge limit</p><p className="mt-0.5 text-[9px] text-[#747d92]">Maximum realtime AIPA interruptions per day</p></div>
+			<select value={proactive.dailyLimit} disabled={!proactive.enabled || proactiveSaving} onChange={e => void updateProactive('dailyLimit', Number(e.target.value))} className="rounded-lg border border-[#424655] bg-[#0e0e0e] px-2 py-1.5 text-[10px] text-[#e5e2e1] outline-none focus:border-[#568dff] disabled:opacity-50">
+			  {[3, 6, 10, 15].map(limit => <option key={limit} value={limit}>{limit} nudges</option>)}
+			</select>
+		  </div>
+        </div>
       </div>
 
       {/* Notifications */}
