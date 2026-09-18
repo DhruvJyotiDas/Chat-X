@@ -1686,12 +1686,12 @@ export default function ActiveMeetingView({ onLeaveMeeting, onMinimize }: Props)
           clear it is to actually leave — dismissing without leaving would just hide the
           message while this tab sits there uselessly with the camera/mic still live. */}
       {evictedNotice && (
-        <div className="absolute top-3 left-1/2 -translate-x-1/2 z-[10002] max-w-[92vw] sm:max-w-md flex items-start gap-3 bg-[#3c2b28] border border-[#f28b82]/50 text-[#f6d5d2] rounded-xl px-4 py-3 shadow-2xl">
-          <AlertTriangle className="w-4 h-4 text-[#f28b82] shrink-0 mt-0.5" />
+        <div className="absolute top-3 left-1/2 -translate-x-1/2 z-[10002] max-w-[92vw] sm:max-w-md flex items-start gap-3 bg-[var(--ib-bad-fill)] border border-[var(--ib-bad-dot)]/30 text-[var(--ib-bad-text)] rounded-xl px-4 py-3 shadow-[var(--ib-shadow-lg)]">
+          <AlertTriangle className="w-4 h-4 text-[var(--ib-bad-dot)] shrink-0 mt-0.5" />
           <p className="text-xs leading-relaxed flex-1">{evictedNotice}</p>
           <button
             onClick={() => { dismissEvictedNotice(); leaveMeeting(); }}
-            className="shrink-0 text-xs font-semibold px-2.5 py-1 -mt-0.5 -mr-1 rounded-lg bg-white/10 hover:bg-white/20 transition-colors cursor-pointer"
+            className="shrink-0 text-xs font-semibold px-2.5 py-1 -mt-0.5 -mr-1 rounded-lg bg-[var(--ib-bad-dot)] text-white hover:bg-[var(--ib-bad-text)] transition-colors cursor-pointer"
           >
             Leave
           </button>
@@ -1702,13 +1702,13 @@ export default function ActiveMeetingView({ onLeaveMeeting, onMinimize }: Props)
           revoked mid-call, or another app grabbed the device) left the button looking
           simply dead, with the reason only in the console. */}
       {mediaNotice && (
-        <div className="absolute top-3 left-1/2 -translate-x-1/2 z-[10001] max-w-[92vw] sm:max-w-md flex items-start gap-3 bg-[#3c2b28] border border-[#f28b82]/50 text-[#f6d5d2] rounded-xl px-4 py-3 shadow-2xl">
-          <AlertTriangle className="w-4 h-4 text-[#f28b82] shrink-0 mt-0.5" />
+        <div className="absolute top-3 left-1/2 -translate-x-1/2 z-[10001] max-w-[92vw] sm:max-w-md flex items-start gap-3 bg-[var(--ib-bad-fill)] border border-[var(--ib-bad-dot)]/30 text-[var(--ib-bad-text)] rounded-xl px-4 py-3 shadow-[var(--ib-shadow-lg)]">
+          <AlertTriangle className="w-4 h-4 text-[var(--ib-bad-dot)] shrink-0 mt-0.5" />
           <p className="text-xs leading-relaxed flex-1">{mediaNotice}</p>
           <button
             onClick={dismissMediaNotice}
             aria-label="Dismiss"
-            className="shrink-0 w-7 h-7 -mt-0.5 -mr-1 rounded-lg flex items-center justify-center text-[#f6d5d2]/70 hover:text-white hover:bg-white/10 transition-colors cursor-pointer"
+            className="shrink-0 w-7 h-7 -mt-0.5 -mr-1 rounded-lg flex items-center justify-center text-[var(--ib-bad-text)]/70 hover:text-[var(--ib-bad-text)] hover:bg-[var(--ib-bad-dot)]/10 transition-colors cursor-pointer"
           >
             <X className="w-3.5 h-3.5" />
           </button>
@@ -1722,8 +1722,8 @@ export default function ActiveMeetingView({ onLeaveMeeting, onMinimize }: Props)
           styled as an error — nothing has failed as far as the browser is concerned,
           which is exactly why the user needs telling. */}
       {silentMic.status === 'silent' && (
-        <div className="absolute top-3 left-1/2 -translate-x-1/2 z-[10000] max-w-[92vw] sm:max-w-md flex items-start gap-3 bg-[#3d3323] border border-[#fdd663]/50 text-[#f8e7bd] rounded-xl px-4 py-3 shadow-2xl" style={{ top: mediaNotice ? '5.25rem' : '0.75rem' }}>
-          <MicOff className="w-4 h-4 text-[#fdd663] shrink-0 mt-0.5" />
+        <div className="absolute top-3 left-1/2 -translate-x-1/2 z-[10000] max-w-[92vw] sm:max-w-md flex items-start gap-3 bg-[var(--ib-warn-fill)] border border-[var(--ib-warn-dot)]/30 text-[var(--ib-warn-text)] rounded-xl px-4 py-3 shadow-[var(--ib-shadow-lg)]" style={{ top: mediaNotice ? '5.25rem' : '0.75rem' }}>
+          <MicOff className="w-4 h-4 text-[var(--ib-warn-dot)] shrink-0 mt-0.5" />
           <p className="text-xs leading-relaxed flex-1">
             Your microphone isn't picking up any sound. Check that it isn't muted in your
             system settings or by a switch on your headset, then try selecting a different
@@ -1732,7 +1732,7 @@ export default function ActiveMeetingView({ onLeaveMeeting, onMinimize }: Props)
           <button
             onClick={silentMic.dismiss}
             aria-label="Dismiss microphone warning"
-            className="shrink-0 w-7 h-7 -mt-0.5 -mr-1 rounded-lg flex items-center justify-center text-[#f8e7bd]/70 hover:text-white hover:bg-white/10 transition-colors cursor-pointer"
+            className="shrink-0 w-7 h-7 -mt-0.5 -mr-1 rounded-lg flex items-center justify-center text-[var(--ib-warn-text)]/70 hover:text-[var(--ib-warn-text)] hover:bg-[var(--ib-warn-dot)]/10 transition-colors cursor-pointer"
           >
             <X className="w-3.5 h-3.5" />
           </button>
