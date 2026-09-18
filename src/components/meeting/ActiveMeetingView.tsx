@@ -2015,7 +2015,14 @@ export default function ActiveMeetingView({ onLeaveMeeting, onMinimize }: Props)
             {/* Leave: the one place a solid, saturated bad-dot fill is correct --
                 everywhere else danger states use the soft fill+dot pairing, but
                 this is a terminal action that should read as unambiguously final. */}
-            <button onClick={handleLeave} className="px-3 md:px-5 h-9 md:h-11 flex items-center gap-1.5 rounded-xl bg-[var(--ib-bad-dot)] text-white hover:bg-[var(--ib-bad-text)] active:scale-95 font-bold text-[10px] md:text-xs cursor-pointer transition-all shadow-sm shrink-0">
+            {/* h-12 (48px), px-4 on mobile -- was h-9/px-3 (36x38px), under
+                the 44px tap-target floor on both axes (the "Leave" text is
+                hidden below sm, leaving only the icon + padding for width).
+                Every other control bar button already meets 44px (sub-unit
+                1); this one was missed, caught in sub-unit 6's viewport
+                audit. Mobile > desktop height mirrors CtrlBtn's own
+                w-12/md:w-11 mobile-bigger convention. */}
+            <button onClick={handleLeave} className="px-4 md:px-5 h-12 md:h-11 flex items-center gap-1.5 rounded-xl bg-[var(--ib-bad-dot)] text-white hover:bg-[var(--ib-bad-text)] active:scale-95 font-bold text-[10px] md:text-xs cursor-pointer transition-all shadow-sm shrink-0">
               <PhoneOff className="w-3.5 h-3.5 md:w-4 md:h-4" /><span className="hidden sm:inline">Leave</span>
             </button>
           </div>
