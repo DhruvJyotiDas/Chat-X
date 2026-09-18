@@ -43,6 +43,74 @@
   --font-mono: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
 }
 
+/* ── Design tokens (light-theme redesign, DESIGN_SYSTEM.md) ─────────────────
+ * Plain :root custom properties, not @theme -- consumed via Tailwind's
+ * arbitrary-value syntax (e.g. bg-[var(--ib-blue-500)]), matching the
+ * bracket-hex convention already used everywhere in this codebase. Choosing
+ * this over @theme's auto-generated utilities (bg-primary, etc.) keeps every
+ * future call site looking exactly like the ones around it -- no second
+ * className vocabulary to learn, just a var() where a hex used to be.
+ *
+ * The @theme block above this predates these tokens, is a Material-Design-3
+ * palette (--color-primary etc.), and is NOT wired to anything -- confirmed
+ * zero components reference the utility classes it would generate. Left
+ * in place for now rather than deleted; superseding it fully is the
+ * "theme wiring" unit, not this one, which is scoped to the tokens and
+ * primitives new components need to exist at all.
+ *
+ * Not yet live anywhere: nothing in the app renders against these tokens
+ * until a component is deliberately built or migrated onto them (starting
+ * with the primitives in src/components/ui/). useTheme.ts's default and the
+ * app's actual rendered colors are untouched by this unit.
+ */
+:root {
+  /* Neutrals -- cool-biased, not a flat grey (DESIGN_SYSTEM.md §2.1) */
+  --ib-white:     #FFFFFF;
+  --ib-gray-50:   #F7F8FA;
+  --ib-gray-100:  #EEF1F5;
+  --ib-gray-200:  #DEE3EA;
+  --ib-gray-400:  #9AA5B1;
+  --ib-gray-600:  #5B6572;
+  --ib-gray-800:  #202733;
+  --ib-gray-900:  #12161D;
+
+  /* Primary -- anchored on the established brand blue, #0066FF (§2.2) */
+  --ib-blue-50:   #EAF1FF;
+  --ib-blue-100:  #D2E3FF;
+  --ib-blue-300:  #6FA3FF;
+  --ib-blue-500:  #0066FF;
+  --ib-blue-600:  #0052CC;
+  --ib-blue-800:  #003D99;
+
+  /* Status -- dot / fill / text per state (§2.3) */
+  --ib-good-dot:  #1FAE6B;
+  --ib-good-fill: #E5F8EF;
+  --ib-good-text: #0F7A49;
+  --ib-warn-dot:  #E8A317;
+  --ib-warn-fill: #FDF3DE;
+  --ib-warn-text: #8A5A06;
+  --ib-bad-dot:   #E5484D;
+  --ib-bad-fill:  #FCE8E8;
+  --ib-bad-text:  #A32F27;
+
+  /* Type (§3) */
+  --ib-font-display: 'Sora', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  --ib-font-body: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+
+  /* Radius (§5) */
+  --ib-radius-sm:   8px;
+  --ib-radius-md:   12px;
+  --ib-radius-lg:   16px;
+  --ib-radius-xl:   20px;
+  --ib-radius-pill: 9999px;
+
+  /* Shadow (§6) -- two layers stacked, not one blurred drop shadow */
+  --ib-shadow-sm: 0 1px 2px rgba(18,22,29,0.06);
+  --ib-shadow-md: 0 1px 2px rgba(18,22,29,0.04), 0 4px 12px rgba(18,22,29,0.08);
+  --ib-shadow-lg: 0 2px 4px rgba(18,22,29,0.04), 0 12px 32px rgba(18,22,29,0.10);
+  --ib-shadow-focus: 0 0 0 3px var(--ib-blue-100);
+}
+
 @layer utilities {
   .scrollbar-hide::-webkit-scrollbar {
     display: none;
@@ -372,4 +440,26 @@ body,
     transform: translateY(-90px);
     opacity: 1;
   }
+}
+
+/* The three-dot brand mark's loading cycle — DESIGN_SYSTEM.md §7. One dot
+ * "lit" (full opacity + slight scale) at a time, in sequence; three copies
+ * of the same keyframe on the three dots, staggered by animation-delay so
+ * only one is ever at its peak. Informational (it IS the loading indicator),
+ * so unlike ib-reaction-rise this keeps moving under reduced-motion — the
+ * concession there is dropping the scale, not the motion itself, since a
+ * loading state needs to visibly still be loading. */
+@keyframes ib-dot-pulse {
+  0%, 100% { opacity: 0.35; transform: scale(1); }
+  50%      { opacity: 1;    transform: scale(1.15); }
+}
+
+.ib-brand-dot { animation: ib-dot-pulse 1.2s ease-in-out infinite; }
+.ib-brand-dot:nth-child(1) { animation-delay: 0s; }
+.ib-brand-dot:nth-child(2) { animation-delay: 0.2s; }
+.ib-brand-dot:nth-child(3) { animation-delay: 0.4s; }
+
+@media (prefers-reduced-motion: reduce) {
+  .ib-brand-dot { animation-duration: 1.2s; }
+  .ib-brand-dot { transform: none !important; }
 }
