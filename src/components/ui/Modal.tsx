@@ -1,7 +1,8 @@
 import { useEffect, useState } from 'react';
 import type { ReactNode } from 'react';
-import { motion, AnimatePresence } from 'motion/react';
+import { motion, AnimatePresence, useDragControls } from 'motion/react';
 import { X } from 'lucide-react';
+import { useScrollLock } from '../../hooks/useScrollLock';
 
 // motion's useReducedMotion isn't exported by the installed version of the
 // package (checked directly, not assumed) — same matchMedia read useTheme.ts
@@ -30,6 +31,24 @@ function useReducedMotion() {
  * `open` is a real prop (not conditional-render-only) so AnimatePresence can
  * play the exit animation — unmounting via `{open && <Modal/>}` from the
  * caller skips the exit transition entirely, a common Framer Motion mistake.
+ *
+ * Phase 3, sub-unit 1 (foundations) added the `variant` prop:
+ * - 'sheet' (default): bottom sheet on <md (drag handle, top radius, safe-
+ *   area bottom padding, height capped by --vv-height so the keyboard or a
+ *   collapsing browser chrome bar doesn't push content off-screen), centered
+ *   card on >=md. Swipe-down-to-dismiss is bound only to the handle/header
+ *   row (via useDragControls + a manual dragControls.start() on pointerdown
+ *   there), not the whole sheet — so dragging inside the scrollable content
+ *   never gets mistaken for a dismiss gesture.
+ * - 'centered': always a centered card, at every width. On <md with the
+ *   keyboard open this still needs to move — a dialog vertically centered in
+ *   the full (keyboard-inclusive) layout viewport can end up with its lower
+ *   half, including its primary action, hidden under the keyboard. The outer
+ *   wrapper is pinned to the visual viewport's own top/height
+ *   (--vv-top/--vv-height, sub-unit 1's useVisualViewport), and at <md it
+ *   aligns content to the top of that box instead of centering within it, so
+ *   the dialog rides up with the keyboard rather than staying centered in
+ *   space the keyboard has covered.
  */
 
 interface ModalProps {
@@ -38,13 +57,17 @@ interface ModalProps {
   children: ReactNode;
   /** Content max-width. 'sm' for a form (~420px), 'lg' for a richer panel like Settings (~640px). */
   size?: 'sm' | 'lg';
+  /** 'sheet' (default) = bottom sheet <md / centered card >=md. 'centered' = always a centered card. */
+  variant?: 'sheet' | 'centered';
   'aria-label': string;
 }
 
 const MAX_WIDTH = { sm: 'max-w-[420px]', lg: 'max-w-[640px]' };
 
-export default function Modal({ open, onClose, children, size = 'sm', ...rest }: ModalProps) {
+export default function Modal({ open, onClose, children, size = 'sm', variant = 'sheet', ...rest }: ModalProps) {
   const reduceMotion = useReducedMotion();
+  const dragControls = useDragControls();
+  useScrollLock(open);
 
   // Esc closes, matching every existing ad hoc modal's own convention.
   useEffect(() => {
@@ -54,10 +77,41 @@ export default function Modal({ open, onClose, children, size = 'sm', ...rest }:
     return () => window.removeEventListener('keydown', handler);
   }, [open, onClose]);
 
+  // 'centered' is centered on <md same as >=md by default — it only needs to
+  // move when an on-screen keyboard has actually shrunk the visual viewport
+  // (see the module doc comment above for why: centering in the FULL layout
+  // height would otherwise leave the lower half, including the primary
+  // action, under the keyboard). No native "is the keyboard open" signal
+  // exists, so this is a heuristic: visualViewport shrinking below ~85% of
+  // window.innerHeight is treated as the keyboard being up. 85% rather than
+  // 100% to not misfire on the ordinary few px difference from browser
+  // chrome (address bar, etc.) that isn't a keyboard at all.
+  const [keyboardOpen, setKeyboardOpen] = useState(false);
+  useEffect(() => {
+    if (!open) return;
+    const vv = window.visualViewport;
+    if (!vv) return;
+    const check = () => setKeyboardOpen(vv.height < window.innerHeight * 0.85);
+    check();
+    vv.addEventListener('resize', check);
+    return () => vv.removeEventListener('resize', check);
+  }, [open]);
+
+  const isSheet = variant === 'sheet';
+
   return (
     <AnimatePresence>
       {open && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+        <div
+          className={`fixed inset-x-0 z-50 flex p-0 md:p-4 md:items-center md:justify-center ${
+            isSheet
+              ? 'items-end'
+              : keyboardOpen
+                ? 'items-start justify-center pt-4 md:items-center md:pt-0'
+                : 'items-center justify-center'
+          }`}
+          style={{ top: 'var(--vv-top, 0px)', height: 'var(--vv-height, 100dvh)' }}
+        >
           <motion.div
             className="absolute inset-0 bg-[var(--ib-gray-900)]/40 backdrop-blur-sm"
             onClick={onClose}
@@ -70,24 +124,54 @@ export default function Modal({ open, onClose, children, size = 'sm', ...rest }:
             role="dialog"
             aria-modal="true"
             {...rest}
-            className={`relative w-full ${MAX_WIDTH[size]} max-h-[90vh] overflow-y-auto
-              bg-white rounded-[var(--ib-radius-xl)] shadow-[var(--ib-shadow-lg)]`}
-            initial={reduceMotion ? { opacity: 0 } : { opacity: 0, scale: 0.96 }}
-            animate={reduceMotion ? { opacity: 1 } : { opacity: 1, scale: 1 }}
-            exit={reduceMotion ? { opacity: 0 } : { opacity: 0, scale: 0.96 }}
+            drag={isSheet ? 'y' : false}
+            dragControls={dragControls}
+            dragListener={false}
+            dragConstraints={{ top: 0, bottom: 0 }}
+            dragElastic={{ top: 0, bottom: 0.6 }}
+            onDragEnd={isSheet ? (_e, info) => {
+              if (info.offset.y > 80 || info.velocity.y > 500) onClose();
+            } : undefined}
+            className={
+              isSheet
+                ? `relative w-full ${MAX_WIDTH[size]} md:mx-auto flex flex-col
+                   max-h-[85vh] md:max-h-[90vh] overflow-hidden
+                   bg-white rounded-t-[var(--ib-radius-xl)] md:rounded-[var(--ib-radius-xl)]
+                   shadow-[var(--ib-shadow-lg)] pb-[env(safe-area-inset-bottom)] md:pb-0`
+                : `relative w-full ${MAX_WIDTH[size]} overflow-y-auto
+                   bg-white rounded-[var(--ib-radius-xl)] shadow-[var(--ib-shadow-lg)]`
+            }
+            style={{
+              maxHeight: isSheet
+                ? 'min(85vh, var(--vv-height, 100dvh) - 24px)'
+                : 'min(90vh, var(--vv-height, 100dvh) - 32px)',
+            }}
+            initial={reduceMotion ? { opacity: 0 } : isSheet ? { opacity: 0, y: '100%' } : { opacity: 0, scale: 0.96 }}
+            animate={reduceMotion ? { opacity: 1 } : isSheet ? { opacity: 1, y: 0 } : { opacity: 1, scale: 1 }}
+            exit={reduceMotion ? { opacity: 0 } : isSheet ? { opacity: 0, y: '100%' } : { opacity: 0, scale: 0.96 }}
             transition={{ duration: reduceMotion ? 0 : 0.25, ease: [0.2, 0.8, 0.2, 1] }}
           >
+            {isSheet && (
+              <div
+                onPointerDown={(e) => dragControls.start(e)}
+                className="md:hidden shrink-0 flex justify-center pt-2 pb-1 touch-none cursor-grab active:cursor-grabbing"
+              >
+                <div className="w-9 h-1 rounded-full bg-[var(--ib-gray-200)]" />
+              </div>
+            )}
             <button
               onClick={onClose}
               aria-label="Close"
               // 44px tap target regardless of the visible icon size — mobile tap-target floor, §8.
               className="absolute top-2 right-2 w-11 h-11 flex items-center justify-center
                 rounded-full text-[var(--ib-gray-600)] hover:bg-[var(--ib-gray-50)]
-                active:scale-95 transition-all cursor-pointer"
+                active:scale-95 transition-all cursor-pointer z-10"
             >
               <X className="w-5 h-5" />
             </button>
-            {children}
+            <div className={isSheet ? 'flex-1 min-h-0 overflow-y-auto overscroll-contain' : ''}>
+              {children}
+            </div>
           </motion.div>
         </div>
       )}

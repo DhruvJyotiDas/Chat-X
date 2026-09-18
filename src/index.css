@@ -95,6 +95,20 @@
   --ib-shadow-md: 0 1px 2px rgba(18,22,29,0.04), 0 4px 12px rgba(18,22,29,0.08);
   --ib-shadow-lg: 0 2px 4px rgba(18,22,29,0.04), 0 12px 32px rgba(18,22,29,0.10);
   --ib-shadow-focus: 0 0 0 3px var(--ib-blue-100);
+
+  /* Semantic aliases (Phase 3, sub-unit 1) -- new code should reach for these
+   * instead of the numbered gray scale directly, so retheming a surface for
+   * dark mode (sub-unit 9) means changing the alias's value once here rather
+   * than hunting every --ib-gray-* call site that meant "page background" vs
+   * "card background" vs "border" by convention only. Light values only for
+   * now; dark counterparts land in sub-unit 9's :root[data-theme="dark"]
+   * block once that work is real. */
+  --ib-surface:        var(--ib-gray-50);
+  --ib-surface-raised: var(--ib-white);
+  --ib-border:         var(--ib-gray-200);
+  --ib-text:           var(--ib-gray-900);
+  --ib-text-muted:     var(--ib-gray-600);
+  --ib-focus:          var(--ib-blue-500);
 }
 
 @layer utilities {
@@ -145,11 +159,17 @@ body {
 
 button, input, textarea, select { font: inherit; }
 button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-visible {
-  outline: 2px solid rgba(126, 148, 255, 0.85);
+  outline: 2px solid var(--ib-focus);
   outline-offset: 2px;
 }
 
 ::selection { background: rgba(113, 140, 255, 0.32); color: #fff; }
+
+/* Phase 3, sub-unit 1 (foundations). Removes the persistent grey tap flash
+ * on touch browsers that still show one (Modal/Button/CtrlBtn already use
+ * active:scale-* for their own tap feedback, so the native flash is pure
+ * noise on top of that, not a lost affordance). */
+*, *::before, *::after { -webkit-tap-highlight-color: transparent; }
 
 /* Real screens (Dashboard/Security/Support/Debrief), light by default
  * (2026-09-18). Had NO light-mode override of any kind before this --

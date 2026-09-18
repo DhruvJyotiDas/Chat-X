@@ -40,6 +40,7 @@ import CommandPalette from './components/CommandPalette';
 // Types & data
 import { AppView, ComplianceLog } from './types';
 import { useTheme } from './hooks/useTheme';
+import { useVisualViewport } from './hooks/useVisualViewport';
 import { api } from './lib/api';
 
 function ViewLoader() {
@@ -430,6 +431,7 @@ function RoomCodeRoute() {
 
 export default function App() {
   useTheme();
+  useVisualViewport();
 
   return (
     <AuthProvider>

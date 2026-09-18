@@ -31,9 +31,14 @@ const VARIANT_CLASSES: Record<ButtonVariant, string> = {
 
 // Heights/text/padding per size — sm/md/lg per §8. Padding is horizontal only;
 // height is fixed so icon-only and text buttons of the same size line up.
+//
+// Phase 3, sub-unit 1 (foundations): sm/md bumped to 44px below md (this
+// batch's tap-target floor) via a responsive height, unchanged at md+ --
+// same mobile-bigger-than-desktop convention ActiveMeetingView's CtrlBtn
+// already established. lg was already 48px at every width, untouched.
 const SIZE_CLASSES: Record<ButtonSize, string> = {
-  sm: 'h-8 px-3 text-[13px] gap-1.5 rounded-[var(--ib-radius-pill)]',
-  md: 'h-10 px-4 text-[15px] gap-2 rounded-[var(--ib-radius-pill)]',
+  sm: 'h-11 md:h-8 px-3 text-[13px] gap-1.5 rounded-[var(--ib-radius-pill)]',
+  md: 'h-11 md:h-10 px-4 text-[15px] gap-2 rounded-[var(--ib-radius-pill)]',
   lg: 'h-12 px-6 text-[18px] gap-2 rounded-[var(--ib-radius-pill)]',
 };
 
