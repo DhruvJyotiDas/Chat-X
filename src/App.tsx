@@ -36,6 +36,7 @@ import PreJoinScreen from './components/meeting/PreJoinScreen';
 import { useChat } from './context/ChatContext';
 import IncomingCallModal from './components/meeting/IncomingCallModal';
 import CommandPalette from './components/CommandPalette';
+import AskAIPA from './components/ai/AskAIPA';
 
 // Types & data
 import { AppView, ComplianceLog } from './types';
@@ -420,6 +421,7 @@ function AppContent({ pendingRoomCode }: { pendingRoomCode?: string }) {
     )}
 
     <CommandPalette onNavigate={setCurrentView} onJoinMeeting={() => setCurrentView('active_meeting')} />
+    <AskAIPA hidden={effectiveView === 'active_meeting' || effectiveView === 'interview'} />
     </>
   );
 }

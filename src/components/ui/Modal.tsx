@@ -3,6 +3,8 @@ import type { ReactNode } from 'react';
 import { motion, AnimatePresence, useDragControls } from 'motion/react';
 import { X } from 'lucide-react';
 import { useScrollLock } from '../../hooks/useScrollLock';
+import { useKeyboardOpen } from '../../hooks/useKeyboardOpen';
+import { pushOverlay } from '../../lib/overlayStack';
 
 // motion's useReducedMotion isn't exported by the installed version of the
 // package (checked directly, not assumed) — same matchMedia read useTheme.ts
@@ -59,15 +61,35 @@ interface ModalProps {
   size?: 'sm' | 'lg';
   /** 'sheet' (default) = bottom sheet <md / centered card >=md. 'centered' = always a centered card. */
   variant?: 'sheet' | 'centered';
+  /** Sheet variant only. Near-full-height sheet (top gap ~48px + safe-area)
+   *  instead of the default content-driven, 85vh-capped height — for a
+   *  surface with its own internal scroll region that wants the space
+   *  (Ask AIPA's mobile popup, sub-unit 2). */
+  fullHeight?: boolean;
+  /** Suppresses Modal's own built-in close X — for a caller supplying its
+   *  own header with a close action (Ask AIPA's popup, sub-unit 2), so
+   *  there isn't a second, redundant close button floating on top of it. */
+  hideCloseButton?: boolean;
   'aria-label': string;
 }
 
 const MAX_WIDTH = { sm: 'max-w-[420px]', lg: 'max-w-[640px]' };
 
-export default function Modal({ open, onClose, children, size = 'sm', variant = 'sheet', ...rest }: ModalProps) {
+export default function Modal({
+  open, onClose, children, size = 'sm', variant = 'sheet', fullHeight = false, hideCloseButton = false, ...rest
+}: ModalProps) {
   const reduceMotion = useReducedMotion();
   const dragControls = useDragControls();
   useScrollLock(open);
+  const keyboardOpen = useKeyboardOpen();
+
+  // Registers with the shared "is any overlay open" signal (sub-unit 2,
+  // src/lib/overlayStack.ts) for the whole time this Modal is open — every
+  // Modal-based dialog/sheet gets this for free, no per-caller wiring.
+  useEffect(() => {
+    if (!open) return;
+    return pushOverlay();
+  }, [open]);
 
   // Esc closes, matching every existing ad hoc modal's own convention.
   useEffect(() => {
@@ -76,26 +98,6 @@ export default function Modal({ open, onClose, children, size = 'sm', variant = 
     window.addEventListener('keydown', handler);
     return () => window.removeEventListener('keydown', handler);
   }, [open, onClose]);
-
-  // 'centered' is centered on <md same as >=md by default — it only needs to
-  // move when an on-screen keyboard has actually shrunk the visual viewport
-  // (see the module doc comment above for why: centering in the FULL layout
-  // height would otherwise leave the lower half, including the primary
-  // action, under the keyboard). No native "is the keyboard open" signal
-  // exists, so this is a heuristic: visualViewport shrinking below ~85% of
-  // window.innerHeight is treated as the keyboard being up. 85% rather than
-  // 100% to not misfire on the ordinary few px difference from browser
-  // chrome (address bar, etc.) that isn't a keyboard at all.
-  const [keyboardOpen, setKeyboardOpen] = useState(false);
-  useEffect(() => {
-    if (!open) return;
-    const vv = window.visualViewport;
-    if (!vv) return;
-    const check = () => setKeyboardOpen(vv.height < window.innerHeight * 0.85);
-    check();
-    vv.addEventListener('resize', check);
-    return () => vv.removeEventListener('resize', check);
-  }, [open]);
 
   const isSheet = variant === 'sheet';
 
@@ -135,16 +137,18 @@ export default function Modal({ open, onClose, children, size = 'sm', variant = 
             className={
               isSheet
                 ? `relative w-full ${MAX_WIDTH[size]} md:mx-auto flex flex-col
-                   max-h-[85vh] md:max-h-[90vh] overflow-hidden
+                   overflow-hidden
                    bg-white rounded-t-[var(--ib-radius-xl)] md:rounded-[var(--ib-radius-xl)]
                    shadow-[var(--ib-shadow-lg)] pb-[env(safe-area-inset-bottom)] md:pb-0`
                 : `relative w-full ${MAX_WIDTH[size]} overflow-y-auto
                    bg-white rounded-[var(--ib-radius-xl)] shadow-[var(--ib-shadow-lg)]`
             }
             style={{
-              maxHeight: isSheet
-                ? 'min(85vh, var(--vv-height, 100dvh) - 24px)'
-                : 'min(90vh, var(--vv-height, 100dvh) - 32px)',
+              ...(isSheet
+                ? fullHeight
+                  ? { height: 'calc(var(--vv-height, 100dvh) - 48px - env(safe-area-inset-top, 0px))' }
+                  : { maxHeight: 'min(85vh, var(--vv-height, 100dvh) - 24px)' }
+                : { maxHeight: 'min(90vh, var(--vv-height, 100dvh) - 32px)' }),
             }}
             initial={reduceMotion ? { opacity: 0 } : isSheet ? { opacity: 0, y: '100%' } : { opacity: 0, scale: 0.96 }}
             animate={reduceMotion ? { opacity: 1 } : isSheet ? { opacity: 1, y: 0 } : { opacity: 1, scale: 1 }}
@@ -159,16 +163,18 @@ export default function Modal({ open, onClose, children, size = 'sm', variant = 
                 <div className="w-9 h-1 rounded-full bg-[var(--ib-gray-200)]" />
               </div>
             )}
-            <button
-              onClick={onClose}
-              aria-label="Close"
-              // 44px tap target regardless of the visible icon size — mobile tap-target floor, §8.
-              className="absolute top-2 right-2 w-11 h-11 flex items-center justify-center
-                rounded-full text-[var(--ib-gray-600)] hover:bg-[var(--ib-gray-50)]
-                active:scale-95 transition-all cursor-pointer z-10"
-            >
-              <X className="w-5 h-5" />
-            </button>
+            {!hideCloseButton && (
+              <button
+                onClick={onClose}
+                aria-label="Close"
+                // 44px tap target regardless of the visible icon size — mobile tap-target floor, §8.
+                className="absolute top-2 right-2 w-11 h-11 flex items-center justify-center
+                  rounded-full text-[var(--ib-gray-600)] hover:bg-[var(--ib-gray-50)]
+                  active:scale-95 transition-all cursor-pointer z-10"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            )}
             <div className={isSheet ? 'flex-1 min-h-0 overflow-y-auto overscroll-contain' : ''}>
               {children}
             </div>

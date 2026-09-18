@@ -17,6 +17,7 @@ import { useAuth } from '../../context/AuthContext';
 import SettingsModal from '../settings/SettingsModal';
 import { loadStatus, StatusPreference } from '../../lib/preferences';
 import BrandMark from '../BrandMark';
+import { pushOverlay } from '../../lib/overlayStack';
 
 interface SidebarProps {
   currentView: AppView;
@@ -66,6 +67,14 @@ export default function Sidebar({ currentView, onViewChange, unreadCount = 0, is
   useEffect(() => {
     if (!showSettings && currentUser) setStatus(loadStatus(currentUser.id));
   }, [showSettings, currentUser]);
+
+  // Registers the mobile drawer with the shared "is any overlay open" signal
+  // (sub-unit 2, src/lib/overlayStack.ts) -- it's its own ad hoc overlay, not
+  // built on the shared Modal primitive.
+  useEffect(() => {
+    if (!isMobileMenuOpen) return;
+    return pushOverlay();
+  }, [isMobileMenuOpen]);
 
   const initials = currentUser
     ? currentUser.displayName.split(' ').map(w => w[0]).join('').toUpperCase().slice(0, 2)

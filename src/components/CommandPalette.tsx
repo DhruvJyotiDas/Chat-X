@@ -10,6 +10,7 @@ import { useChat } from '../context/ChatContext';
 import { useMeeting } from '../context/MeetingContext';
 import ScheduleMeetingModal from './meeting/ScheduleMeetingModal';
 import SettingsModal from './settings/SettingsModal';
+import { pushOverlay } from '../lib/overlayStack';
 
 interface Props {
   onNavigate: (view: AppView) => void;
@@ -39,6 +40,15 @@ export default function CommandPalette({ onNavigate, onJoinMeeting }: Props) {
   const { createMeeting, clearMeetingError } = useMeeting();
 
   const close = () => { setOpen(false); setQuery(''); setActiveIndex(0); };
+
+  // Registers with the shared "is any overlay open" signal (sub-unit 2,
+  // src/lib/overlayStack.ts) -- still its own ad hoc fixed inset-0 overlay,
+  // not built on the shared Modal primitive, so this needs an explicit call
+  // (Modal-based dialogs get it automatically).
+  useEffect(() => {
+    if (!open) return;
+    return pushOverlay();
+  }, [open]);
 
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {

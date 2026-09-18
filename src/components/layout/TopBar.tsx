@@ -4,7 +4,6 @@ import { AppView } from '../../types';
 import { useAuth } from '../../context/AuthContext';
 import { useChat } from '../../context/ChatContext';
 import { loadNotifications } from '../../lib/preferences';
-import AIAssistantPanel from '../ai/AIAssistantPanel';
 
 interface TopBarProps {
   currentView: AppView;
@@ -28,7 +27,6 @@ const VIEW_INFO: Record<AppView, { title: string; subtitle: string; badge: strin
 
 export default function TopBar({ currentView, onViewChange, searchFilter, onSearchChange, onNewChatClicked }: TopBarProps) {
   const [notifOpen, setNotifOpen] = useState(false);
-  const [assistantOpen, setAssistantOpen] = useState(false);
   const { currentUser } = useAuth();
   const { threads } = useChat();
   const info = VIEW_INFO[currentView] || VIEW_INFO.chats;
@@ -69,7 +67,6 @@ export default function TopBar({ currentView, onViewChange, searchFilter, onSear
 
   return (
     <>
-      <AIAssistantPanel open={assistantOpen} onClose={() => setAssistantOpen(false)} />
       {/* In-app companion to the OS Notification (which may not have permission,
           or may not be supported at all) — always shown regardless, so a meeting
           reminder is never silently invisible while the app is open. */}
@@ -119,15 +116,6 @@ export default function TopBar({ currentView, onViewChange, searchFilter, onSear
           className="hidden md:flex items-center gap-1 bg-[#1c1b1b] border border-[#424655]/60 hover:border-[#568dff]/60 text-[#8c90a1] hover:text-[#b0c6ff] rounded-lg px-2 py-1.5 text-[10px] font-bold transition-colors cursor-pointer"
         >
           <Command className="w-3 h-3" />K
-        </button>
-
-        <button
-          onClick={() => setAssistantOpen(true)}
-          className="group flex h-8 items-center gap-1.5 rounded-xl border border-[#718cff]/25 bg-[#718cff]/10 px-2.5 text-[10px] font-semibold text-[#aebaff] transition hover:border-[#718cff]/50 hover:bg-[#718cff]/15 hover:text-white"
-          title="Ask AIPA"
-        >
-          <Sparkles className="h-3.5 w-3.5 transition-transform group-hover:rotate-12" />
-          <span className="hidden lg:inline">Ask AIPA</span>
         </button>
 
         {currentView !== 'active_meeting' && currentView !== 'dashboard' && (
