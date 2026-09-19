@@ -1,11 +1,18 @@
 import React, { useState, useEffect } from 'react';
-import { Calendar, Clock, X, Copy, Check, Users } from 'lucide-react';
+import { Calendar, Clock, Copy, Check, Users } from 'lucide-react';
 import { useMeeting } from '../../context/MeetingContext';
 import { useAuth } from '../../context/AuthContext';
 import { api } from '../../lib/api';
+import Modal from '../ui/Modal';
 
 interface Props { onClose: () => void; }
 
+// Migrated onto the shared Modal (sub-unit 8 gap-catch -- this ad hoc dark
+// dialog was missed in sub-unit 7's Phase 4 surfaces pass; it's opened from
+// two now-light pages, DebriefView's "Schedule" button and CommandPalette's
+// "Schedule Event" action, so leaving it dark-hardcoded would be a jarring
+// dark modal on a light page). It has no pinned header/footer of its own --
+// a clean 1:1 fit, unlike CalendarView's EventModal or MeetingNotesDialog.
 export default function ScheduleMeetingModal({ onClose }: Props) {
   const { scheduleMeeting } = useMeeting();
   const { currentUser }     = useAuth();
@@ -88,97 +95,89 @@ export default function ScheduleMeetingModal({ onClose }: Props) {
   };
 
   return (
-    <div className="fixed inset-0 bg-[#0e0e0e]/85 backdrop-blur-md flex items-end sm:items-center justify-center z-50 p-0 sm:p-4" onClick={onClose}>
-      <div className="bg-[#1c1b1b] border border-[#424655] rounded-t-2xl sm:rounded-2xl w-full sm:max-w-md shadow-2xl relative overflow-hidden" onClick={e => e.stopPropagation()}>
-        <div className="absolute top-0 left-0 right-0 h-0.5 bg-gradient-to-r from-[#c0c1ff] to-[#568dff]" />
-        <div className="flex justify-center pt-3 pb-1 sm:hidden"><div className="w-10 h-1 rounded-full bg-[#424655]" /></div>
-
-        <div className="flex justify-between items-center px-5 py-4 border-b border-[#424655]/40">
-          <div className="flex items-center gap-3">
-            <div className="w-9 h-9 sm:w-10 sm:h-10 rounded-xl bg-[#c0c1ff]/10 flex items-center justify-center">
-              <Calendar className="w-4 h-4 sm:w-5 sm:h-5 text-[#c0c1ff]" />
-            </div>
-            <h3 className="font-bold text-sm text-[#e5e2e1]">Schedule Meeting</h3>
-          </div>
-          <button onClick={onClose} className="w-7 h-7 rounded-full bg-[#201f1f] border border-[#424655] flex items-center justify-center hover:border-[#ffb4ab] hover:text-[#ffb4ab] transition-colors cursor-pointer"><X className="w-3.5 h-3.5" /></button>
+    <Modal open onClose={onClose} variant="sheet" size="sm" aria-label="Schedule meeting">
+      <div className="flex items-center gap-3 px-5 pt-1 pb-4 border-b border-[var(--ib-border)]">
+        <div className="w-9 h-9 sm:w-10 sm:h-10 rounded-xl bg-[var(--ib-blue-50)] flex items-center justify-center shrink-0">
+          <Calendar className="w-4 h-4 sm:w-5 sm:h-5 text-[var(--ib-blue-600)]" />
         </div>
+        <h3 className="font-bold text-sm text-[var(--ib-text)]">Schedule Meeting</h3>
+      </div>
 
-        {generatedCode ? (
-          <div className="flex flex-col items-center gap-4 px-5 py-6">
-            <div className="w-14 h-14 rounded-full bg-[#00e598]/10 flex items-center justify-center"><Check className="w-7 h-7 text-[#70ffba]" /></div>
-            <div className="text-center">
-              <h4 className="font-bold text-sm text-[#e5e2e1]">Meeting Scheduled & Invites Sent!</h4>
-              <p className="text-xs text-[#c2c6d8] mt-1">{title}</p>
-              <p className="text-[11px] text-[#8c90a1] mt-0.5">{formattedDateTime}</p>
-            </div>
-            <div className="w-full bg-[#131313] border border-[#424655] rounded-xl p-3.5">
-              <div className="flex items-center justify-between gap-3">
-                <div>
-                  <p className="text-[9px] text-[#8c90a1] uppercase font-bold tracking-wider mb-0.5">Room Code</p>
-                  <p className="text-sm font-mono font-bold text-[#b0c6ff]">{generatedCode}</p>
-                </div>
-                <button onClick={copyCode} className="flex items-center gap-1 bg-[#568dff]/10 text-[#b0c6ff] border border-[#568dff]/30 px-3 py-1.5 rounded-lg text-[10px] font-bold hover:bg-[#568dff]/20 cursor-pointer transition-colors shrink-0">
-                  {copied ? <Check className="w-3 h-3" /> : <Copy className="w-3 h-3" />} {copied ? 'Copied!' : 'Copy'}
-                </button>
-              </div>
-            </div>
-            <button onClick={copyLink} className="w-full py-2 text-[10px] text-[#8c90a1] hover:text-[#b0c6ff] font-semibold border border-[#424655]/60 rounded-xl transition-colors cursor-pointer">Copy join link instead</button>
-            <button onClick={onClose} className="w-full py-2.5 bg-[#568dff] text-[#002661] rounded-xl text-xs font-bold hover:bg-[#568dff]/90 cursor-pointer transition-colors">Done</button>
+      {generatedCode ? (
+        <div className="flex flex-col items-center gap-4 px-5 py-6">
+          <div className="w-14 h-14 rounded-full bg-[var(--ib-good-fill)] flex items-center justify-center"><Check className="w-7 h-7 text-[var(--ib-good-text)]" /></div>
+          <div className="text-center">
+            <h4 className="font-bold text-sm text-[var(--ib-text)]">Meeting Scheduled & Invites Sent!</h4>
+            <p className="text-xs text-[var(--ib-text)] mt-1">{title}</p>
+            <p className="text-[11px] text-[var(--ib-text-muted)] mt-0.5">{formattedDateTime}</p>
           </div>
-        ) : (
-          <form onSubmit={handleSubmit} className="flex flex-col gap-4 px-5 py-5 max-h-[75vh] overflow-y-auto">
-            <div className="flex flex-col gap-1.5">
-              <label className="text-[9px] font-bold tracking-wider text-[#8c90a1] uppercase">Meeting Title</label>
-              <input autoFocus type="text" placeholder="e.g. Q4 Strategy Review" value={title} onChange={e => setTitle(e.target.value)} className="px-3 py-2.5 bg-[#131313] border border-[#424655] rounded-xl text-xs text-[#e5e2e1] placeholder-[#8c90a1]/60 focus:border-[#568dff] outline-none transition-all" />
-            </div>
-
-            <div className="grid grid-cols-2 gap-3">
-              <div className="flex flex-col gap-1.5">
-                <label className="text-[9px] font-bold tracking-wider text-[#8c90a1] uppercase">Date</label>
-                <div className="relative">
-                  <Calendar className="w-3.5 h-3.5 text-[#8c90a1] absolute left-3 top-1/2 -translate-y-1/2" />
-                  <input type="date" value={date} min={today} onChange={e => setDate(e.target.value)} className="w-full pl-8 pr-3 py-2.5 bg-[#131313] border border-[#424655] rounded-xl text-xs text-[#e5e2e1] focus:border-[#568dff] outline-none transition-all" />
-                </div>
+          <div className="w-full bg-[var(--ib-surface)] border border-[var(--ib-border)] rounded-xl p-3.5">
+            <div className="flex items-center justify-between gap-3">
+              <div>
+                <p className="text-[9px] text-[var(--ib-text-muted)] uppercase font-bold tracking-wider mb-0.5">Room Code</p>
+                <p className="text-sm font-mono font-bold text-[var(--ib-blue-600)]">{generatedCode}</p>
               </div>
-              <div className="flex flex-col gap-1.5">
-                <label className="text-[9px] font-bold tracking-wider text-[#8c90a1] uppercase">Time</label>
-                <div className="relative">
-                  <Clock className="w-3.5 h-3.5 text-[#8c90a1] absolute left-3 top-1/2 -translate-y-1/2" />
-                  <input type="time" value={time} onChange={e => setTime(e.target.value)} className="w-full pl-8 pr-3 py-2.5 bg-[#131313] border border-[#424655] rounded-xl text-xs text-[#e5e2e1] focus:border-[#568dff] outline-none transition-all" />
-                </div>
-              </div>
-            </div>
-
-            <div className="flex flex-col gap-1.5">
-              {/* THE FIX: Select All button added */}
-              <div className="flex items-center justify-between">
-                <label className="text-[9px] font-bold tracking-wider text-[#8c90a1] uppercase flex items-center gap-1"><Users className="w-3 h-3" /> Invite Team Members</label>
-                <button type="button" onClick={handleSelectAll} className="text-[9px] font-bold text-[#568dff] hover:text-[#b0c6ff] uppercase tracking-wider transition-colors cursor-pointer">
-                  {selectedUsers.length === users.length && users.length > 0 ? 'Deselect All' : 'Select All'}
-                </button>
-              </div>
-
-              <div className="max-h-32 overflow-y-auto bg-[#131313] border border-[#424655] rounded-xl p-2 space-y-1 scrollbar-hide">
-                {users.map(u => (
-                  <label key={u.id} className="flex items-center gap-2 cursor-pointer p-1.5 hover:bg-[#201f1f] rounded-lg transition-colors">
-                    <input type="checkbox" checked={selectedUsers.includes(u.id)} onChange={() => toggleUser(u.id)} className="rounded border-[#424655] bg-[#201f1f] text-[#568dff] focus:ring-0" />
-                    <div className="w-6 h-6 rounded-full bg-[#568dff]/20 flex items-center justify-center text-[10px] font-bold text-[#b0c6ff] uppercase">{u.displayName.charAt(0)}</div>
-                    <span className="text-xs text-[#e5e2e1]">{u.displayName}</span>
-                  </label>
-                ))}
-                {users.length === 0 && <p className="text-[10px] text-[#8c90a1] text-center py-2">Loading users...</p>}
-              </div>
-            </div>
-
-            <div className="flex gap-3 pt-2">
-              <button type="button" onClick={onClose} className="flex-1 py-2.5 bg-[#201f1f] text-[#e5e2e1] border border-[#424655] rounded-xl text-xs font-semibold hover:bg-[#2a2a2a] cursor-pointer transition-colors">Cancel</button>
-              <button type="submit" disabled={!title.trim() || !date || !time || isInviting} className="flex-1 py-2.5 bg-[#568dff] text-[#002661] rounded-xl text-xs font-bold hover:bg-[#568dff]/90 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer transition-colors">
-                {isInviting ? 'Inviting...' : 'Schedule & Invite'}
+              <button onClick={copyCode} className="flex items-center gap-1 bg-[var(--ib-blue-50)] text-[var(--ib-blue-600)] border border-[var(--ib-blue-100)] px-3 min-h-[44px] rounded-lg text-[10px] font-bold hover:bg-[var(--ib-blue-100)] cursor-pointer transition-colors shrink-0">
+                {copied ? <Check className="w-3 h-3" /> : <Copy className="w-3 h-3" />} {copied ? 'Copied!' : 'Copy'}
               </button>
             </div>
-          </form>
-        )}
-      </div>
-    </div>
+          </div>
+          <button onClick={copyLink} className="w-full min-h-[44px] text-[10px] text-[var(--ib-text-muted)] hover:text-[var(--ib-blue-600)] font-semibold border border-[var(--ib-border)] rounded-xl transition-colors cursor-pointer">Copy join link instead</button>
+          <button onClick={onClose} className="w-full min-h-[44px] bg-[var(--ib-blue-500)] text-white rounded-xl text-xs font-bold hover:bg-[var(--ib-blue-600)] cursor-pointer transition-colors">Done</button>
+        </div>
+      ) : (
+        <form onSubmit={handleSubmit} className="flex flex-col gap-4 px-5 py-5">
+          <div className="flex flex-col gap-1.5">
+            <label className="text-[9px] font-bold tracking-wider text-[var(--ib-text-muted)] uppercase">Meeting Title</label>
+            <input autoFocus type="text" placeholder="e.g. Q4 Strategy Review" value={title} onChange={e => setTitle(e.target.value)} className="px-3 py-2.5 h-11 bg-[var(--ib-surface)] border border-[var(--ib-border)] rounded-xl text-base md:text-xs text-[var(--ib-text)] placeholder-[var(--ib-text-muted)] focus:border-[var(--ib-blue-500)] outline-none transition-all touch-manipulation" />
+          </div>
+
+          <div className="grid grid-cols-2 gap-3">
+            <div className="flex flex-col gap-1.5">
+              <label className="text-[9px] font-bold tracking-wider text-[var(--ib-text-muted)] uppercase">Date</label>
+              <div className="relative">
+                <Calendar className="w-3.5 h-3.5 text-[var(--ib-text-muted)] absolute left-3 top-1/2 -translate-y-1/2" />
+                <input type="date" value={date} min={today} onChange={e => setDate(e.target.value)} className="w-full pl-8 pr-3 h-11 bg-[var(--ib-surface)] border border-[var(--ib-border)] rounded-xl text-xs text-[var(--ib-text)] focus:border-[var(--ib-blue-500)] outline-none transition-all" />
+              </div>
+            </div>
+            <div className="flex flex-col gap-1.5">
+              <label className="text-[9px] font-bold tracking-wider text-[var(--ib-text-muted)] uppercase">Time</label>
+              <div className="relative">
+                <Clock className="w-3.5 h-3.5 text-[var(--ib-text-muted)] absolute left-3 top-1/2 -translate-y-1/2" />
+                <input type="time" value={time} onChange={e => setTime(e.target.value)} className="w-full pl-8 pr-3 h-11 bg-[var(--ib-surface)] border border-[var(--ib-border)] rounded-xl text-xs text-[var(--ib-text)] focus:border-[var(--ib-blue-500)] outline-none transition-all" />
+              </div>
+            </div>
+          </div>
+
+          <div className="flex flex-col gap-1.5">
+            {/* THE FIX: Select All button added */}
+            <div className="flex items-center justify-between">
+              <label className="text-[9px] font-bold tracking-wider text-[var(--ib-text-muted)] uppercase flex items-center gap-1"><Users className="w-3 h-3" /> Invite Team Members</label>
+              <button type="button" onClick={handleSelectAll} className="text-[9px] font-bold text-[var(--ib-blue-600)] hover:text-[var(--ib-blue-500)] uppercase tracking-wider transition-colors cursor-pointer">
+                {selectedUsers.length === users.length && users.length > 0 ? 'Deselect All' : 'Select All'}
+              </button>
+            </div>
+
+            <div className="max-h-32 overflow-y-auto bg-[var(--ib-surface)] border border-[var(--ib-border)] rounded-xl p-2 space-y-1 scrollbar-hide">
+              {users.map(u => (
+                <label key={u.id} className="flex min-h-[44px] items-center gap-2 cursor-pointer px-1.5 py-2 hover:bg-[var(--ib-gray-100)] rounded-lg transition-colors">
+                  <input type="checkbox" checked={selectedUsers.includes(u.id)} onChange={() => toggleUser(u.id)} className="rounded border-[var(--ib-border)] text-[var(--ib-blue-500)] focus:ring-0" />
+                  <div className="w-6 h-6 rounded-full bg-[var(--ib-blue-100)] flex items-center justify-center text-[10px] font-bold text-[var(--ib-blue-600)] uppercase">{u.displayName.charAt(0)}</div>
+                  <span className="text-xs text-[var(--ib-text)]">{u.displayName}</span>
+                </label>
+              ))}
+              {users.length === 0 && <p className="text-[10px] text-[var(--ib-text-muted)] text-center py-2">Loading users...</p>}
+            </div>
+          </div>
+
+          <div className="flex gap-3 pt-2">
+            <button type="button" onClick={onClose} className="flex-1 min-h-[44px] bg-[var(--ib-surface)] text-[var(--ib-text)] border border-[var(--ib-border)] rounded-xl text-xs font-semibold hover:bg-[var(--ib-gray-100)] cursor-pointer transition-colors">Cancel</button>
+            <button type="submit" disabled={!title.trim() || !date || !time || isInviting} className="flex-1 min-h-[44px] bg-[var(--ib-blue-500)] text-white rounded-xl text-xs font-bold hover:bg-[var(--ib-blue-600)] disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer transition-colors">
+              {isInviting ? 'Inviting...' : 'Schedule & Invite'}
+            </button>
+          </div>
+        </form>
+      )}
+    </Modal>
   );
 }

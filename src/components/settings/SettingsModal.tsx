@@ -103,7 +103,7 @@ function Input({ value, onChange, placeholder, disabled, type = 'text' }: {
       onChange={e => onChange?.(e.target.value)}
       placeholder={placeholder}
       disabled={disabled}
-      className="h-11 px-3 bg-[var(--ib-gray-50)] border border-[var(--ib-border)] rounded-xl text-base sm:text-xs text-[var(--ib-text)] placeholder-[var(--ib-text-muted)] focus:border-[var(--ib-blue-500)] focus:shadow-[var(--ib-shadow-focus)] outline-none transition-all disabled:opacity-50 disabled:cursor-not-allowed touch-manipulation"
+      className="h-11 px-3 bg-[var(--ib-gray-50)] border border-[var(--ib-border)] rounded-xl text-base md:text-xs text-[var(--ib-text)] placeholder-[var(--ib-text-muted)] focus:border-[var(--ib-blue-500)] focus:shadow-[var(--ib-shadow-focus)] outline-none transition-all disabled:opacity-50 disabled:cursor-not-allowed touch-manipulation"
     />
   );
 }
@@ -164,7 +164,7 @@ function ProfileTab() {
           placeholder="What are you up to?"
           rows={2}
           maxLength={160}
-          className="px-3 py-2.5 bg-[var(--ib-gray-50)] border border-[var(--ib-border)] rounded-xl text-base sm:text-xs text-[var(--ib-text)] placeholder-[var(--ib-text-muted)] focus:border-[var(--ib-blue-500)] outline-none transition-all resize-none touch-manipulation"
+          className="px-3 py-2.5 bg-[var(--ib-gray-50)] border border-[var(--ib-border)] rounded-xl text-base md:text-xs text-[var(--ib-text)] placeholder-[var(--ib-text-muted)] focus:border-[var(--ib-blue-500)] outline-none transition-all resize-none touch-manipulation"
         />
         <span className="text-[10px] text-[var(--ib-text-muted)] text-right">{bio.length}/160</span>
       </Field>
@@ -315,7 +315,7 @@ function PreferencesTab() {
             onChange={e => updateStatus({ ...status, text: e.target.value })}
             placeholder="What's your status?"
             maxLength={40}
-            className="flex-1 h-11 px-3 bg-[var(--ib-gray-50)] border border-[var(--ib-border)] rounded-xl text-base sm:text-xs text-[var(--ib-text)] placeholder-[var(--ib-text-muted)] focus:border-[var(--ib-blue-500)] outline-none transition-all touch-manipulation"
+            className="flex-1 h-11 px-3 bg-[var(--ib-gray-50)] border border-[var(--ib-border)] rounded-xl text-base md:text-xs text-[var(--ib-text)] placeholder-[var(--ib-text-muted)] focus:border-[var(--ib-blue-500)] outline-none transition-all touch-manipulation"
           />
         </div>
         <p className="text-[10px] text-[var(--ib-text-muted)] mt-1.5">Shown to you only — visible on this device.</p>

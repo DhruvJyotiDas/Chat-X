@@ -124,7 +124,7 @@ export default function TopBar({ currentView, onViewChange, searchFilter, onSear
           <Search className="w-3.5 h-3.5 text-[var(--ib-text-muted)] absolute left-2.5" />
           <input
             type="text"
-            className="bg-transparent border-none focus:ring-0 text-sm text-[var(--ib-text)] pl-8 pr-3 py-2 w-full outline-none placeholder:text-[var(--ib-text-muted)]"
+            className="bg-transparent border-none focus:ring-0 text-base md:text-sm text-[var(--ib-text)] pl-8 pr-3 py-2 w-full outline-none placeholder:text-[var(--ib-text-muted)]"
             placeholder={currentView === 'support' ? 'Search FAQs...' : 'Search...'}
             value={searchFilter}
             onChange={e => onSearchChange(e.target.value)}

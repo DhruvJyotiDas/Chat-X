@@ -180,7 +180,7 @@ export default function CallsView({ onJoinMeeting }: { onJoinMeeting: () => void
               value={search}
               onChange={e => setSearch(e.target.value)}
               placeholder="Search users..."
-              className="w-full h-11 bg-[var(--ib-gray-50)] border border-[var(--ib-border)] rounded-xl pl-9 pr-4 text-base sm:text-xs text-[var(--ib-text)] placeholder-[var(--ib-text-muted)] focus:border-[var(--ib-blue-500)] outline-none touch-manipulation"
+              className="w-full h-11 bg-[var(--ib-gray-50)] border border-[var(--ib-border)] rounded-xl pl-9 pr-4 text-base md:text-xs text-[var(--ib-text)] placeholder-[var(--ib-text-muted)] focus:border-[var(--ib-blue-500)] outline-none touch-manipulation"
             />
           </div>
         </div>

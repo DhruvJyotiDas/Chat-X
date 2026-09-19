@@ -137,7 +137,7 @@ export default function ConversationInfoPanel({
     <div className="fixed inset-0 z-[95] bg-black/55 backdrop-blur-[2px]" onMouseDown={event => { if (event.target === event.currentTarget) onClose(); }}>
       <aside className="ml-auto flex h-full w-full max-w-[420px] animate-[panel-in_.2s_ease-out] flex-col border-l border-white/10 bg-[#0d121d]/98 shadow-[-24px_0_70px_rgba(0,0,0,.42)]">
         <header className="flex h-16 shrink-0 items-center gap-3 border-b border-white/[0.08] px-4">
-          <button onClick={onClose} aria-label="Close info" className="grid h-9 w-9 place-items-center rounded-xl text-[#8c90a1] hover:bg-white/[0.06] hover:text-white"><X className="h-4 w-4" /></button>
+          <button onClick={onClose} aria-label="Close info" className="grid h-11 w-11 md:h-9 md:w-9 place-items-center rounded-xl text-[#8c90a1] hover:bg-white/[0.06] hover:text-white cursor-pointer"><X className="h-4 w-4" /></button>
           <div><h2 className="text-sm font-bold text-[#e5e2e1]">{title}</h2><p className="text-[10px] text-[#8c90a1]">Details, media and conversation controls</p></div>
         </header>
 
@@ -148,14 +148,14 @@ export default function ConversationInfoPanel({
               {displayAvatar ? <img src={displayAvatar} alt="" className="h-full w-full rounded-[28px] border-4 border-[#151c2a] object-cover shadow-2xl" /> : (
                 <div className="grid h-full w-full place-items-center rounded-[28px] border-4 border-[#151c2a] bg-gradient-to-br from-[#718cff]/35 to-[#35cdb0]/20 text-2xl font-bold text-white shadow-2xl">{isGroup ? <Users className="h-8 w-8" /> : initials(displayName)}</div>
               )}
-              {canEditGroupInfo && <button onClick={() => iconInputRef.current?.click()} aria-label="Change group icon" className="absolute -bottom-1 -right-1 grid h-8 w-8 place-items-center rounded-xl border-2 border-[#0d121d] bg-[#718cff] text-white shadow-lg"><Camera className="h-3.5 w-3.5" /></button>}
+              {canEditGroupInfo && <button onClick={() => iconInputRef.current?.click()} aria-label="Change group icon" className="absolute -bottom-1 -right-1 grid h-11 w-11 md:h-8 md:w-8 place-items-center rounded-xl border-2 border-[#0d121d] bg-[#718cff] text-white shadow-lg cursor-pointer"><Camera className="h-3.5 w-3.5" /></button>}
               <input ref={iconInputRef} type="file" accept="image/*" className="hidden" onChange={event => handleIcon(event.target.files?.[0])} />
             </div>
 
             {canEditGroupInfo ? (
               <div className="mx-auto max-w-sm space-y-2">
                 <input value={name} maxLength={100} onChange={event => setName(event.target.value)} aria-label="Group name" className="w-full rounded-xl border border-white/10 bg-white/[0.04] px-3 py-2 text-center text-base font-bold text-white outline-none focus:border-[#718cff]/60" />
-                <textarea value={description} maxLength={500} onChange={event => setDescription(event.target.value)} placeholder="Add a group description" aria-label="Group description" rows={2} className="w-full resize-none rounded-xl border border-white/10 bg-white/[0.04] px-3 py-2 text-center text-xs leading-relaxed text-[#c2c6d8] outline-none placeholder:text-[#596174] focus:border-[#718cff]/60" />
+                <textarea value={description} maxLength={500} onChange={event => setDescription(event.target.value)} placeholder="Add a group description" aria-label="Group description" rows={2} className="w-full resize-none rounded-xl border border-white/10 bg-white/[0.04] px-3 py-2 text-center text-base md:text-xs leading-relaxed text-[#c2c6d8] outline-none placeholder:text-[#596174] focus:border-[#718cff]/60 touch-manipulation" />
               </div>
             ) : (
               <>

@@ -150,7 +150,7 @@ export default function Sidebar({ currentView, onViewChange, unreadCount = 0, is
       <button
         onClick={() => setIsMobileMenuOpen(!isMobileMenuOpen)}
         aria-label={isMobileMenuOpen ? 'Close menu' : 'Open menu'}
-        className={`md:hidden fixed top-3 left-3 z-[80] w-10 h-10 rounded-xl backdrop-blur-md flex items-center justify-center transition-all duration-300 shadow-[var(--ib-shadow-md)] ${
+        className={`md:hidden fixed top-3 left-3 z-[80] w-11 h-11 rounded-xl backdrop-blur-md flex items-center justify-center transition-all duration-300 shadow-[var(--ib-shadow-md)] ${
           isMobileMenuOpen
             ? 'bg-[var(--ib-blue-50)] border border-[var(--ib-blue-100)] text-[var(--ib-blue-500)] rotate-90 scale-95'
             : 'bg-white/90 border border-[var(--ib-gray-200)] text-[var(--ib-gray-800)] hover:bg-[var(--ib-gray-50)] rotate-0 scale-100'
@@ -243,7 +243,7 @@ export default function Sidebar({ currentView, onViewChange, unreadCount = 0, is
       >
         <button
           onClick={() => handleNavClick('dashboard')}
-          className="flex items-center gap-3 mt-14 mb-4 mx-4 shrink-0"
+          className="flex items-center gap-3 min-h-[44px] mt-14 mb-4 mx-4 shrink-0"
         >
           <span className="w-10 h-10 rounded-2xl bg-[var(--ib-blue-500)] flex items-center justify-center shadow-[0_0_18px_rgba(0,102,255,0.35)] shrink-0">
             <BrandMark className="w-5 h-5" />

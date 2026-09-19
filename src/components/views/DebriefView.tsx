@@ -69,7 +69,7 @@ export default function DebriefView({ onJoinMeeting, autoJoinCode, onAutoJoinCon
               <div><h3 className="font-bold text-sm text-[var(--ib-text)]">Join a Meeting</h3><p className="text-xs text-[var(--ib-text-muted)] mt-0.5">Enter a room code to join</p></div>
             </div>
             <div className="flex items-center gap-2 bg-[var(--ib-surface)] rounded-xl border border-[var(--ib-border)] focus-within:border-[var(--ib-blue-500)] transition-all overflow-hidden">
-              <input type="text" placeholder="ENTER ROOM CODE…" className="flex-1 pl-3 sm:pl-4 pr-2 py-3 bg-transparent text-base sm:text-xs text-[var(--ib-text)] placeholder-[var(--ib-text-muted)] outline-none uppercase font-mono min-w-0 touch-manipulation" value={meetingCode} onChange={e => setMeetingCode(e.target.value.toUpperCase())} onKeyDown={e => e.key === 'Enter' && handleJoin()} />
+              <input type="text" placeholder="ENTER ROOM CODE…" className="flex-1 pl-3 sm:pl-4 pr-2 py-3 bg-transparent text-base md:text-xs text-[var(--ib-text)] placeholder-[var(--ib-text-muted)] outline-none uppercase font-mono min-w-0 touch-manipulation" value={meetingCode} onChange={e => setMeetingCode(e.target.value.toUpperCase())} onKeyDown={e => e.key === 'Enter' && handleJoin()} />
               <button onClick={() => handleJoin()} disabled={isJoining || !meetingCode.trim()} className="mr-1.5 bg-[var(--ib-blue-500)] text-white px-3 sm:px-4 py-2.5 sm:py-1.5 min-h-[44px] sm:min-h-0 rounded-lg text-xs font-bold hover:bg-[var(--ib-blue-600)] disabled:opacity-40 cursor-pointer disabled:cursor-not-allowed transition-colors shrink-0">{isJoining ? '…' : 'Join'}</button>
             </div>
           </div>

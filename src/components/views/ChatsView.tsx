@@ -733,7 +733,7 @@ function DocumentQA({ messageId, fileName }: { messageId: string; fileName: stri
               onChange={(e) => setQuestion(e.target.value)}
               onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); handleAsk(); } }}
               placeholder={`Ask about ${fileName}…`}
-              className="flex-1 min-w-0 bg-[#0e0e0e] border border-[#424655]/60 rounded-lg px-2 py-1 text-[10px] text-[#e5e2e1] placeholder-[#8c90a1]/60 focus:border-[#568dff] outline-none"
+              className="flex-1 min-w-0 bg-[#0e0e0e] border border-[#424655]/60 rounded-lg px-2 py-1 text-base md:text-[10px] text-[#e5e2e1] placeholder-[#8c90a1]/60 focus:border-[#568dff] outline-none touch-manipulation"
             />
             <button onClick={handleAsk} disabled={!question.trim() || isAsking} className="text-[9px] font-bold text-[#c0c1ff] hover:text-[#e5e2e1] disabled:opacity-40 whitespace-nowrap flex-shrink-0">
               {isAsking ? <Loader2 className="w-3 h-3 animate-spin" /> : 'Ask'}
@@ -856,7 +856,7 @@ function NewDMModal({ currentUserId, onClose, onSelect }: { currentUserId: strin
         <div className="p-3">
           <div className="relative mb-3">
             <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-[#8c90a1]" />
-            <input autoFocus type="text" value={search} onChange={e => setSearch(e.target.value)} placeholder="Search by name or username…" className="w-full bg-[#0e0e0e] border border-[#424655] rounded-xl pl-9 pr-3 py-2.5 text-xs text-[#e5e2e1] placeholder-[#8c90a1]/60 focus:border-[#568dff] outline-none" />
+            <input autoFocus type="text" value={search} onChange={e => setSearch(e.target.value)} placeholder="Search by name or username…" className="w-full bg-[#0e0e0e] border border-[#424655] rounded-xl pl-9 pr-3 py-2.5 text-base md:text-xs text-[#e5e2e1] placeholder-[#8c90a1]/60 focus:border-[#568dff] outline-none touch-manipulation" />
           </div>
           <div className="flex flex-col gap-1 max-h-64 overflow-y-auto">
             {others.length === 0 ? (
@@ -897,13 +897,13 @@ function NewGroupModal({ currentUserId, onClose, onCreate }: { currentUserId: st
         <div className="p-4 flex flex-col gap-3">
           <div className="flex flex-col gap-1">
             <label className="text-[10px] font-bold uppercase tracking-wider text-[#8c90a1]">Group Name</label>
-            <input autoFocus type="text" value={name} onChange={e => setName(e.target.value)} placeholder="e.g. Team Alpha…" className="bg-[#0e0e0e] border border-[#424655] rounded-xl px-3 py-2.5 text-xs text-[#e5e2e1] placeholder-[#8c90a1]/60 focus:border-[#568dff] outline-none" />
+            <input autoFocus type="text" value={name} onChange={e => setName(e.target.value)} placeholder="e.g. Team Alpha…" className="bg-[#0e0e0e] border border-[#424655] rounded-xl px-3 py-2.5 text-base md:text-xs text-[#e5e2e1] placeholder-[#8c90a1]/60 focus:border-[#568dff] outline-none touch-manipulation" />
           </div>
           <div className="flex flex-col gap-1">
             <label className="text-[10px] font-bold uppercase tracking-wider text-[#8c90a1]">Add Members {selected.length > 0 && <span className="text-[#568dff]">({selected.length} selected)</span>}</label>
             <div className="relative">
               <Search className="w-3.5 h-3.5 absolute left-3 top-1/2 -translate-y-1/2 text-[#8c90a1]" />
-              <input type="text" value={search} onChange={e => setSearch(e.target.value)} placeholder="Search users…" className="w-full bg-[#0e0e0e] border border-[#424655] rounded-xl pl-8 pr-3 py-2 text-xs text-[#e5e2e1] placeholder-[#8c90a1]/60 focus:border-[#568dff] outline-none" />
+              <input type="text" value={search} onChange={e => setSearch(e.target.value)} placeholder="Search users…" className="w-full bg-[#0e0e0e] border border-[#424655] rounded-xl pl-8 pr-3 py-2 text-base md:text-xs text-[#e5e2e1] placeholder-[#8c90a1]/60 focus:border-[#568dff] outline-none touch-manipulation" />
             </div>
           </div>
           <div className="flex flex-col gap-1 max-h-48 overflow-y-auto">
@@ -1789,7 +1789,7 @@ export default function ChatsView({ onJoinMeeting, searchFilter }: ChatsViewProp
             value={localSearch}
             onChange={e => { setLocalSearch(e.target.value); setMsgSearchResults(null); }}
             placeholder="Search conversations…"
-            className="w-full h-11 sm:h-auto bg-[var(--ib-gray-50)] border border-[var(--ib-border)] rounded-xl pl-8 pr-3 py-2 text-base sm:text-xs text-[var(--ib-text)] placeholder-[var(--ib-text-muted)] focus:border-[var(--ib-blue-500)] outline-none transition-colors touch-manipulation"
+            className="w-full h-11 sm:h-auto bg-[var(--ib-gray-50)] border border-[var(--ib-border)] rounded-xl pl-8 pr-3 py-2 text-base md:text-xs text-[var(--ib-text)] placeholder-[var(--ib-text-muted)] focus:border-[var(--ib-blue-500)] outline-none transition-colors touch-manipulation"
           />
           {localSearch && <button onClick={() => { setLocalSearch(''); setMsgSearchResults(null); }} className="absolute right-2.5 top-1/2 -translate-y-1/2 text-[var(--ib-text-muted)] hover:text-[var(--ib-text)]"><X className="w-3 h-3" /></button>}
         </div>
@@ -2082,7 +2082,7 @@ export default function ChatsView({ onJoinMeeting, searchFilter }: ChatsViewProp
                 <>
                   <textarea
                     ref={textareaRef}
-                    className="w-full bg-transparent border-none focus:ring-0 resize-none py-3 px-4 text-base sm:text-xs text-[var(--ib-text)] placeholder-[var(--ib-text-muted)] outline-none leading-relaxed touch-manipulation"
+                    className="w-full bg-transparent border-none focus:ring-0 resize-none py-3 px-4 text-base md:text-xs text-[var(--ib-text)] placeholder-[var(--ib-text-muted)] outline-none leading-relaxed touch-manipulation"
                     style={{ minHeight: '44px', maxHeight: '112px', overflowY: 'auto' }}
                     placeholder="Type a message… (use **text** for bold)"
                     value={inputText}
