@@ -181,25 +181,38 @@ export default function Sidebar({ currentView, onViewChange, unreadCount = 0, is
            had to serve both a hidden mobile drawer AND a visible desktop
            rail from the same element. ── */}
       <nav className="hidden md:flex fixed left-0 top-0 bottom-0 z-[70] flex-col items-center py-4 w-[76px] h-full border-r border-[var(--ib-gray-100)] bg-[var(--ib-surface-raised)] shrink-0">
-        <button
-          onClick={() => handleNavClick('dashboard')}
-          aria-label="IB Connect home"
-          className="mt-1 mb-3 w-11 h-11 rounded-2xl bg-[var(--ib-blue-500)] flex items-center justify-center shadow-[0_0_18px_rgba(0,102,255,0.35)] hover:scale-105 active:scale-95 transition-transform shrink-0 cursor-pointer"
-        >
-          <BrandMark className="w-6 h-6" />
-        </button>
+        {/* Bug-batch 2026-09-19, section 6: this used to be flat content in
+            the outer <nav>, no overflow handling -- ~10 items at 44px+gap-1
+            plus the brand button and bottom cluster need roughly 640px of
+            height (counted directly, not guessed), and Windows laptops at
+            125-150% display scaling can hand this column as little as
+            580-620px. Below that it just clipped/overlapped. The middle
+            section now scrolls on its own (thin scrollbar) while the brand
+            button and the pinned bottom cluster stay put -- gaps are
+            already at gap-1 (4px), the bottom of this section's own "4-8px"
+            floor, so there's no further spacing left to compress without
+            either scrolling or shrinking below the 44px tap-target floor. */}
+        <div className="flex-1 min-h-0 w-full overflow-y-auto scrollbar-thin flex flex-col items-center">
+          <button
+            onClick={() => handleNavClick('dashboard')}
+            aria-label="IB Connect home"
+            className="mt-1 mb-3 w-11 h-11 rounded-2xl bg-[var(--ib-blue-500)] flex items-center justify-center shadow-[0_0_18px_rgba(0,102,255,0.35)] hover:scale-105 active:scale-95 transition-transform shrink-0 cursor-pointer"
+          >
+            <BrandMark className="w-6 h-6" />
+          </button>
 
-        <div className="flex flex-col items-center gap-1">
-          {PRIMARY_NAV.map(renderRailButton)}
+          <div className="flex flex-col items-center gap-1">
+            {PRIMARY_NAV.map(renderRailButton)}
+          </div>
+
+          <div className="w-7 h-px bg-[var(--ib-gray-100)] my-2 shrink-0" />
+
+          <div className="flex flex-col items-center gap-1">
+            {UTILITY_NAV.map(renderRailButton)}
+          </div>
         </div>
 
-        <div className="w-7 h-px bg-[var(--ib-gray-100)] my-2 shrink-0" />
-
-        <div className="flex flex-col items-center gap-1">
-          {UTILITY_NAV.map(renderRailButton)}
-        </div>
-
-        <div className="mt-auto flex flex-col items-center gap-2 pt-3 shrink-0">
+        <div className="flex flex-col items-center gap-2 pt-3 shrink-0">
           {DARK_MODE_READY && (
             <button
               onClick={toggleTheme}
@@ -269,7 +282,14 @@ export default function Sidebar({ currentView, onViewChange, unreadCount = 0, is
           <span className="text-[15px] font-semibold text-[var(--ib-gray-900)]">IB Connect</span>
         </button>
 
-        <div className="flex flex-col gap-1 px-3 overflow-y-auto">
+        {/* min-h-0 added (bug-batch 2026-09-19, section 6) -- without it, a
+            flex child with overflow-y-auto doesn't actually shrink to make
+            room for its scrollbar to matter; it just grows with its
+            content, same underlying gap as the desktop rail's own fix. At
+            360x640 with the new Dark mode row (section 4) this section now
+            scrolls instead of pushing Settings/Dark mode/the profile row
+            off the bottom of a short screen. */}
+        <div className="flex-1 min-h-0 flex flex-col gap-1 px-3 overflow-y-auto scrollbar-thin">
           {PRIMARY_NAV.map(renderDrawerRow)}
         </div>
 

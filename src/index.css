@@ -184,6 +184,21 @@
     -ms-overflow-style: none;
     scrollbar-width: none;
   }
+
+  /* Bug-batch 2026-09-19, section 6 -- unlike scrollbar-hide above, this
+     content genuinely needs a discoverable scrollbar (the Sidebar rail at
+     short viewport heights), just a slim one instead of the OS default. */
+  .scrollbar-thin::-webkit-scrollbar {
+    width: 4px;
+  }
+  .scrollbar-thin::-webkit-scrollbar-thumb {
+    background: var(--ib-gray-200);
+    border-radius: 9999px;
+  }
+  .scrollbar-thin {
+    scrollbar-width: thin;
+    scrollbar-color: var(--ib-gray-200) transparent;
+  }
 }
 
 /* Glass panel background representing the bento cards */
