@@ -10,7 +10,9 @@ import {
   HelpCircle,
   Settings,
   Menu,
-  X
+  X,
+  Moon,
+  Sun,
 } from 'lucide-react';
 import { AppView } from '../../types';
 import { useAuth } from '../../context/AuthContext';
@@ -18,6 +20,8 @@ import SettingsModal from '../settings/SettingsModal';
 import { loadStatus, StatusPreference } from '../../lib/preferences';
 import BrandMark from '../BrandMark';
 import { pushOverlay } from '../../lib/overlayStack';
+import { useTheme, resolveTheme, DARK_MODE_READY } from '../../hooks/useTheme';
+import Switch from '../ui/Switch';
 
 interface SidebarProps {
   currentView: AppView;
@@ -63,6 +67,9 @@ export default function Sidebar({ currentView, onViewChange, unreadCount = 0, is
   const [showSettings, setShowSettings] = useState(false);
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   const [status, setStatus] = useState<StatusPreference>(() => currentUser ? loadStatus(currentUser.id) : { emoji: '', text: '' });
+  const { theme, setTheme } = useTheme();
+  const isDark = resolveTheme(theme) === 'dark';
+  const toggleTheme = () => setTheme(isDark ? 'light' : 'dark');
 
   useEffect(() => {
     if (!showSettings && currentUser) setStatus(loadStatus(currentUser.id));
@@ -193,6 +200,16 @@ export default function Sidebar({ currentView, onViewChange, unreadCount = 0, is
         </div>
 
         <div className="mt-auto flex flex-col items-center gap-2 pt-3 shrink-0">
+          {DARK_MODE_READY && (
+            <button
+              onClick={toggleTheme}
+              aria-label={isDark ? 'Switch to light mode' : 'Switch to dark mode'}
+              className="relative group w-11 h-11 flex items-center justify-center rounded-2xl text-[var(--ib-gray-600)] hover:bg-[var(--ib-gray-50)] hover:text-[var(--ib-gray-900)] transition-all cursor-pointer"
+            >
+              {isDark ? <Sun className="w-[17px] h-[17px]" /> : <Moon className="w-[17px] h-[17px]" />}
+              <RailTooltip>{isDark ? 'Switch to light mode' : 'Switch to dark mode'}</RailTooltip>
+            </button>
+          )}
           <button
             onClick={() => setShowSettings(true)}
             aria-label="Settings"
@@ -219,7 +236,7 @@ export default function Sidebar({ currentView, onViewChange, unreadCount = 0, is
                 </div>
               )}
             </div>
-            <span className="absolute bottom-0 right-0 w-2.5 h-2.5 bg-[var(--ib-good-dot)] rounded-full border-2 border-white" />
+            <span className="absolute bottom-0 right-0 w-2.5 h-2.5 bg-[var(--ib-good-dot)] rounded-full border-2 border-[var(--ib-surface-raised)]" />
 
             <div className="pointer-events-none absolute left-full ml-3 bottom-0 scale-95 opacity-0 group-hover:scale-100 group-hover:opacity-100 hidden md:block bg-[var(--ib-gray-900)] text-white text-xs rounded-xl shadow-[var(--ib-shadow-lg)] transition-all duration-150 z-50 whitespace-nowrap overflow-hidden">
               <div className="px-3 py-2 border-b border-white/15 font-semibold flex items-center gap-1.5">
@@ -263,6 +280,13 @@ export default function Sidebar({ currentView, onViewChange, unreadCount = 0, is
         </div>
 
         <div className="mt-auto flex flex-col gap-1 p-3 pt-3 border-t border-[var(--ib-gray-100)] shrink-0">
+          {DARK_MODE_READY && (
+            <div className="flex items-center gap-3 w-full min-h-[48px] px-4 rounded-[var(--ib-radius-md)] text-[var(--ib-gray-800)]">
+              {isDark ? <Moon className="w-5 h-5 shrink-0" /> : <Sun className="w-5 h-5 shrink-0" />}
+              <span className="flex-1 text-[15px] font-medium">Dark mode</span>
+              <Switch checked={isDark} onChange={toggleTheme} aria-label="Dark mode" />
+            </div>
+          )}
           <button
             onClick={() => { setShowSettings(true); setIsMobileMenuOpen(false); }}
             className="flex items-center gap-3 w-full h-12 px-4 rounded-[var(--ib-radius-md)] text-[var(--ib-gray-800)] hover:bg-[var(--ib-gray-50)] transition-colors cursor-pointer"
@@ -285,7 +309,7 @@ export default function Sidebar({ currentView, onViewChange, unreadCount = 0, is
                   </span>
                 )}
               </span>
-              <span className="absolute bottom-0 right-0 w-2.5 h-2.5 bg-[var(--ib-good-dot)] rounded-full border-2 border-white" />
+              <span className="absolute bottom-0 right-0 w-2.5 h-2.5 bg-[var(--ib-good-dot)] rounded-full border-2 border-[var(--ib-surface-raised)]" />
             </span>
             <span className="min-w-0">
               <span className="block text-[14px] font-semibold text-[var(--ib-gray-900)] truncate">{currentUser?.displayName}</span>

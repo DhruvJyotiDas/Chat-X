@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useSyncExternalStore } from 'react';
 
 export type ThemePreference = 'dark' | 'light' | 'system';
 
@@ -30,7 +30,7 @@ const KEY = 'ibconnect_theme';
 //     sync by hand if this ever changes.
 export const DARK_MODE_READY = true;
 
-function resolve(pref: ThemePreference): 'dark' | 'light' {
+export function resolveTheme(pref: ThemePreference): 'dark' | 'light' {
   if (!DARK_MODE_READY) return 'light';
   if (pref === 'system') {
     return window.matchMedia?.('(prefers-color-scheme: light)').matches ? 'light' : 'dark';
@@ -45,40 +45,75 @@ function resolve(pref: ThemePreference): 'dark' | 'light' {
 const THEME_COLOR = { light: '#0066FF', dark: '#0C111B' };
 
 function apply(pref: ThemePreference) {
-  const resolved = resolve(pref);
+  const resolved = resolveTheme(pref);
   document.documentElement.setAttribute('data-theme', resolved);
   document.documentElement.style.colorScheme = resolved;
   document.querySelector('meta[name="theme-color"]')?.setAttribute('content', THEME_COLOR[resolved]);
 }
 
-export function useTheme() {
-  // Default flipped dark -> light 2026-09-18: the redesign in
-  // DESIGN_SYSTEM.md is a full departure from dark, not an opt-in toggle.
-  // An existing user's saved localStorage preference is untouched either way.
-  //
-  // While DARK_MODE_READY is false: never even read the stored preference,
-  // so a real saved 'dark' is neither applied nor overwritten -- it is
-  // simply left alone in storage, ready to resolve correctly the moment the
-  // gate flips true and this file is deployed with it.
-  const [theme, setThemeState] = useState<ThemePreference>(() => {
-    if (!DARK_MODE_READY) return 'light';
-    try { return (localStorage.getItem(KEY) as ThemePreference) ?? 'light'; } catch { return 'light'; }
+// Bug-batch 2026-09-19, section 4: every useTheme() call used to be its own
+// independent useState -- the Sidebar toggle added in this same fix wouldn't
+// have updated Settings' Appearance picker (or vice versa) without a reload,
+// and neither would have noticed a second tab changing the preference. This
+// is now real module-level singleton state (one value, everyone subscribes
+// to it) via useSyncExternalStore -- the storage key and the values stored
+// under it are UNCHANGED, only how components read/write the in-memory copy.
+function readStoredTheme(): ThemePreference {
+  if (!DARK_MODE_READY) return 'light';
+  try { return (localStorage.getItem(KEY) as ThemePreference) ?? 'light'; } catch { return 'light'; }
+}
+
+let currentTheme: ThemePreference = readStoredTheme();
+const listeners = new Set<() => void>();
+
+function notify() {
+  for (const listener of listeners) listener();
+}
+
+function setTheme(pref: ThemePreference) {
+  currentTheme = pref;
+  try { localStorage.setItem(KEY, pref); } catch {}
+  apply(pref);
+  notify();
+}
+
+function subscribe(listener: () => void): () => void {
+  listeners.add(listener);
+  return () => listeners.delete(listener);
+}
+
+function getSnapshot(): ThemePreference {
+  return currentTheme;
+}
+
+if (typeof window !== 'undefined') {
+  apply(currentTheme);
+
+  // Cross-tab sync: the `storage` event fires in every OTHER tab (never the
+  // one that made the change) when localStorage is written -- this is what
+  // makes a second tab follow a theme change without a reload.
+  window.addEventListener('storage', (e) => {
+    if (e.key !== KEY || !DARK_MODE_READY) return;
+    currentTheme = (e.newValue as ThemePreference) ?? 'light';
+    apply(currentTheme);
+    notify();
   });
 
-  useEffect(() => { apply(theme); }, [theme]);
-
-  useEffect(() => {
-    if (!DARK_MODE_READY || theme !== 'system') return;
+  // 'system' re-resolves when the OS preference flips, regardless of which
+  // (if any) component instance is mounted right now -- module-level, not
+  // per-hook, since this is genuinely singleton state now.
+  if (DARK_MODE_READY) {
     const mq = window.matchMedia('(prefers-color-scheme: light)');
-    const handler = () => apply('system');
-    mq.addEventListener('change', handler);
-    return () => mq.removeEventListener('change', handler);
-  }, [theme]);
+    mq.addEventListener('change', () => {
+      if (currentTheme !== 'system') return;
+      apply(currentTheme);
+      notify();
+    });
+  }
+}
 
-  const setTheme = useCallback((pref: ThemePreference) => {
-    setThemeState(pref);
-    try { localStorage.setItem(KEY, pref); } catch {}
-  }, []);
-
-  return { theme, setTheme };
+export function useTheme() {
+  const theme = useSyncExternalStore(subscribe, getSnapshot);
+  const set = useCallback((pref: ThemePreference) => setTheme(pref), []);
+  return { theme, setTheme: set };
 }
