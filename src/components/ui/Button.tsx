@@ -21,7 +21,7 @@ const VARIANT_CLASSES: Record<ButtonVariant, string> = {
     'hover:bg-[var(--ib-blue-600)] active:scale-[0.98] ' +
     'disabled:bg-[var(--ib-gray-200)] disabled:text-[var(--ib-gray-400)] disabled:shadow-none',
   secondary:
-    'bg-white text-[var(--ib-gray-800)] border border-[var(--ib-gray-200)] ' +
+    'bg-[var(--ib-surface-raised)] text-[var(--ib-gray-800)] border border-[var(--ib-gray-200)] ' +
     'hover:bg-[var(--ib-gray-50)] active:scale-[0.98] ' +
     'disabled:text-[var(--ib-gray-400)] disabled:bg-[var(--ib-gray-50)]',
   ghost:

@@ -153,7 +153,7 @@ export default function Sidebar({ currentView, onViewChange, unreadCount = 0, is
         className={`md:hidden fixed top-3 left-3 z-[80] w-11 h-11 rounded-xl backdrop-blur-md flex items-center justify-center transition-all duration-300 shadow-[var(--ib-shadow-md)] ${
           isMobileMenuOpen
             ? 'bg-[var(--ib-blue-50)] border border-[var(--ib-blue-100)] text-[var(--ib-blue-500)] rotate-90 scale-95'
-            : 'bg-white/90 border border-[var(--ib-gray-200)] text-[var(--ib-gray-800)] hover:bg-[var(--ib-gray-50)] rotate-0 scale-100'
+            : 'bg-[var(--ib-surface-raised)]/90 border border-[var(--ib-gray-200)] text-[var(--ib-gray-800)] hover:bg-[var(--ib-gray-50)] rotate-0 scale-100'
         }`}
       >
         {isMobileMenuOpen ? <X className="w-5 h-5" /> : <Menu className="w-5 h-5" />}
@@ -173,10 +173,11 @@ export default function Sidebar({ currentView, onViewChange, unreadCount = 0, is
            reference pattern) rather than the old translate-x-full trick that
            had to serve both a hidden mobile drawer AND a visible desktop
            rail from the same element. ── */}
-      <nav className="hidden md:flex fixed left-0 top-0 bottom-0 z-[70] flex-col items-center py-4 w-[76px] h-full border-r border-[var(--ib-gray-100)] bg-white shrink-0">
+      <nav className="hidden md:flex fixed left-0 top-0 bottom-0 z-[70] flex-col items-center py-4 w-[76px] h-full border-r border-[var(--ib-gray-100)] bg-[var(--ib-surface-raised)] shrink-0">
         <button
           onClick={() => handleNavClick('dashboard')}
-          className="mt-1 mb-3 w-11 h-11 rounded-2xl bg-[var(--ib-blue-500)] flex items-center justify-center shadow-[0_0_18px_rgba(0,102,255,0.35)] hover:scale-105 active:scale-95 transition-transform shrink-0"
+          aria-label="IB Connect home"
+          className="mt-1 mb-3 w-11 h-11 rounded-2xl bg-[var(--ib-blue-500)] flex items-center justify-center shadow-[0_0_18px_rgba(0,102,255,0.35)] hover:scale-105 active:scale-95 transition-transform shrink-0 cursor-pointer"
         >
           <BrandMark className="w-6 h-6" />
         </button>
@@ -237,7 +238,7 @@ export default function Sidebar({ currentView, onViewChange, unreadCount = 0, is
            cramped, well short of forcing horizontal scroll on a 320px
            viewport (CLAUDE.md's own "survive 320px" bar). ── */}
       <nav
-        className={`md:hidden fixed left-0 top-0 bottom-0 z-[70] flex flex-col w-72 max-w-[85vw] h-full bg-white shadow-[var(--ib-shadow-lg)] shrink-0
+        className={`md:hidden fixed left-0 top-0 bottom-0 z-[70] flex flex-col w-72 max-w-[85vw] h-full bg-[var(--ib-surface-raised)] shadow-[var(--ib-shadow-lg)] shrink-0
           transition-transform duration-300 ease-[cubic-bezier(0.2,0.8,0.2,1)]
           ${isMobileMenuOpen ? 'translate-x-0' : '-translate-x-full'}`}
       >

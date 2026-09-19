@@ -78,6 +78,9 @@
   --ib-bad-dot:   #E5484D;
   --ib-bad-fill:  #FCE8E8;
   --ib-bad-text:  #A32F27;
+  --ib-violet-dot:  #8B5CF6;
+  --ib-violet-fill: #F1EBFE;
+  --ib-violet-text: #6D28D9;
 
   /* Type (§3) */
   --ib-font-display: 'Sora', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
@@ -105,6 +108,68 @@
    * block once that work is real. */
   --ib-surface:        var(--ib-gray-50);
   --ib-surface-raised: var(--ib-white);
+  --ib-border:         var(--ib-gray-200);
+  --ib-text:           var(--ib-gray-900);
+  --ib-text-muted:     var(--ib-gray-600);
+  --ib-focus:          var(--ib-blue-500);
+}
+
+/* ── Dark palette (Phase 3, sub-unit 9) ──────────────────────────────────
+ * Overrides the TOKEN VALUES, not component classes -- every screen already
+ * retoned onto --ib-* (light or the numbered gray/blue scale it's built
+ * from) gets a working dark mode for free from this block alone, with zero
+ * per-component changes. Gated behind DARK_MODE_READY in useTheme.ts; while
+ * that's false, data-theme never becomes "dark" so none of this applies.
+ *
+ * Design choices (per the redesign brief):
+ * - Layered surfaces, not one flat black -- --ib-gray-50 (page) is darkest,
+ *   --ib-gray-100 (cards/hover) one step lighter, so a card still reads as
+ *   "raised" the way it does in light mode. No pure #000 anywhere.
+ * - Depth comes from --ib-gray-200 borders, not shadows -- the existing
+ *   --ib-shadow-* tokens barely register on a dark ground, so surfaces that
+ *   lean on "border vs shadow" for separation now have a real border to
+ *   show for it (unchanged shadow tokens are left as pure extra polish).
+ * - Brand fill (--ib-blue-500) is fixed at #0066FF in both themes -- it's
+ *   the one color the brand doesn't get to reinterpret per theme.
+ * - --ib-blue-600/800 are TEXT colors in light mode (dark navy on a light
+ *   blue chip) -- kept as literal navy there they'd fail contrast on a dark
+ *   surface, so dark mode lightens them to an AA-safe blue tint instead.
+ * - Status fills (good/warn/bad/violet) go translucent (low-alpha over the
+ *   dark surface) instead of the light theme's flat pastel chip, and their
+ *   text tints lighten to stay AA-readable on that dark fill.
+ */
+:root[data-theme="dark"] {
+  --ib-white:     #FFFFFF;
+  --ib-gray-50:   #0C111B;
+  --ib-gray-100:  #151B28;
+  --ib-gray-200:  #2A3242;
+  --ib-gray-400:  #4A5568;
+  --ib-gray-600:  #9AA5B8;
+  --ib-gray-800:  #E2E6ED;
+  --ib-gray-900:  #F3F6FF;
+
+  --ib-blue-50:   #12203A;
+  --ib-blue-100:  #1C3358;
+  --ib-blue-300:  #5B8FEF;
+  --ib-blue-500:  #0066FF;
+  --ib-blue-600:  #8AB4FF;
+  --ib-blue-800:  #A9C6FF;
+
+  --ib-good-dot:  #1FAE6B;
+  --ib-good-fill: rgba(31, 174, 107, 0.16);
+  --ib-good-text: #5EEAA0;
+  --ib-warn-dot:  #E8A317;
+  --ib-warn-fill: rgba(232, 163, 23, 0.16);
+  --ib-warn-text: #FBBF24;
+  --ib-bad-dot:   #E5484D;
+  --ib-bad-fill:  rgba(229, 72, 77, 0.16);
+  --ib-bad-text:  #FF8A8F;
+  --ib-violet-dot:  #8B5CF6;
+  --ib-violet-fill: rgba(139, 92, 246, 0.16);
+  --ib-violet-text: #C4B5FD;
+
+  --ib-surface:        var(--ib-gray-50);
+  --ib-surface-raised: var(--ib-gray-100);
   --ib-border:         var(--ib-gray-200);
   --ib-text:           var(--ib-gray-900);
   --ib-text-muted:     var(--ib-gray-600);
@@ -146,8 +211,8 @@ body {
 }
 
 :root[data-theme="dark"] body {
-  background-color: #0c111b;
-  color: #f3f6ff;
+  background-color: var(--ib-surface);
+  color: var(--ib-text);
 }
 
 button, input, textarea, select { font: inherit; }

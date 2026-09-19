@@ -25,8 +25,31 @@
          Material Symbols Outlined link + preconnects removed 2026-09-19:
          confirmed via grep that .material-symbols-outlined (index.css) is
          never applied anywhere in src/ -- same dead-font-request problem. -->
+    <!-- Pre-paint theme script (Phase 3, sub-unit 9): sets data-theme/
+         color-scheme/theme-color before first paint, mirroring useTheme.ts's
+         resolve()/apply() exactly -- without this, a saved 'dark' preference
+         would flash light until React mounts and useTheme's effect runs.
+         DARK_MODE_READY here is a literal, not an import -- this runs before
+         any module loads -- keep it in sync by hand with
+         src/hooks/useTheme.ts's export whenever that gate changes. -->
+    <script>
+      (function () {
+        var DARK_MODE_READY = true;
+        if (!DARK_MODE_READY) return;
+        try {
+          var pref = localStorage.getItem('ibconnect_theme') || 'light';
+          var resolved = pref === 'system'
+            ? (window.matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark')
+            : pref;
+          document.documentElement.setAttribute('data-theme', resolved);
+          document.documentElement.style.colorScheme = resolved;
+          var meta = document.querySelector('meta[name="theme-color"]');
+          if (meta) meta.setAttribute('content', resolved === 'dark' ? '#0C111B' : '#0066FF');
+        } catch (e) {}
+      })();
+    </script>
   </head>
-  <body class="bg-[#131313] text-[#e5e2e1] antialiased">
+  <body class="bg-[var(--ib-surface)] text-[var(--ib-text)] antialiased">
     <div id="root"></div>
     <script type="module" src="/src/main.tsx"></script>
   </body>

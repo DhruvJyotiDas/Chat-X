@@ -4,28 +4,31 @@ export type ThemePreference = 'dark' | 'light' | 'system';
 
 const KEY = 'ibconnect_theme';
 
-// Dark mode gate (light-theme redesign, sub-unit 0). Flip to true only once
-// sub-unit 9's dark palette exists and its screenshots pass -- see
-// CHANGELOG.md for that sub-unit's own note if this is still false.
+// Dark mode gate (light-theme redesign, sub-unit 0). Flipped true in
+// sub-unit 9 once the dark palette (index.css's :root[data-theme="dark"]
+// token overrides) existed and its screenshots/axe-core pass logged in
+// CHANGELOG.md checked out. If you're reading this while it's false again,
+// something regressed it back -- check that CHANGELOG entry for what
+// "passing" meant.
 // Real mechanism, read from the code rather than assumed:
 //   - `data-theme="dark"|"light"` ATTRIBUTE on <html> (not a class).
 //   - Storage key above holds the raw preference ('dark'|'light'|'system'),
 //     not the resolved value -- resolve() turns 'system' into one of the
 //     other two before apply() writes the attribute.
-//   - src/index.css is a two-layer cascade, not one clean direction: `body`
-//     and `.dashboard-surface` have LIGHT as their unconditional base with a
-//     `:root[data-theme="dark"]` override restoring the old dark look (both
-//     migrated in this redesign); the older, not-yet-migrated "Bento Grid"
-//     utility classes (`.bg-[#131313]` etc.) have the OPPOSITE shape -- DARK
-//     is their unconditional base, and a separate `:root[data-theme="light"]`
-//     block (60+ rules) overrides them for the new light default. A real
-//     'dark' pref today would render CORRECTLY on the not-yet-migrated
-//     screens (their dark base needs no override) but WRONG on every screen
-//     already migrated onto --ib-* tokens directly (Sidebar, PreJoin,
-//     ActiveMeetingView's chrome, etc.) -- those have no dark counterpart
-//     yet and would render stuck light. That mismatch, not indecision, is
-//     why dark mode stays gated off until sub-unit 9 does that work for real.
-export const DARK_MODE_READY = false;
+//   - src/index.css's :root[data-theme="dark"] block overrides the --ib-*
+//     TOKEN VALUES themselves, not per-component classes -- every screen
+//     already built on those tokens (or the numbered gray/blue scale they're
+//     built from) gets dark mode automatically. The remaining exceptions are
+//     deliberate, not gaps: InterviewView.tsx, ActiveMeetingView's own video
+//     chrome (and its floating/minimized window, and dialogs only ever
+//     opened from inside it, like MeetingInviteDialog) stay on their own
+//     fixed dark call-chrome regardless of theme, by design, matching every
+//     other video-call product's convention -- see CHANGELOG.md's sub-unit 9
+//     entry for the full list and why.
+//   - index.html carries an inline pre-paint script with its OWN literal
+//     copy of this constant (it runs before any module loads) -- keep it in
+//     sync by hand if this ever changes.
+export const DARK_MODE_READY = true;
 
 function resolve(pref: ThemePreference): 'dark' | 'light' {
   if (!DARK_MODE_READY) return 'light';
@@ -35,8 +38,17 @@ function resolve(pref: ThemePreference): 'dark' | 'light' {
   return pref;
 }
 
+// Dark surface tone (--ib-gray-50 under :root[data-theme="dark"] in
+// index.css) -- kept as a literal here rather than reading the CSS variable,
+// since the browser-chrome meta tag has to be set before/independently of
+// any stylesheet. Update both together if that token's value ever changes.
+const THEME_COLOR = { light: '#0066FF', dark: '#0C111B' };
+
 function apply(pref: ThemePreference) {
-  document.documentElement.setAttribute('data-theme', resolve(pref));
+  const resolved = resolve(pref);
+  document.documentElement.setAttribute('data-theme', resolved);
+  document.documentElement.style.colorScheme = resolved;
+  document.querySelector('meta[name="theme-color"]')?.setAttribute('content', THEME_COLOR[resolved]);
 }
 
 export function useTheme() {

@@ -10,7 +10,7 @@ import type { HTMLAttributes } from 'react';
 export default function Card({ className = '', children, ...rest }: HTMLAttributes<HTMLDivElement>) {
   return (
     <div
-      className={`bg-white rounded-[var(--ib-radius-lg)] border border-[var(--ib-gray-100)]
+      className={`bg-[var(--ib-surface-raised)] rounded-[var(--ib-radius-lg)] border border-[var(--ib-gray-100)]
         shadow-[var(--ib-shadow-md)] ${className}`}
       {...rest}
     >

@@ -19,7 +19,7 @@ export default function JoinRequestBanner() {
   return (
     <div className="fixed top-3 right-3 z-[100000] flex flex-col gap-2 w-[min(92vw,20rem)]">
       {pendingJoinRequests.map((req) => (
-        <div key={req.requestId} className="flex items-center gap-3 bg-white border border-[var(--ib-gray-100)] text-[var(--ib-gray-900)] rounded-xl px-3.5 py-3 shadow-[var(--ib-shadow-lg)]">
+        <div key={req.requestId} className="flex items-center gap-3 bg-[var(--ib-surface-raised)] border border-[var(--ib-gray-100)] text-[var(--ib-gray-900)] rounded-xl px-3.5 py-3 shadow-[var(--ib-shadow-lg)]">
           <Avatar initials={req.userName.charAt(0).toUpperCase()} size="sm" />
           <div className="flex-1 min-w-0">
             <p className="text-xs font-semibold truncate">{req.userName}</p>

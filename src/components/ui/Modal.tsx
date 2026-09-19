@@ -138,10 +138,10 @@ export default function Modal({
               isSheet
                 ? `relative w-full ${MAX_WIDTH[size]} md:mx-auto flex flex-col
                    overflow-hidden
-                   bg-white rounded-t-[var(--ib-radius-xl)] md:rounded-[var(--ib-radius-xl)]
+                   bg-[var(--ib-surface-raised)] rounded-t-[var(--ib-radius-xl)] md:rounded-[var(--ib-radius-xl)]
                    shadow-[var(--ib-shadow-lg)] pb-[env(safe-area-inset-bottom)] md:pb-0`
                 : `relative w-full ${MAX_WIDTH[size]} overflow-y-auto
-                   bg-white rounded-[var(--ib-radius-xl)] shadow-[var(--ib-shadow-lg)]`
+                   bg-[var(--ib-surface-raised)] rounded-[var(--ib-radius-xl)] shadow-[var(--ib-shadow-lg)]`
             }
             style={{
               ...(isSheet

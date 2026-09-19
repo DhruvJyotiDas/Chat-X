@@ -43,36 +43,36 @@ export default function LoginPage({ pendingJoinCode, autoStart = false }: { pend
   }, [autoStart]);
 
   return (
-    <div className="min-h-dvh bg-[#0e0e0e] flex items-center justify-center p-4">
+    <div className="min-h-dvh bg-[var(--ib-surface)] flex items-center justify-center p-4">
       <div className="w-full max-w-md">
         <div className="flex flex-col items-center mb-8">
-          <div className="w-14 h-14 rounded-2xl bg-[#0066FF] flex items-center justify-center shadow-[0_0_30px_rgba(0,102,255,0.4)] mb-4">
+          <div className="w-14 h-14 rounded-2xl bg-[var(--ib-blue-500)] flex items-center justify-center shadow-[0_0_30px_rgba(0,102,255,0.4)] mb-4">
             <BrandMark className="w-8 h-8" />
           </div>
-          <h1 className="text-2xl font-bold text-[#e5e2e1]">IB Connect</h1>
-          <p className="text-sm text-[#8c90a1] mt-1">Secure Enterprise Communication</p>
+          <h1 className="text-2xl font-bold text-[var(--ib-text)]">IB Connect</h1>
+          <p className="text-sm text-[var(--ib-text-muted)] mt-1">Secure Enterprise Communication</p>
           {pendingJoinCode && (
-            <div className="mt-3 px-3 py-2 rounded-lg bg-[#568dff]/10 border border-[#568dff]/30 text-xs text-[#b0c6ff] text-center">
+            <div className="mt-3 px-3 py-2 rounded-lg bg-[var(--ib-blue-50)] border border-[var(--ib-blue-100)] text-xs text-[var(--ib-blue-600)] text-center">
               Sign in to join meeting <span className="font-mono font-bold">{pendingJoinCode}</span>
             </div>
           )}
         </div>
 
-        <div className="bg-[#131313] border border-[#424655] rounded-2xl p-8 shadow-2xl flex flex-col items-center">
-          <p className="text-sm text-[#8c90a1] text-center mb-6">
+        <div className="bg-[var(--ib-surface-raised)] border border-[var(--ib-border)] rounded-2xl p-8 shadow-[var(--ib-shadow-lg)] flex flex-col items-center">
+          <p className="text-sm text-[var(--ib-text-muted)] text-center mb-6">
             One secure IB identity signs you into every IB application. IB Connect never sees your password.
           </p>
           <button
             type="button"
             onClick={continueWithIB}
-            className="group relative w-full flex items-center justify-center gap-3 bg-[#0066FF] text-white font-bold py-3.5 rounded-xl hover:bg-[#0052cc] transition-colors overflow-hidden"
+            className="group relative w-full min-h-[44px] flex items-center justify-center gap-3 bg-[var(--ib-blue-500)] text-white font-bold py-3.5 rounded-xl hover:bg-[var(--ib-blue-600)] transition-colors overflow-hidden cursor-pointer"
           >
             <BrandMark className="w-5 h-5" />
             <span className="tracking-wide">Continue with IB</span>
           </button>
         </div>
 
-        <p className="text-center text-[10px] text-[#8c90a1]/50 mt-6">
+        <p className="text-center text-[10px] text-[var(--ib-text-muted)] mt-6">
           IB Connect · One account across IB applications
         </p>
       </div>

@@ -11,7 +11,7 @@ import { useAuth } from '../../context/AuthContext';
 import { useChat } from '../../context/ChatContext';
 import { useMeeting } from '../../context/MeetingContext';
 import { api, type AIDailyBrief, type AITaskItem, type AIReminderItem, type AIPAOpportunity } from '../../lib/api';
-import { extractIntelligence, ITEM_ICONS, ITEM_COLORS } from '../../lib/intelligence';
+import { extractIntelligence, ITEM_ICONS, ITEM_COLORS_LIGHT } from '../../lib/intelligence';
 import { loadCalls } from '../../lib/callsLocal';
 import ScheduleMeetingModal from '../meeting/ScheduleMeetingModal';
 
@@ -310,7 +310,7 @@ export default function DashboardView({ onNavigate, onJoinMeeting }: Props) {
         <div className="relative overflow-hidden rounded-[28px] border border-[var(--ib-border)] bg-gradient-to-br from-[var(--ib-blue-50)] to-white p-5 sm:p-7 shadow-[var(--ib-shadow-md)]">
           <div className="relative flex flex-col gap-5 sm:flex-row sm:items-end sm:justify-between">
             <div className="flex items-center gap-4">
-              <div className="w-12 h-12 rounded-2xl border border-[var(--ib-border)] bg-white flex items-center justify-center shrink-0 overflow-hidden shadow-[var(--ib-shadow-sm)]">
+              <div className="w-12 h-12 rounded-2xl border border-[var(--ib-border)] bg-[var(--ib-surface-raised)] flex items-center justify-center shrink-0 overflow-hidden shadow-[var(--ib-shadow-sm)]">
                 {currentUser?.avatar ? <img src={currentUser.avatar} alt="" className="w-full h-full object-cover" /> : <span className="text-sm font-bold text-[var(--ib-blue-800)]">{initials}</span>}
               </div>
               <div>
@@ -319,7 +319,7 @@ export default function DashboardView({ onNavigate, onJoinMeeting }: Props) {
                 <p className="mt-1 text-xs text-[var(--ib-text-muted)]">{new Date().toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' })}</p>
               </div>
             </div>
-            <button onClick={() => void generateBrief(true)} disabled={briefLoading} className="group flex items-center justify-center gap-2 rounded-2xl border border-[var(--ib-blue-500)]/25 bg-white px-4 py-3 text-xs font-semibold text-[var(--ib-blue-800)] transition cursor-pointer hover:border-[var(--ib-blue-500)]/50 hover:bg-[var(--ib-blue-50)] disabled:opacity-60">
+            <button onClick={() => void generateBrief(true)} disabled={briefLoading} className="group flex items-center justify-center gap-2 rounded-2xl border border-[var(--ib-blue-500)]/25 bg-[var(--ib-surface-raised)] px-4 py-3 text-xs font-semibold text-[var(--ib-blue-800)] transition cursor-pointer hover:border-[var(--ib-blue-500)]/50 hover:bg-[var(--ib-blue-50)] disabled:opacity-60">
               {briefLoading ? <RefreshCw className="h-4 w-4 animate-spin" /> : <WandSparkles className="h-4 w-4 transition-transform group-hover:rotate-12" />}
               {briefLoading ? 'Building your focus…' : brief ? 'Refresh daily focus' : 'Build my daily focus'}
             </button>
@@ -397,7 +397,7 @@ export default function DashboardView({ onNavigate, onJoinMeeting }: Props) {
                     <span className="mt-0.5 grid h-8 w-8 shrink-0 place-items-center rounded-xl bg-[var(--ib-blue-50)] text-[var(--ib-blue-500)]">{opportunity.kind === 'meeting_prep' || opportunity.kind === 'calendar_invitation' ? <CalendarCheck2 className="h-4 w-4" /> : <Sparkles className="h-4 w-4" />}</span>
                     <div className="min-w-0 flex-1"><h3 className="text-xs font-semibold text-[var(--ib-text)]">{opportunity.title}</h3><p className="mt-1 text-[10px] leading-4 text-[var(--ib-text-muted)]">{opportunity.summary}</p></div>
                   </div>
-                  {proposed && <div className="mt-3 rounded-xl border border-[var(--ib-border)] bg-white px-3 py-2 text-[9px] text-[var(--ib-text-muted)]"><span className="font-semibold capitalize text-[var(--ib-text)]">{proposed.action}</span> · {proposed.date} · {proposed.startTime}–{proposed.endTime}{proposed.warning && <p className="mt-1.5 text-[var(--ib-warn-text)]">{proposed.warning}</p>}</div>}
+                  {proposed && <div className="mt-3 rounded-xl border border-[var(--ib-border)] bg-[var(--ib-surface-raised)] px-3 py-2 text-[9px] text-[var(--ib-text-muted)]"><span className="font-semibold capitalize text-[var(--ib-text)]">{proposed.action}</span> · {proposed.date} · {proposed.startTime}–{proposed.endTime}{proposed.warning && <p className="mt-1.5 text-[var(--ib-warn-text)]">{proposed.warning}</p>}</div>}
                   <div className="mt-3 flex flex-wrap items-center gap-2">
                     {opportunity.actionLabel && <button disabled={isBusy} onClick={() => void actOnOpportunity(opportunity)} className="h-11 md:h-auto flex items-center justify-center rounded-lg bg-[var(--ib-blue-500)] px-3 md:py-1.5 text-[9px] font-semibold text-white cursor-pointer hover:bg-[var(--ib-blue-600)] disabled:opacity-50">{isBusy ? 'Working…' : opportunity.actionLabel}</button>}
                     <button disabled={isBusy} onClick={() => void snoozeOpportunity(opportunity.id)} className="h-11 md:h-auto flex items-center gap-1 rounded-lg border border-[var(--ib-border)] px-3 md:px-2.5 md:py-1.5 text-[9px] font-semibold text-[var(--ib-text-muted)] cursor-pointer hover:bg-[var(--ib-gray-100)] disabled:opacity-50"><TimerReset className="h-3 w-3" />1 hour</button>
@@ -481,7 +481,7 @@ export default function DashboardView({ onNavigate, onJoinMeeting }: Props) {
             ) : (
               <div className="flex flex-col gap-2">
                 {actionItems.slice(0, 5).map(item => (
-                  <div key={item.id} className={`border rounded-xl p-2.5 text-[10px] leading-relaxed ${ITEM_COLORS[item.type]}`}>
+                  <div key={item.id} className={`border rounded-xl p-2.5 text-[10px] leading-relaxed ${ITEM_COLORS_LIGHT[item.type]}`}>
                     <div className="flex items-start gap-1.5">
                       <span className="mt-0.5">{ITEM_ICONS[item.type]}</span>
                       <span>{item.text}</span>

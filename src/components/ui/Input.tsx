@@ -47,7 +47,7 @@ const Input = forwardRef<HTMLInputElement, InputProps>(function Input(
           outline-none touch-manipulation
           ${error
             ? 'border-[var(--ib-bad-dot)] focus:shadow-[0_0_0_3px_var(--ib-bad-fill)]'
-            : 'border-[var(--ib-gray-200)] focus:bg-white focus:border-[var(--ib-blue-500)] focus:shadow-[var(--ib-shadow-focus)]'
+            : 'border-[var(--ib-gray-200)] focus:bg-[var(--ib-surface-raised)] focus:border-[var(--ib-blue-500)] focus:shadow-[var(--ib-shadow-focus)]'
           } ${className}`}
         {...rest}
       />

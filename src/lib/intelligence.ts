@@ -34,10 +34,22 @@ export function extractIntelligence(messages: RealChatMessage[]): ExtractedItem[
 }
 
 export const ITEM_ICONS: Record<ExtractedItem['type'], string> = { meeting: '📅', deadline: '⏰', action: '✅', reminder: '🔔', decision: '💡' };
+// Dark-hardcoded on purpose -- consumed by ChatsView's Intelligence sidebar,
+// which stays on its own dark chrome (disclosed gap, sub-unit 4/9), so this
+// must stay contrast-correct against a dark card. DashboardView (now light)
+// uses ITEM_COLORS_LIGHT below instead of this one.
 export const ITEM_COLORS: Record<ExtractedItem['type'], string> = {
   meeting: 'text-[#b0c6ff] bg-[#568dff]/10 border-[#568dff]/30',
   deadline: 'text-[#ffb4ab] bg-[#ffb4ab]/10 border-[#ffb4ab]/30',
   action: 'text-[#4dffb1] bg-[#4dffb1]/10 border-[#4dffb1]/30',
   reminder: 'text-[#ffd60a] bg-[#ffd60a]/10 border-[#ffd60a]/30',
   decision: 'text-[#c0c1ff] bg-[#c0c1ff]/10 border-[#c0c1ff]/30',
+};
+
+export const ITEM_COLORS_LIGHT: Record<ExtractedItem['type'], string> = {
+  meeting: 'text-[var(--ib-blue-600)] bg-[var(--ib-blue-50)] border-[var(--ib-blue-100)]',
+  deadline: 'text-[var(--ib-bad-text)] bg-[var(--ib-bad-fill)] border-[var(--ib-bad-fill)]',
+  action: 'text-[var(--ib-good-text)] bg-[var(--ib-good-fill)] border-[var(--ib-good-fill)]',
+  reminder: 'text-[var(--ib-warn-text)] bg-[var(--ib-warn-fill)] border-[var(--ib-warn-fill)]',
+  decision: 'text-[var(--ib-violet-text)] bg-[var(--ib-violet-fill)] border-[var(--ib-violet-fill)]',
 };

@@ -46,9 +46,9 @@ import { api } from './lib/api';
 
 function ViewLoader() {
   return (
-    <div className="flex flex-1 items-center justify-center bg-[#090a0d]">
-      <div className="flex items-center gap-2 text-xs text-[#7d8598]">
-        <span className="h-4 w-4 animate-spin rounded-full border-2 border-[#718cff] border-t-transparent" />
+    <div className="flex flex-1 items-center justify-center bg-[var(--ib-surface)]">
+      <div className="flex items-center gap-2 text-xs text-[var(--ib-text-muted)]">
+        <BrandDots mode="loading" size={6} />
         Loading workspace…
       </div>
     </div>
@@ -226,8 +226,8 @@ function AppContent({ pendingRoomCode }: { pendingRoomCode?: string }) {
 
   if (isLoading) {
     return (
-      <div className="min-h-dvh bg-[#0e0e0e] flex items-center justify-center">
-        <div className="w-8 h-8 rounded-full border-2 border-[#568dff] border-t-transparent animate-spin" />
+      <div className="min-h-dvh bg-[var(--ib-surface)] flex items-center justify-center">
+        <BrandDots mode="loading" size={12} />
       </div>
     );
   }
@@ -247,10 +247,10 @@ function AppContent({ pendingRoomCode }: { pendingRoomCode?: string }) {
   // Redialling the room a reload interrupted.
   if (!isInMeeting && rejoinState === 'pending') {
     return (
-      <div className="min-h-dvh bg-[#111] flex flex-col items-center justify-center gap-3 text-[#e8eaed]">
-        <div className="w-8 h-8 rounded-full border-2 border-[#8ab4f8] border-t-transparent animate-spin" />
-        <p className="text-sm text-[#9aa0a6]">
-          Rejoining <span className="font-mono font-bold text-[#8ab4f8]">{rejoinTarget}</span>…
+      <div className="min-h-dvh bg-[var(--ib-surface)] flex flex-col items-center justify-center gap-3 text-[var(--ib-text)]">
+        <BrandDots mode="loading" size={12} />
+        <p className="text-sm text-[var(--ib-text-muted)]">
+          Rejoining <span className="font-mono font-bold text-[var(--ib-blue-600)]">{rejoinTarget}</span>…
         </p>
       </div>
     );
@@ -333,7 +333,7 @@ function AppContent({ pendingRoomCode }: { pendingRoomCode?: string }) {
 
   return (
     <>
-    <div className="min-h-dvh text-[#e5e2e1] bg-[#0e0e0e] flex font-sans overflow-hidden w-full max-w-full">
+    <div className="min-h-dvh text-[var(--ib-text)] bg-[var(--ib-surface)] flex font-sans overflow-hidden w-full max-w-full">
       <Sidebar currentView={effectiveView} onViewChange={setCurrentView} isInMeeting={isInMeeting} />
 
       {/* FIXED: pl-0 on mobile, pl-[76px] on desktop to match the sidebar rail width */}
