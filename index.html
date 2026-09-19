@@ -22,13 +22,9 @@
     <!-- Geist + JetBrains Mono link removed 2026-09-18: loaded on every page
          load, never referenced by name anywhere in src/ or index.css -- two
          Google Fonts requests rendering nothing. Confirmed dead, not assumed.
-         Material Symbols Outlined below is a SEPARATE, newly-found instance
-         of the same problem (its .material-symbols-outlined class is defined
-         in index.css but never applied anywhere in src/) -- left in place
-         pending confirmation, not bundled into this removal. -->
-    <link rel="preconnect" href="https://fonts.googleapis.com" />
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-    <link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&display=swap" rel="stylesheet" />
+         Material Symbols Outlined link + preconnects removed 2026-09-19:
+         confirmed via grep that .material-symbols-outlined (index.css) is
+         never applied anywhere in src/ -- same dead-font-request problem. -->
   </head>
   <body class="bg-[#131313] text-[#e5e2e1] antialiased">
     <div id="root"></div>
