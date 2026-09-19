@@ -204,7 +204,7 @@ function ReactionBar({ onPick, onClose }: { onPick: (emoji: string) => void; onC
     // Tighter on mobile — 36px is still at the tap-target minimum used elsewhere in
     // this file — and wrapping as a last resort rather than spilling off screen.
     <div
-      className="absolute bottom-20 left-1/2 -translate-x-1/2 flex flex-wrap justify-center items-center gap-1 p-1.5 md:p-2 rounded-2xl bg-white border border-[var(--ib-gray-100)] shadow-[var(--ib-shadow-lg)] z-30 max-w-[92vw]"
+      className="absolute bottom-20 left-1/2 -translate-x-1/2 flex flex-wrap justify-center items-center gap-1 p-1.5 md:p-2 rounded-2xl bg-[var(--ib-surface-raised)] border border-[var(--ib-gray-100)] shadow-[var(--ib-shadow-lg)] z-30 max-w-[92vw]"
       role="group"
       aria-label="Send a reaction"
     >
@@ -845,7 +845,7 @@ function SettingsPanel({
 }) {
   const [tab, setTab] = useState<'bg' | 'devices' | 'keys'>('bg');
   return (
-    <div className="absolute bottom-20 right-4 w-[90vw] md:w-72 max-w-sm bg-white border border-[var(--ib-gray-100)] rounded-2xl shadow-[var(--ib-shadow-lg)] z-30 overflow-hidden">
+    <div className="absolute bottom-20 right-4 w-[90vw] md:w-72 max-w-sm bg-[var(--ib-surface-raised)] border border-[var(--ib-gray-100)] rounded-2xl shadow-[var(--ib-shadow-lg)] z-30 overflow-hidden">
       {/* gap-1 -> gap-0.5, px-3 -> px-2: pre-existing tightness, not
           introduced by this retheme (only colors changed elsewhere in this
           panel) -- three tab labels plus the outer panel's overflow-hidden
@@ -1024,17 +1024,22 @@ function RightPanel({
   };
 
   return (
-    <div className="w-full h-full flex flex-col bg-white overflow-hidden">
-      <div className="flex items-center border-b border-[var(--ib-gray-100)] px-1 pt-1 md:px-2 md:pt-2 bg-white shrink-0">
+    <div className="w-full h-full flex flex-col bg-[var(--ib-surface-raised)] overflow-hidden">
+      <div className="flex items-center border-b border-[var(--ib-gray-100)] px-1 pt-1 md:px-2 md:pt-2 bg-[var(--ib-surface-raised)] shrink-0">
         {(captionsSupported ? (['chat', 'people', 'captions'] as const) : (['chat', 'people'] as const)).map(t => (
           <button
             key={t} onClick={() => onTabChange(t)}
-            className={`flex-1 py-2.5 text-[10px] md:text-xs font-semibold border-b-2 transition-colors ${tab === t ? 'border-[var(--ib-blue-500)] text-[var(--ib-blue-500)]' : 'border-transparent text-[var(--ib-gray-600)] hover:text-[var(--ib-gray-900)]'}`}
+            aria-label={t === 'captions' ? 'Live captions' : undefined}
+            className={`min-h-11 flex-1 py-2.5 text-[10px] md:text-xs font-semibold border-b-2 whitespace-nowrap transition-colors ${tab === t ? 'border-[var(--ib-blue-500)] text-[var(--ib-blue-500)]' : 'border-transparent text-[var(--ib-gray-600)] hover:text-[var(--ib-gray-900)]'}`}
           >
             <div className="flex items-center justify-center gap-1 md:gap-1.5">
-              {t === 'chat' && <><MessageSquare className="w-3.5 h-3.5" /><span className="hidden sm:inline">Chat</span></>}
-              {t === 'people' && <><Users className="w-3.5 h-3.5" /><span className="hidden sm:inline">People</span></>}
-              {t === 'captions' && <><Captions className="w-3.5 h-3.5" /><span className="hidden sm:inline">Live Captions</span></>}
+              {/* "Captions", not "Live Captions" -- the two-word label was
+                  what wrapped onto its own line in a narrow panel (live bug
+                  report, section 5); "Live captions" moves to aria-label so
+                  the fuller meaning isn't lost for screen readers. */}
+              {t === 'chat' && <><MessageSquare className="w-3.5 h-3.5 shrink-0" /><span className="hidden sm:inline">Chat</span></>}
+              {t === 'people' && <><Users className="w-3.5 h-3.5 shrink-0" /><span className="hidden sm:inline">People</span></>}
+              {t === 'captions' && <><Captions className="w-3.5 h-3.5 shrink-0" /><span className="hidden sm:inline">Captions</span></>}
             </div>
           </button>
         ))}
@@ -1054,15 +1059,15 @@ function RightPanel({
             ))}
             <div ref={chatEndRef} />
           </div>
-          <div className="p-2 border-t border-[var(--ib-gray-100)] bg-white shrink-0">
-            <div className="flex items-center gap-2 bg-[var(--ib-gray-50)] rounded-full px-3 py-1.5 border border-[var(--ib-gray-200)]">
+          <div className="p-2 pb-[calc(0.5rem+env(safe-area-inset-bottom))] border-t border-[var(--ib-gray-100)] bg-[var(--ib-surface-raised)] shrink-0">
+            <div className="flex items-center gap-1 bg-[var(--ib-gray-50)] rounded-full pl-3 pr-1 py-1 border border-[var(--ib-gray-200)]">
               <input
                 value={input} onChange={(e) => setInput(e.target.value)}
                 onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); } }}
                 placeholder="Message…"
-                className="flex-1 bg-transparent text-xs text-[var(--ib-gray-900)] placeholder-[var(--ib-gray-600)] outline-none min-w-0"
+                className="flex-1 bg-transparent text-base md:text-xs text-[var(--ib-gray-900)] placeholder-[var(--ib-gray-600)] outline-none min-w-0 touch-manipulation"
               />
-              <button onClick={send} disabled={!input.trim()} className="text-[var(--ib-blue-500)] hover:text-[var(--ib-blue-800)] disabled:opacity-30 cursor-pointer shrink-0">
+              <button onClick={send} disabled={!input.trim()} aria-label="Send" className="grid place-items-center w-11 h-11 md:w-8 md:h-8 shrink-0 rounded-full text-[var(--ib-blue-500)] hover:bg-[var(--ib-blue-50)] hover:text-[var(--ib-blue-800)] disabled:opacity-30 disabled:hover:bg-transparent cursor-pointer">
                 <Send className="w-3.5 h-3.5" />
               </button>
             </div>
@@ -1072,10 +1077,10 @@ function RightPanel({
 
       {tab === 'people' && (
         <div className="flex-1 overflow-y-auto p-3 space-y-1.5 scrollbar-hide min-h-0">
-          <div className="flex items-center gap-3 p-2 md:p-2.5 rounded-xl hover:bg-[var(--ib-gray-50)] transition-colors">
+          <div className="flex items-center gap-3 min-h-12 md:min-h-0 p-2 md:p-2.5 rounded-xl hover:bg-[var(--ib-gray-50)] transition-colors">
             <Avatar initials={userName.charAt(0).toUpperCase()} size="sm" />
             <div className="flex-1 min-w-0">
-              <p className="text-[11px] md:text-xs font-semibold text-[var(--ib-gray-900)] truncate">{userName} <span className="text-[9px] text-[var(--ib-blue-500)]">(you)</span></p>
+              <p title={userName} className="text-[11px] md:text-xs font-semibold text-[var(--ib-gray-900)] truncate">{userName} <span className="text-[9px] text-[var(--ib-blue-500)]">(you)</span></p>
             </div>
             {isHandRaised && <Hand className="w-3 h-3 text-[var(--ib-warn-dot)] shrink-0" aria-label="Your hand is raised" />}
             {isMuted && <MicOff className="w-3 h-3 text-[var(--ib-bad-dot)] shrink-0" />}
@@ -1083,15 +1088,20 @@ function RightPanel({
           {peers.map((peer) => {
             const link = links.get(peer.id);
             return (
-            <div key={peer.id} className="flex items-center gap-3 p-2 md:p-2.5 rounded-xl hover:bg-[var(--ib-gray-50)] transition-colors">
+            <div key={peer.id} className="flex items-center gap-3 min-h-12 md:min-h-0 p-2 md:p-2.5 rounded-xl hover:bg-[var(--ib-gray-50)] transition-colors">
               <Avatar initials={peer.name.charAt(0).toUpperCase()} size="sm" />
               <div className="flex-1 min-w-0">
-                <p className="text-[11px] md:text-xs font-semibold text-[var(--ib-gray-900)] truncate">{peer.name}</p>
+                <p title={peer.name} className="text-[11px] md:text-xs font-semibold text-[var(--ib-gray-900)] truncate">{peer.name}</p>
                 {/* The roster is where a connection problem should be diagnosable, so
                     unlike the tile badge this spells out the path rather than only
                     grading it — "relayed" is the answer to "why is this call bad on
                     the college wifi but fine at home". */}
-                <p className="flex items-center gap-1 text-[9px]">
+                {/* div, not p -- BrandDots renders its own div internally,
+                    and a <p> can't legally contain one (pre-existing
+                    hydration warning, found and fixed while in this file
+                    for section 5, unrelated to any of that section's own
+                    changes). */}
+                <div className="flex items-center gap-1 text-[9px]">
                   {peer.stream ? (
                     <span className="text-[var(--ib-good-text)]">Connected</span>
                   ) : (
@@ -1099,7 +1109,7 @@ function RightPanel({
                   )}
                   {link?.stats?.rttMs !== undefined && <span className="text-[var(--ib-gray-600)]"> · {link.stats.rttMs} ms</span>}
                   {link?.stats?.relayed && <span className="text-[var(--ib-gray-600)]"> · relayed</span>}
-                </p>
+                </div>
               </div>
               {raisedHands.has(peer.id) && <Hand className="w-3 h-3 text-[var(--ib-warn-dot)] shrink-0" aria-label={`${peer.name} has their hand raised`} />}
               {link && <QualityBadge quality={link.quality} relayed={!!link.stats?.relayed} variant="light" />}
@@ -1110,7 +1120,7 @@ function RightPanel({
       )}
 
       {captionsSupported && tab === 'captions' && (
-        <div className="flex-1 flex flex-col overflow-hidden min-h-0 bg-white">
+        <div className="flex-1 flex flex-col overflow-hidden min-h-0 bg-[var(--ib-surface-raised)]">
           {/* Settings: on/off, language, size — everything captions-related lives
               here now, next to Chat/People, instead of scattered across a
               separate always-open desktop sidebar and a floating picker on the
@@ -1219,7 +1229,7 @@ function RightPanel({
 
           {summary && (
             <div className="mx-3 mb-1 mt-3 max-h-[22rem] shrink-0 overflow-y-auto rounded-2xl border border-[var(--ib-blue-500)]/20 bg-[var(--ib-blue-50)] shadow-[var(--ib-shadow-lg)] scrollbar-hide">
-              <div className="sticky top-0 z-10 flex items-center justify-between border-b border-[var(--ib-gray-100)] bg-white/95 px-3 py-2.5 backdrop-blur-md">
+              <div className="sticky top-0 z-10 flex items-center justify-between border-b border-[var(--ib-gray-100)] bg-[var(--ib-surface-raised)]/95 px-3 py-2.5 backdrop-blur-md">
                 <div className="flex items-center gap-2">
                   <span className="grid h-7 w-7 place-items-center rounded-lg bg-[var(--ib-blue-50)] text-[var(--ib-blue-800)]"><FileText className="h-3.5 w-3.5" /></span>
                   <div><p className="text-[10px] font-bold text-[var(--ib-gray-900)]">Meeting intelligence</p><p className="text-[8px] text-[var(--ib-gray-600)]">Generated from the saved transcript</p></div>
@@ -1231,11 +1241,11 @@ function RightPanel({
               </div>
               <div className="flex flex-col gap-3 p-3">
                 <p className="text-[11px] leading-[1.65] text-[var(--ib-gray-900)]">{summary.summary}</p>
-                {summary.attendees.length > 0 && <div className="flex flex-wrap gap-1.5">{summary.attendees.map(name => <span key={name} className="rounded-full border border-[var(--ib-gray-200)] bg-white px-2 py-1 text-[9px] text-[var(--ib-gray-800)]">{name}</span>)}</div>}
+                {summary.attendees.length > 0 && <div className="flex flex-wrap gap-1.5">{summary.attendees.map(name => <span key={name} className="rounded-full border border-[var(--ib-gray-200)] bg-[var(--ib-surface-raised)] px-2 py-1 text-[9px] text-[var(--ib-gray-800)]">{name}</span>)}</div>}
                 {summary.keyPoints.length > 0 && <SummarySection icon={Lightbulb} title="Key points" tone="text-[var(--ib-warn-text)]" items={summary.keyPoints} />}
                 {summary.decisions.length > 0 && <SummarySection icon={CheckCircle2} title="Decisions" tone="text-[var(--ib-good-text)]" items={summary.decisions} />}
                 {summary.actionItems.length > 0 && (
-                  <div className="rounded-xl border border-[var(--ib-gray-100)] bg-white p-2.5">
+                  <div className="rounded-xl border border-[var(--ib-gray-100)] bg-[var(--ib-surface-raised)] p-2.5">
                     <p className="mb-2 flex items-center gap-1.5 text-[9px] font-bold uppercase tracking-[.12em] text-[var(--ib-blue-800)]"><ListChecks className="h-3 w-3" /> Action items</p>
                     <div className="space-y-2">{summary.actionItems.map((item, index) => <div key={index} className="flex gap-2 text-[10px] leading-4 text-[var(--ib-gray-800)]"><span className="mt-1 h-1.5 w-1.5 shrink-0 rounded-full bg-[var(--ib-blue-500)]" /><span>{item.description}{item.owner && item.owner.toLowerCase() !== 'unclear' && <span className="ml-1 text-[var(--ib-gray-600)]">— {item.owner}</span>}</span></div>)}</div>
                   </div>
@@ -1974,7 +1984,7 @@ export default function ActiveMeetingView({ onLeaveMeeting, onMinimize }: Props)
               bottom offset adds env(safe-area-inset-bottom) on mobile so the
               bar clears a home indicator (viewport-fit=cover already set in
               index.html) -- unaffected on desktop, no notch to clear there. */}
-          <div className="absolute bottom-[calc(0.75rem+env(safe-area-inset-bottom))] md:bottom-6 left-1/2 -translate-x-1/2 flex items-center gap-1.5 md:gap-2 bg-white/95 backdrop-blur-xl border border-[var(--ib-gray-100)] rounded-2xl p-1.5 md:p-2 shadow-[var(--ib-shadow-lg)] z-20 w-[max-content] max-w-[95vw] overflow-x-auto scrollbar-hide">
+          <div className="absolute bottom-[calc(0.75rem+env(safe-area-inset-bottom))] md:bottom-6 left-1/2 -translate-x-1/2 flex items-center gap-1.5 md:gap-2 bg-[var(--ib-surface-raised)]/95 backdrop-blur-xl border border-[var(--ib-gray-100)] rounded-2xl p-1.5 md:p-2 shadow-[var(--ib-shadow-lg)] z-20 w-[max-content] max-w-[95vw] overflow-x-auto scrollbar-hide">
             <CtrlBtn onClick={toggleMic} danger={isMuted} title={isMuted ? 'Unmute' : 'Mute'}>
               {isMuted ? <MicOff className="w-4 h-4 md:w-5 md:h-5" /> : <Mic className="w-4 h-4 md:w-5 md:h-5" />}
             </CtrlBtn>
@@ -2032,7 +2042,7 @@ export default function ActiveMeetingView({ onLeaveMeeting, onMinimize }: Props)
                 aria-label="Close options"
                 onClick={() => setMoreOpen(false)}
               />
-              <div className="md:hidden absolute bottom-20 left-1/2 -translate-x-1/2 w-[min(88vw,20rem)] bg-white border border-[var(--ib-gray-100)] rounded-2xl shadow-[var(--ib-shadow-lg)] z-30 overflow-hidden">
+              <div className="md:hidden absolute bottom-20 left-1/2 -translate-x-1/2 w-[min(88vw,20rem)] bg-[var(--ib-surface-raised)] border border-[var(--ib-gray-100)] rounded-2xl shadow-[var(--ib-shadow-lg)] z-30 overflow-hidden">
                 {secondaryActions.map(({ key, label, Icon, onClick, active, badge }) => (
                   <button
                     key={key}
@@ -2076,22 +2086,31 @@ export default function ActiveMeetingView({ onLeaveMeeting, onMinimize }: Props)
             beyond this presentation-only pass. */}
         {rightOpen && (
           <>
-            {/* Backdrop, mobile only -- the desktop dock has no backdrop, it
-                just occupies the docked column. */}
+            {/* Backdrop, <lg only (mobile bottom sheet AND tablet drawer both
+                get one) -- the desktop dock has no backdrop, it just
+                occupies the docked column. */}
             <button
               aria-label="Close panel"
               onClick={() => setRightOpen(false)}
-              className="fixed inset-0 z-40 bg-black/40 lg:hidden"
+              className="fixed inset-0 z-40 bg-[var(--ib-gray-900)]/40 lg:hidden"
             />
-            <div className="fixed inset-x-0 bottom-0 z-40 h-[80vh] rounded-t-2xl overflow-hidden pb-[env(safe-area-inset-bottom)] lg:static lg:h-full lg:rounded-none lg:pb-0 lg:w-80 lg:shrink-0 lg:border-l border-[var(--ib-gray-100)] bg-white flex flex-col shadow-[var(--ib-shadow-lg)] lg:shadow-none">
-              {/* Drag-handle affordance, mobile only */}
-              <div className="lg:hidden flex justify-center pt-2 pb-1 shrink-0">
+            {/* Three tiers (bug-batch 2026-09-19, section 5): <md bottom
+                sheet (unchanged shape), md-to-lg a right-edge overlay drawer
+                (min(380px, 100vw-48px), was still the bottom sheet in this
+                range before), >=lg the docked column (380px, was 320px). */}
+            <div className="fixed inset-x-0 bottom-0 z-40 h-[80vh] w-full rounded-t-2xl overflow-hidden pb-[env(safe-area-inset-bottom)]
+                md:inset-x-auto md:inset-y-0 md:right-0 md:bottom-auto md:h-full md:w-[min(380px,100vw-48px)] md:rounded-none md:rounded-l-2xl md:pb-0 md:border-l
+                lg:static lg:w-[380px] lg:shrink-0 lg:rounded-none lg:border-l
+                min-w-0 border-[var(--ib-gray-100)] bg-[var(--ib-surface-raised)] flex flex-col shadow-[var(--ib-shadow-lg)] lg:shadow-none">
+              {/* Drag-handle affordance, mobile bottom sheet only -- not the
+                  tablet drawer, which slides from the side, not up. */}
+              <div className="md:hidden flex justify-center pt-2 pb-1 shrink-0">
                 <div className="w-9 h-1 rounded-full bg-[var(--ib-gray-200)]" />
               </div>
-              {/* Mobile header overlay to close it clearly */}
+              {/* Header overlay to close it clearly -- mobile sheet + tablet drawer, not the desktop dock. */}
               <div className="lg:hidden flex items-center justify-between px-3 pb-2 border-b border-[var(--ib-gray-100)] shrink-0">
                 <span className="text-xs font-bold text-[var(--ib-gray-900)]">Meeting Details</span>
-                <button onClick={() => setRightOpen(false)} className="p-1 rounded-md bg-[var(--ib-gray-100)] text-[var(--ib-gray-800)]"><X className="w-4 h-4" /></button>
+                <button onClick={() => setRightOpen(false)} aria-label="Close panel" className="grid place-items-center w-11 h-11 rounded-md bg-[var(--ib-gray-100)] text-[var(--ib-gray-800)] cursor-pointer"><X className="w-4 h-4" /></button>
               </div>
               <RightPanel
                 tab={rightTab} onTabChange={setRightTab}
