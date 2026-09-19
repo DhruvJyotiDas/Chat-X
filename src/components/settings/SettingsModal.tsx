@@ -14,22 +14,11 @@ import { isSpeakerSelectionSupported, setPreferredSpeaker } from '../../lib/audi
 import ConnectionTestPanel from '../meeting/ConnectionTestPanel';
 import { config } from '../../config';
 import Badge from '../ui/Badge';
+import Switch from '../ui/Switch';
 
 type Tab = 'profile' | 'preferences' | 'devices' | 'security' | 'account';
 
 const STATUS_EMOJIS = ['', '💬', '🎯', '📚', '🏫', '🚗', '🍽️', '😴', '🌴', '🤒'];
-
-function Toggle({ checked, onChange }: { checked: boolean; onChange: (v: boolean) => void }) {
-  return (
-    <button
-      type="button"
-      onClick={() => onChange(!checked)}
-      className={`w-10 h-6 rounded-full transition-colors relative shrink-0 cursor-pointer ${checked ? 'bg-[var(--ib-blue-500)]' : 'bg-[var(--ib-gray-200)]'}`}
-    >
-      <span className={`absolute top-0.5 w-5 h-5 rounded-full bg-white shadow-sm transition-transform ${checked ? 'translate-x-[18px]' : 'translate-x-0.5'}`} />
-    </button>
-  );
-}
 
 interface Props {
   onClose: () => void;
@@ -332,31 +321,31 @@ function PreferencesTab() {
         <div className="flex flex-col divide-y divide-[var(--ib-border)] border border-[var(--ib-border)] rounded-xl overflow-hidden">
           <div className="flex items-center justify-between px-3.5 py-3">
             <div><p className="text-xs text-[var(--ib-text)]">Proactive suggestions</p><p className="mt-0.5 text-[9px] text-[var(--ib-text-muted)]">Master control for AIPA Now</p></div>
-            <Toggle checked={proactive.enabled} onChange={v => void updateProactive('enabled', v)} />
+            <Switch checked={proactive.enabled} onChange={v => void updateProactive('enabled', v)} aria-label="Proactive suggestions" />
           </div>
           <div className="flex items-center justify-between px-3.5 py-3">
             <div><p className="text-xs text-[var(--ib-text)]">Meeting suggestions</p><p className="mt-0.5 text-[9px] text-[var(--ib-text-muted)]">Prepare reviewable actions from chat</p></div>
-            <Toggle checked={proactive.enabled && proactive.meetingSuggestions} onChange={v => void updateProactive('meetingSuggestions', v)} />
+            <Switch checked={proactive.enabled && proactive.meetingSuggestions} onChange={v => void updateProactive('meetingSuggestions', v)} aria-label="Meeting suggestions" />
           </div>
           <div className="flex items-center justify-between px-3.5 py-3">
             <div><p className="text-xs text-[var(--ib-text)]">Daily planning signals</p><p className="mt-0.5 text-[9px] text-[var(--ib-text-muted)]">Upcoming meetings and invitations</p></div>
-            <Toggle checked={proactive.enabled && proactive.dailyPlanning} onChange={v => void updateProactive('dailyPlanning', v)} />
+            <Switch checked={proactive.enabled && proactive.dailyPlanning} onChange={v => void updateProactive('dailyPlanning', v)} aria-label="Daily planning signals" />
           </div>
 		  <div className="flex items-center justify-between px-3.5 py-3">
 			<div><p className="text-xs text-[var(--ib-text)]">Task and reminder signals</p><p className="mt-0.5 text-[9px] text-[var(--ib-text-muted)]">Due work and reviewable items found in chat</p></div>
-			<Toggle checked={proactive.enabled && proactive.taskSignals} onChange={v => void updateProactive('taskSignals', v)} />
+			<Switch checked={proactive.enabled && proactive.taskSignals} onChange={v => void updateProactive('taskSignals', v)} aria-label="Task and reminder signals" />
 		  </div>
 		  <div className="flex items-center justify-between px-3.5 py-3">
 			<div><p className="text-xs text-[var(--ib-text)]">Reply-needed signals</p><p className="mt-0.5 text-[9px] text-[var(--ib-text-muted)]">Older unread conversations that may need you</p></div>
-			<Toggle checked={proactive.enabled && proactive.replySignals} onChange={v => void updateProactive('replySignals', v)} />
+			<Switch checked={proactive.enabled && proactive.replySignals} onChange={v => void updateProactive('replySignals', v)} aria-label="Reply-needed signals" />
 		  </div>
 		  <div className="flex items-center justify-between px-3.5 py-3">
 			<div><p className="text-xs text-[var(--ib-text)]">Pre-meeting preparation</p><p className="mt-0.5 text-[9px] text-[var(--ib-text-muted)]">Surface meetings to prepare within 24 hours</p></div>
-			<Toggle checked={proactive.enabled && proactive.meetingPrep} onChange={v => void updateProactive('meetingPrep', v)} />
+			<Switch checked={proactive.enabled && proactive.meetingPrep} onChange={v => void updateProactive('meetingPrep', v)} aria-label="Pre-meeting preparation" />
 		  </div>
 		  <div className="flex items-center justify-between px-3.5 py-3">
 			<div><p className="text-xs text-[var(--ib-text)]">Post-meeting follow-up</p><p className="mt-0.5 text-[9px] text-[var(--ib-text-muted)]">Prompt for minutes and next actions after calls</p></div>
-			<Toggle checked={proactive.enabled && proactive.postMeeting} onChange={v => void updateProactive('postMeeting', v)} />
+			<Switch checked={proactive.enabled && proactive.postMeeting} onChange={v => void updateProactive('postMeeting', v)} aria-label="Post-meeting follow-up" />
 		  </div>
 		  <div className="px-3.5 py-3">
 			<div className="mb-2 flex items-center justify-between"><div><p className="text-xs text-[var(--ib-text)]">Quiet hours</p><p className="mt-0.5 text-[9px] text-[var(--ib-text-muted)]">Cards stay in AIPA Now; realtime nudges wait</p></div><span className="text-[9px] text-[var(--ib-text-muted)]">{proactive.timeZone}</span></div>
@@ -384,15 +373,15 @@ function PreferencesTab() {
         <div className="flex flex-col divide-y divide-[var(--ib-border)] border border-[var(--ib-border)] rounded-xl overflow-hidden">
           <div className="flex items-center justify-between px-3.5 py-3">
             <div className="flex items-center gap-2.5"><MessageSquare className="w-4 h-4 text-[var(--ib-text-muted)]" /><span className="text-xs text-[var(--ib-text)]">Message alerts</span></div>
-            <Toggle checked={notifs.messageAlerts} onChange={v => updateNotif('messageAlerts', v)} />
+            <Switch checked={notifs.messageAlerts} onChange={v => updateNotif('messageAlerts', v)} aria-label="Message alerts" />
           </div>
           <div className="flex items-center justify-between px-3.5 py-3">
             <div className="flex items-center gap-2.5"><Video className="w-4 h-4 text-[var(--ib-text-muted)]" /><span className="text-xs text-[var(--ib-text)]">Meeting reminders</span></div>
-            <Toggle checked={notifs.meetingReminders} onChange={v => updateNotif('meetingReminders', v)} />
+            <Switch checked={notifs.meetingReminders} onChange={v => updateNotif('meetingReminders', v)} aria-label="Meeting reminders" />
           </div>
           <div className="flex items-center justify-between px-3.5 py-3">
             <div className="flex items-center gap-2.5"><Volume2 className="w-4 h-4 text-[var(--ib-text-muted)]" /><span className="text-xs text-[var(--ib-text)]">Sound effects</span></div>
-            <Toggle checked={notifs.soundEffects} onChange={v => updateNotif('soundEffects', v)} />
+            <Switch checked={notifs.soundEffects} onChange={v => updateNotif('soundEffects', v)} aria-label="Sound effects" />
           </div>
         </div>
       </div>

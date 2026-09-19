@@ -33,6 +33,7 @@ import { useSilentMic } from '../../hooks/useSilentMic';
 import { useCallShortcuts, SHORTCUT_HINTS } from '../../hooks/useCallShortcuts';
 import { REACTIONS } from '../../lib/reactions';
 import Avatar from '../ui/Avatar';
+import Switch from '../ui/Switch';
 import BrandDots from '../BrandDots';
 
 export type BgMode = 'none' | 'blur' | 'blur-heavy' | 'color-dark' | 'color-space';
@@ -1134,19 +1135,14 @@ function RightPanel({
                   translating that English into one other language, not a
                   "pick your caption language from many" picker the way it
                   used to be — captions are always English unless this is on. */}
-              <label className="flex items-center justify-between cursor-pointer select-none">
+              <div className="flex items-center justify-between select-none">
                 <span className="text-[9px] text-[var(--ib-gray-600)] font-semibold">Translate from English</span>
-                <button
-                  type="button"
-                  role="switch"
-                  aria-checked={myCaptionLang !== null}
+                <Switch
+                  checked={myCaptionLang !== null}
+                  onChange={() => onCaptionLangChange(myCaptionLang !== null ? null : (CAPTION_TARGET_LANGUAGES[0]?.code ?? null))}
                   aria-label="Translate captions from English"
-                  onClick={() => onCaptionLangChange(myCaptionLang !== null ? null : (CAPTION_TARGET_LANGUAGES[0]?.code ?? null))}
-                  className={`relative shrink-0 w-8 h-[18px] rounded-full transition-colors ${myCaptionLang !== null ? 'bg-[var(--ib-blue-500)]' : 'bg-[var(--ib-gray-200)]'}`}
-                >
-                  <span className={`absolute top-0.5 w-[14px] h-[14px] rounded-full bg-white transition-transform ${myCaptionLang !== null ? 'translate-x-[17px]' : 'translate-x-0.5'}`} />
-                </button>
-              </label>
+                />
+              </div>
               {myCaptionLang !== null && (
                 <select
                   value={myCaptionLang} onChange={(e) => onCaptionLangChange(e.target.value)}

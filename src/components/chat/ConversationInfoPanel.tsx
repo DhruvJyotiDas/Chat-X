@@ -58,7 +58,13 @@ function Toggle({ checked, disabled, label, onChange, light = false }: { checked
       onClick={onChange}
       className={`relative h-6 w-11 shrink-0 rounded-full border transition-colors disabled:cursor-not-allowed disabled:opacity-40 ${
         light
-          ? checked ? 'border-[var(--ib-blue-500)] bg-[var(--ib-blue-500)]' : 'border-[var(--ib-gray-200)] bg-[var(--ib-gray-100)]'
+          // bug-batch 2026-09-19, section 3: off-state border was
+          // --ib-gray-200, the same low (~2.5:1, fails the 3:1 non-text
+          // floor) contrast bug the new shared Switch component was built
+          // to fix. Can't just migrate this one onto Switch -- the same
+          // component also serves the still-dark rest of this panel via
+          // this `light` prop -- so the fix is applied here directly.
+          ? checked ? 'border-[var(--ib-blue-500)] bg-[var(--ib-blue-500)]' : 'border-[var(--ib-gray-600)] bg-[var(--ib-gray-100)]'
           : checked ? 'border-[#718cff] bg-[#718cff]' : 'border-[#424655] bg-[#201f1f]'
       }`}
     >

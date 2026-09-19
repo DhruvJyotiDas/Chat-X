@@ -4,23 +4,8 @@ import { motion, AnimatePresence, useDragControls } from 'motion/react';
 import { X } from 'lucide-react';
 import { useScrollLock } from '../../hooks/useScrollLock';
 import { useKeyboardOpen } from '../../hooks/useKeyboardOpen';
+import { useReducedMotion } from '../../hooks/useReducedMotion';
 import { pushOverlay } from '../../lib/overlayStack';
-
-// motion's useReducedMotion isn't exported by the installed version of the
-// package (checked directly, not assumed) — same matchMedia read useTheme.ts
-// already uses for prefers-color-scheme, applied to prefers-reduced-motion.
-function useReducedMotion() {
-  const [reduced, setReduced] = useState(
-    () => window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ?? false,
-  );
-  useEffect(() => {
-    const mq = window.matchMedia('(prefers-reduced-motion: reduce)');
-    const handler = () => setReduced(mq.matches);
-    mq.addEventListener('change', handler);
-    return () => mq.removeEventListener('change', handler);
-  }, []);
-  return reduced;
-}
 
 /**
  * DESIGN_SYSTEM.md §8 — Modal / dialog.

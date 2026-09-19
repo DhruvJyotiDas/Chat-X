@@ -10,6 +10,7 @@ import { useMeeting } from '../../context/MeetingContext';
 import { loadCalendarEvents } from '../../lib/calendarLocal';
 import { api, type ApiCalendar, type ApiCalendarEventInput, type ApiWorkingHours, type CalendarResponse } from '../../lib/api';
 import Input from '../ui/Input';
+import Switch from '../ui/Switch';
 
 const EVENT_TYPES = [
   { name: 'Personal', value: '#6ea8ff' },
@@ -197,7 +198,7 @@ function EventModal({ initialDate, initialTime, event, readOnly, calendars, user
 
             <div className="flex items-center justify-between rounded-xl border border-[var(--ib-border)] bg-[var(--ib-gray-50)] px-3 py-2.5">
               <div className="flex items-center gap-2 text-xs text-[var(--ib-text)]"><CalendarRange className="h-4 w-4 text-[var(--ib-blue-500)]" />All-day event</div>
-              <button type="button" onClick={() => setAllDay(value => !value)} className={`relative h-6 w-11 rounded-full transition cursor-pointer ${allDay ? 'bg-[var(--ib-blue-500)]' : 'bg-[var(--ib-gray-200)]'}`} aria-pressed={allDay}><span className={`absolute top-1 h-4 w-4 rounded-full bg-white transition ${allDay ? 'left-6' : 'left-1'}`} /></button>
+              <Switch checked={allDay} onChange={setAllDay} aria-label="All-day event" />
             </div>
 
             <div className={`grid gap-3 ${allDay ? 'grid-cols-1' : 'grid-cols-3'}`}>
