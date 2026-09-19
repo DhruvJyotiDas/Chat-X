@@ -1675,7 +1675,7 @@ export default function ActiveMeetingView({ onLeaveMeeting, onMinimize }: Props)
   }, [videoPeerIds, stagePeerId, audioPeerIds, setVisiblePeerIds]);
 
   const meetingContent = (
-    <div className="fixed inset-0 z-[9999] flex flex-col lg:flex-row bg-[#111] overflow-hidden select-none text-[#e8eaed]">
+    <div className="fixed inset-0 z-[9999] flex flex-col lg:flex-row bg-[var(--ib-gray-200)] overflow-hidden select-none text-[var(--ib-text)]">
 
       {/* Remote audio for EVERY peer, independent of what the stage is showing.
           Must stay outside the focus/grid ternary below — that ternary swaps two
@@ -1767,8 +1767,22 @@ export default function ActiveMeetingView({ onLeaveMeeting, onMinimize }: Props)
       {/* ── Center/Right Wrapper ──────────────────────────────────────────────── */}
       <section className="flex-1 flex flex-col md:flex-row min-w-0 min-h-0 relative h-full">
 
-        {/* VIDEO GRID & CONTROLS */}
-        <div className="flex-1 flex flex-col relative min-w-0 min-h-0 bg-[#111]">
+        {/* VIDEO GRID & CONTROLS -- bug-batch 2026-09-19, section 7: the
+            stage now follows theme tokens (--ib-gray-200: a soft neutral in
+            light, a deep neutral in dark -- not pure black either way)
+            instead of a fixed near-black that flipped the whole app dark
+            the moment you joined a call while the lobby/panels/control bar
+            around it stayed light. NOT --ib-gray-100, which the floating
+            control bar's own background (--ib-surface-raised) resolves to
+            in dark mode -- same value would have made the bar invisible
+            against its own stage; -200 stays visually distinct from
+            -raised in both themes (checked the token values, not
+            assumed). Tiles keep their own dark video frames (untouched);
+            name chips and mute icons (bg-[#111]/70-80 above) stay
+            dark-translucent with white text on purpose -- they sit on top
+            of video, not the stage, and need to read on ANY video content
+            regardless of app theme. */}
+        <div className="flex-1 flex flex-col relative min-w-0 min-h-0 bg-[var(--ib-gray-200)]">
 
           <div className="absolute top-2 left-2 z-10 flex items-center gap-2 max-w-[92%]">
           {/* The toolbar's minimise glyph is one unlabelled circle among seven — nobody
