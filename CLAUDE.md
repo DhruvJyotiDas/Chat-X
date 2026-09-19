@@ -144,6 +144,26 @@ what changed in each area. `UI_REDESIGN_PLAN.md`'s equivalent note (§3, "explic
 the existing light-mode retrofit") is stale in the same way — read this correction, not that line,
 for the current state.
 
+**Correction, 2026-09-19 (Phase 3, sub-units 0/9): everything above this point in the section is now
+the OLD mechanism, inverted.** Light is the real default (not a retrofit onto a dark-first app), `src/index.css`'s
+`:root` block defines `--ib-*` design tokens (`DESIGN_SYSTEM.md` §2-6), and every screen retoned in
+Phase 3 (`git log --oneline` on `feat/light-theme-redesign`, commits `ff3809a` onward) uses those
+tokens directly (`bg-[var(--ib-blue-500)]`, etc.) instead of hardcoded hex. The
+`:root[data-theme="light"] .bg-\[\#hex\]` block described above still exists and still matters — it's
+what keeps the not-yet-migrated "Bento Grid" screens light — but it's the legacy half of a two-layer
+cascade now, not the whole mechanism. Dark mode is real: `:root[data-theme="dark"]` (added in sub-unit
+9) overrides the `--ib-*` TOKEN VALUES themselves (inverted gray/blue ramps, translucent status
+fills, brand blue fixed at `#0066FF` in both themes) so every token-based screen gets dark mode with
+zero per-component changes — `DARK_MODE_READY` in `useTheme.ts` is `true`. `ActiveMeetingView`'s video
+chrome, `InterviewView.tsx`, and dialogs opened only from inside a live call (`MeetingInviteDialog`,
+`FloatingCallWindow`) are the deliberate exceptions, staying on their own fixed dark call-chrome in
+both themes — see `CHANGELOG.md`'s sub-unit 9 entry. When adding a new hardcoded color to any
+already-token-based screen: don't — reach for an existing `--ib-*` token, or add one to both the light
+`:root` block and its `:root[data-theme="dark"]` counterpart in `src/index.css` if none fits. Also
+watch for literal Tailwind color names (`bg-white`, `text-black`), not just hex — `bg-white` used as a
+surface color (not a hex literal) was the actual sub-unit 9 bug that left every `Button`/`Card`/`Modal`
+and the sidebar itself stuck white in dark mode; grep for hex alone won't catch that class of bug.
+
 ## WebRTC / video calls
 
 Mesh topology, one `RTCPeerConnection` per remote peer (`src/hooks/useWebRTC.ts`), signaled over the
