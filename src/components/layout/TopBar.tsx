@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { Search, Bell, HelpCircle, Plus, Sparkles, Command, X } from 'lucide-react';
 import { AppView } from '../../types';
 import { useAuth } from '../../context/AuthContext';
@@ -44,6 +44,25 @@ function NotificationsBody({ unreadTotal, onOpenChats }: { unreadTotal: number; 
 export default function TopBar({ currentView, onViewChange, searchFilter, onSearchChange, onNewChatClicked }: TopBarProps) {
   const [notifOpen, setNotifOpen] = useState(false);
   const [mobileSearchOpen, setMobileSearchOpen] = useState(false);
+  const headerRef = useRef<HTMLElement>(null);
+
+  // Publishes the TopBar's REAL rendered height as --topbar-h on <html>, so
+  // anything that needs to avoid it (the AIPA popup, section 2 of the
+  // 2026-09-19 fix batch) sizes against the actual number instead of a
+  // guessed constant -- this row's height already varies today (the mobile
+  // search-expansion row adds a second sticky row below it).
+  useEffect(() => {
+    const el = headerRef.current;
+    if (!el) return;
+    const publish = () => {
+      document.documentElement.style.setProperty('--topbar-h', `${el.getBoundingClientRect().height}px`);
+    };
+    publish();
+    const ro = new ResizeObserver(publish);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [mobileSearchOpen]);
+
   const { currentUser } = useAuth();
   const { threads } = useChat();
   const info = VIEW_INFO[currentView] || VIEW_INFO.chats;
@@ -98,7 +117,7 @@ export default function TopBar({ currentView, onViewChange, searchFilter, onSear
           <button onClick={() => setReminderBanner(null)} className="text-[var(--ib-text-muted)] hover:text-[var(--ib-text)] flex-shrink-0"><X className="w-3.5 h-3.5" /></button>
         </div>
       )}
-      <header className="relative h-14 w-full flex justify-between items-center pl-16 pr-5 md:px-5 border-b border-[var(--ib-border)] bg-[var(--ib-surface-raised)]/90 backdrop-blur-xl z-40 sticky top-0 shrink-0 select-none">
+      <header ref={headerRef} className="relative h-14 w-full flex justify-between items-center pl-16 pr-5 md:px-5 border-b border-[var(--ib-border)] bg-[var(--ib-surface-raised)]/90 backdrop-blur-xl z-40 sticky top-0 shrink-0 select-none">
       <div className="flex items-center gap-3 min-w-0">
         <h1
           className="font-bold text-base tracking-tight text-[var(--ib-text)] cursor-pointer whitespace-nowrap"

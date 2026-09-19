@@ -74,6 +74,19 @@ import { useKeyboardOpen } from '../../hooks/useKeyboardOpen';
  *   drawer explicitly; older ad hoc overlays (MeetingInviteDialog, etc.)
  *   aren't wired in yet, same disclosed boundary as that file's own doc
  *   comment.
+ *
+ * Bug-batch 2026-09-19, section 2 (regression fixes, not new scope):
+ * - The launcher used to unmount entirely while `open` was true, leaving
+ *   desktop with no visible way to close the popup except Esc or the
+ *   header's own X -- it now stays mounted at the same position and becomes
+ *   a 56px circular close button on desktop (see Launcher below).
+ * - The desktop popup's height/width were tuned against a guessed TopBar
+ *   height; on real Windows viewport heights (browser chrome eating more of
+ *   the window than assumed) the popup's top edge could land under the
+ *   TopBar. It now sizes against `--topbar-h`, the TopBar's own measured
+ *   height (TopBar.tsx publishes it via ResizeObserver), and adds a
+ *   `compact` mode below ~520px of viewport height that docks the popup
+ *   from just under the TopBar to the bottom instead of shrinking further.
  */
 
 // Web Speech API — deliberately NOT the room-scoped /asr nemotron pipeline
@@ -489,26 +502,50 @@ function Header({ conv, onClose }: { conv: Conversation; onClose: () => void }) 
   );
 }
 
-function Launcher({ onClick }: { onClick: () => void }) {
+// Bug-batch 2026-09-19, section 2: the launcher used to unmount entirely
+// while the popup was open, so desktop had no visible way to close it except
+// Esc or the header's own X. It now stays mounted at the SAME position and
+// becomes a 56px circular close button on desktop (md+) -- unchanged on
+// mobile, where the popup is a full sheet and there's nothing for a floating
+// FAB to do underneath it, so it still hides while that sheet is open.
+function Launcher({ open, onClick }: { open: boolean; onClick: () => void }) {
   return (
     <button
       onClick={onClick}
-      aria-label="Ask AIPA"
-      aria-expanded={false}
-      className="fixed z-[110] flex items-center gap-2 rounded-full bg-[var(--ib-blue-500)] text-white
+      aria-label={open ? 'Close AIPA' : 'Ask AIPA'}
+      aria-expanded={open}
+      className={`fixed z-[110] flex items-center justify-center gap-2 rounded-full bg-[var(--ib-blue-500)] text-white
         shadow-[var(--ib-shadow-lg)] transition-all hover:-translate-y-0.5 hover:shadow-[0_16px_40px_rgba(0,102,255,0.35)]
-        active:scale-95 cursor-pointer
-        w-14 h-14 justify-center md:w-auto md:h-auto md:px-5 md:py-3.5
-        focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--ib-focus)]"
+        active:scale-95 cursor-pointer w-14 h-14
+        focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--ib-focus)]
+        ${open ? 'hidden md:flex' : 'flex md:w-auto md:h-auto md:px-5 md:py-3.5'}`}
       style={{
         right: 'calc(20px + env(safe-area-inset-right))',
         bottom: 'calc(20px + env(safe-area-inset-bottom))',
       }}
     >
-      <Sparkles className="w-5 h-5 md:w-4 md:h-4 shrink-0" />
-      <span className="hidden md:inline text-sm font-semibold">Ask AIPA</span>
+      {open ? <X className="w-5 h-5 shrink-0" /> : <Sparkles className="w-5 h-5 md:w-4 md:h-4 shrink-0" />}
+      {!open && <span className="hidden md:inline text-sm font-semibold">Ask AIPA</span>}
     </button>
   );
+}
+
+// Bug-batch 2026-09-19, section 2: below ~520px of viewport height (a small
+// laptop window, or Windows display scaling eating most of it) there isn't
+// enough room for a floating card even at its smallest -- same matchMedia
+// pattern as useTheme.ts's system-preference listener and Modal.tsx's
+// useReducedMotion shim, not a new mechanism.
+function useCompactAIPA() {
+  const [compact, setCompact] = useState(
+    () => window.matchMedia?.('(max-height: 520px)').matches ?? false,
+  );
+  useEffect(() => {
+    const mq = window.matchMedia('(max-height: 520px)');
+    const handler = () => setCompact(mq.matches);
+    mq.addEventListener('change', handler);
+    return () => mq.removeEventListener('change', handler);
+  }, []);
+  return compact;
 }
 
 interface AskAIPAProps {
@@ -521,6 +558,7 @@ export default function AskAIPA({ hidden }: AskAIPAProps) {
   const [open, setOpen] = useState(false);
   const overlayOpen = useAnyOverlayOpen();
   const keyboardOpen = useKeyboardOpen();
+  const compact = useCompactAIPA();
 
   // Esc closes the desktop popup too (Modal already handles this for the
   // mobile sheet on its own).
@@ -562,12 +600,33 @@ export default function AskAIPA({ hidden }: AskAIPAProps) {
               animate={{ opacity: 1, scale: 1, x: 0, y: 0 }}
               exit={{ opacity: 0, scale: 0.95, x: 8, y: 8 }}
               transition={{ duration: 0.18, ease: [0.2, 0.8, 0.2, 1] }}
-              style={{
+              style={compact ? {
+                // Under ~520px tall there's no room for a floating card even
+                // at its smallest -- dock it from just below the TopBar to
+                // the bottom instead of shrinking further (section 2, "if
+                // the viewport height is under ~520px, use the compact
+                // mode... instead of shrinking further").
+                transformOrigin: 'bottom right',
+                right: 'calc(20px + env(safe-area-inset-right))',
+                bottom: 'calc(20px + env(safe-area-inset-bottom))',
+                top: 'calc(var(--topbar-h, 56px) + 8px)',
+                width: 'min(420px, 100vw - 40px)',
+              } : {
+                // Height/width formulas measure the REAL TopBar height
+                // (--topbar-h, published by TopBar.tsx) rather than a guessed
+                // constant -- the popup used to overlap the TopBar on real
+                // Windows viewport heights where browser chrome eats enough
+                // of the window that the old "100dvh - 120px" guess wasn't
+                // enough headroom. "116px" is the launcher zone + gaps below
+                // the TopBar (88px bottom offset + 56px launcher - 28px
+                // overlap with the popup's own bottom edge, tuned against
+                // the spec's own worked example of ~172px total for a 56px
+                // TopBar). Never above 640px regardless.
                 transformOrigin: 'bottom right',
                 right: 'calc(20px + env(safe-area-inset-right))',
                 bottom: 'calc(88px + env(safe-area-inset-bottom))',
-                width: 'min(420px, 100vw - 32px)',
-                height: 'min(640px, 100dvh - 120px)',
+                width: 'min(420px, 100vw - 40px)',
+                height: 'min(640px, calc(100dvh - var(--topbar-h, 56px) - 116px))',
               }}
               className="fixed z-[110] flex flex-col overflow-hidden rounded-[var(--ib-radius-xl)]
                 bg-[var(--ib-surface-raised)] border border-[var(--ib-border)] shadow-[var(--ib-shadow-lg)]"
@@ -580,7 +639,7 @@ export default function AskAIPA({ hidden }: AskAIPAProps) {
         </AnimatePresence>
       </div>
 
-      {!open && !launcherHidden && <Launcher onClick={() => setOpen(true)} />}
+      {(open || !launcherHidden) && <Launcher open={open} onClick={() => setOpen(v => !v)} />}
     </>
   );
 }
