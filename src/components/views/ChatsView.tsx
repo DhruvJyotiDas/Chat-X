@@ -1769,29 +1769,29 @@ export default function ChatsView({ onJoinMeeting, searchFilter }: ChatsViewProp
   ).sort((a, b) => b.lastTimestamp - a.lastTimestamp);
 
   const renderThreadList = () => (
-    <div className="flex flex-col h-full bg-[#0e0e0e]">
-      <div className="p-3 border-b border-[#424655] flex justify-between items-center bg-[#0e0e0e] sticky top-0 z-10">
-        <h2 className="font-bold text-xs text-[#e5e2e1] uppercase tracking-wider">Messages</h2>
+    <div className="flex flex-col h-full bg-[var(--ib-surface-raised)]">
+      <div className="p-3 border-b border-[var(--ib-border)] flex justify-between items-center bg-[var(--ib-surface-raised)] sticky top-0 z-10">
+        <h2 className="font-bold text-xs text-[var(--ib-text)] uppercase tracking-wider">Messages</h2>
         <div className="flex items-center gap-1">
           {/* Both of these were unlabelled 28x28 glyphs whose only affordance was a
               hover state — which does not exist on touch, so on a phone they were two
               indistinguishable grey icons. Group chat has shipped for months and users
               still report it missing for exactly this reason. */}
-          <button onClick={() => setShowNewThread(true)} title="New direct message" aria-label="New direct message" className="w-9 h-9 sm:w-7 sm:h-7 flex items-center justify-center rounded-lg text-[#8c90a1] hover:text-[#b0c6ff] hover:bg-[#201f1f] transition-colors cursor-pointer"><PlusCircle className="w-4 h-4" /></button>
-          <button onClick={() => setShowNewGroup(true)} title="New group" aria-label="New group" className="w-9 h-9 sm:w-7 sm:h-7 flex items-center justify-center rounded-lg text-[#8c90a1] hover:text-[#b0c6ff] hover:bg-[#201f1f] transition-colors cursor-pointer"><Users className="w-4 h-4" /></button>
+          <button onClick={() => setShowNewThread(true)} title="New direct message" aria-label="New direct message" className="w-11 h-11 sm:w-7 sm:h-7 flex items-center justify-center rounded-lg text-[var(--ib-text-muted)] hover:text-[var(--ib-blue-500)] hover:bg-[var(--ib-gray-100)] transition-colors cursor-pointer"><PlusCircle className="w-4 h-4" /></button>
+          <button onClick={() => setShowNewGroup(true)} title="New group" aria-label="New group" className="w-11 h-11 sm:w-7 sm:h-7 flex items-center justify-center rounded-lg text-[var(--ib-text-muted)] hover:text-[var(--ib-blue-500)] hover:bg-[var(--ib-gray-100)] transition-colors cursor-pointer"><Users className="w-4 h-4" /></button>
         </div>
       </div>
       <div className="px-3 pt-2 pb-1">
         <div className="relative">
-          <Search className="w-3.5 h-3.5 absolute left-3 top-1/2 -translate-y-1/2 text-[#8c90a1]" />
+          <Search className="w-3.5 h-3.5 absolute left-3 top-1/2 -translate-y-1/2 text-[var(--ib-text-muted)]" />
           <input
             type="text"
             value={localSearch}
             onChange={e => { setLocalSearch(e.target.value); setMsgSearchResults(null); }}
             placeholder="Search conversations…"
-            className="w-full bg-[#131313] border border-[#424655]/60 rounded-xl pl-8 pr-3 py-2 text-[16px] sm:text-xs text-[#e5e2e1] placeholder-[#8c90a1]/60 focus:border-[#568dff] outline-none transition-colors"
+            className="w-full h-11 sm:h-auto bg-[var(--ib-gray-50)] border border-[var(--ib-border)] rounded-xl pl-8 pr-3 py-2 text-base sm:text-xs text-[var(--ib-text)] placeholder-[var(--ib-text-muted)] focus:border-[var(--ib-blue-500)] outline-none transition-colors touch-manipulation"
           />
-          {localSearch && <button onClick={() => { setLocalSearch(''); setMsgSearchResults(null); }} className="absolute right-2.5 top-1/2 -translate-y-1/2 text-[#8c90a1] hover:text-[#e5e2e1]"><X className="w-3 h-3" /></button>}
+          {localSearch && <button onClick={() => { setLocalSearch(''); setMsgSearchResults(null); }} className="absolute right-2.5 top-1/2 -translate-y-1/2 text-[var(--ib-text-muted)] hover:text-[var(--ib-text)]"><X className="w-3 h-3" /></button>}
         </div>
         {/* AI Search over actual message content — separate from the plain
             thread-name/preview filter above, which can't find a message
@@ -1800,7 +1800,7 @@ export default function ChatsView({ onJoinMeeting, searchFilter }: ChatsViewProp
           <button
             onClick={handleSearchMessages}
             disabled={isSearchingMsgs}
-            className="w-full flex items-center justify-center gap-1.5 mt-1.5 text-[10px] text-[#b0c6ff] hover:text-[#c0c1ff] disabled:opacity-50 py-1"
+            className="w-full flex items-center justify-center gap-1.5 mt-1.5 text-[10px] text-[var(--ib-blue-500)] hover:text-[var(--ib-blue-800)] disabled:opacity-50 py-1"
           >
             {isSearchingMsgs ? <Loader2 className="w-3 h-3 animate-spin" /> : <Sparkles className="w-3 h-3" />}
             {isSearchingMsgs ? 'Searching messages…' : `Search all messages for "${combinedSearch.trim()}"`}
@@ -1809,14 +1809,14 @@ export default function ChatsView({ onJoinMeeting, searchFilter }: ChatsViewProp
         {msgSearchResults && (
           <div className="mt-1.5 flex flex-col gap-1 max-h-64 overflow-y-auto">
             {msgSearchResults.length === 0 ? (
-              <p className="text-[10px] text-[#8c90a1] text-center py-2">No messages found.</p>
+              <p className="text-[10px] text-[var(--ib-text-muted)] text-center py-2">No messages found.</p>
             ) : msgSearchResults.map((r) => (
-              <div key={r.messageId} onClick={() => handleSelectSearchResult(r)} className="cursor-pointer bg-[#131313] border border-[#424655]/40 hover:border-[#568dff]/40 rounded-lg p-2 text-[10px] transition-colors">
+              <div key={r.messageId} onClick={() => handleSelectSearchResult(r)} className="cursor-pointer bg-[var(--ib-gray-50)] border border-[var(--ib-border)] hover:border-[var(--ib-blue-500)]/40 rounded-lg p-2 text-[10px] transition-colors">
                 <div className="flex items-center justify-between mb-0.5">
-                  <span className="font-semibold text-[#e5e2e1] truncate">{r.threadName}</span>
-                  <span className="text-[#8c90a1] flex-shrink-0 ml-2">{r.senderName}</span>
+                  <span className="font-semibold text-[var(--ib-text)] truncate">{r.threadName}</span>
+                  <span className="text-[var(--ib-text-muted)] flex-shrink-0 ml-2">{r.senderName}</span>
                 </div>
-                <p className="text-[#8c90a1] truncate">{r.text}</p>
+                <p className="text-[var(--ib-text-muted)] truncate">{r.text}</p>
               </div>
             ))}
           </div>
@@ -1825,8 +1825,8 @@ export default function ChatsView({ onJoinMeeting, searchFilter }: ChatsViewProp
       <div className="flex-1 overflow-y-auto flex flex-col gap-0.5 px-2 pt-1 pb-2">
         {filteredThreads.length === 0 && (
           <div className="flex flex-col items-center justify-center py-12 text-center px-4">
-            <div className="w-10 h-10 rounded-xl bg-[#568dff]/10 flex items-center justify-center mb-2"><PlusCircle className="w-5 h-5 text-[#b0c6ff]" /></div>
-            <p className="text-xs font-semibold text-[#e5e2e1]">{combinedSearch ? 'No results found' : 'No conversations yet'}</p>
+            <div className="w-10 h-10 rounded-xl bg-[var(--ib-blue-50)] flex items-center justify-center mb-2"><PlusCircle className="w-5 h-5 text-[var(--ib-blue-500)]" /></div>
+            <p className="text-xs font-semibold text-[var(--ib-text)]">{combinedSearch ? 'No results found' : 'No conversations yet'}</p>
           </div>
         )}
         {filteredThreads.map(thread => {
@@ -1836,28 +1836,28 @@ export default function ChatsView({ onJoinMeeting, searchFilter }: ChatsViewProp
           const displayTime = thread.lastTimestamp ? new Date(thread.lastTimestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '';
           
           return (
-            <div key={thread.id} onClick={() => handleSelectThread(thread.id)} className={`p-3 rounded-xl flex items-start gap-2.5 cursor-pointer border transition-all ${isSelected ? 'bg-[#568dff]/15 border-[#568dff]/50' : 'bg-transparent border-transparent hover:bg-[#131313]'}`}>
+            <div key={thread.id} onClick={() => handleSelectThread(thread.id)} className={`p-3 rounded-xl flex items-start gap-2.5 cursor-pointer border transition-all ${isSelected ? 'bg-[var(--ib-blue-50)] border-[var(--ib-blue-500)]/40' : 'bg-transparent border-transparent hover:bg-[var(--ib-gray-50)]'}`}>
               <div className="relative flex-shrink-0" onClick={e => { if (threadUser) { e.stopPropagation(); setViewingUser(threadUser); } }}>
                 {thread.type === 'group' ? (
-                  <div className="w-9 h-9 rounded-xl bg-[#8083ff]/15 text-[#c0c1ff] flex items-center justify-center"><Users className="w-4 h-4" /></div>
+                  <div className="w-9 h-9 rounded-xl bg-[var(--ib-blue-50)] text-[var(--ib-blue-500)] flex items-center justify-center"><Users className="w-4 h-4" /></div>
                 ) : threadAvatar ? (
                   <img alt={threadName} className="w-9 h-9 rounded-full object-cover" src={threadAvatar} />
                 ) : (
-                  <div className="w-9 h-9 rounded-xl bg-[#568dff]/10 text-[#b0c6ff] flex items-center justify-center font-bold text-xs">{threadName.charAt(0).toUpperCase()}</div>
+                  <div className="w-9 h-9 rounded-xl bg-[var(--ib-blue-50)] text-[var(--ib-blue-500)] flex items-center justify-center font-bold text-xs">{threadName.charAt(0).toUpperCase()}</div>
                 )}
-                {threadUser && <div className={`absolute bottom-0 right-0 w-2.5 h-2.5 rounded-full border border-[#0e0e0e] ${threadUser.status === 'online' ? 'bg-[#4dffb1]' : 'bg-[#8c90a1]'}`} />}
+                {threadUser && <div className={`absolute bottom-0 right-0 w-2.5 h-2.5 rounded-full border-2 border-[var(--ib-surface-raised)] ${threadUser.status === 'online' ? 'bg-[var(--ib-good-dot)]' : 'bg-[var(--ib-gray-400)]'}`} />}
               </div>
               <div className="flex-1 min-w-0">
                 <div className="flex justify-between items-baseline mb-0.5">
-                  <span className="font-semibold text-xs text-[#e5e2e1] truncate">{threadName}</span>
-                  <span className="text-[9px] text-[#8c90a1] flex-shrink-0 ml-1">{displayTime}</span>
+                  <span className="font-semibold text-xs text-[var(--ib-text)] truncate">{threadName}</span>
+                  <span className="text-[9px] text-[var(--ib-text-muted)] flex-shrink-0 ml-1">{displayTime}</span>
                 </div>
                 <div className="flex justify-between items-center gap-1">
-                  <p className="text-[10px] text-[#8c90a1] truncate flex-1 min-w-0">{thread.lastMessage || 'Start a conversation'}</p>
+                  <p className="text-[10px] text-[var(--ib-text-muted)] truncate flex-1 min-w-0">{thread.lastMessage || 'Start a conversation'}</p>
                   {/* (x ?? 0) > 0, not `x && x > 0`: a leading `0 &&` short-circuits to the number
                       0, which React renders as a literal "0" text node next to every read thread. */}
                   {(thread.unreadCount ?? 0) > 0 && !isSelected && (
-                    <span className="flex-shrink-0 min-w-[16px] h-4 bg-[#568dff] text-[#002661] rounded-full flex items-center justify-center font-bold text-[9px] px-1">{thread.unreadCount}</span>
+                    <span className="flex-shrink-0 min-w-[16px] h-4 bg-[var(--ib-blue-500)] text-white rounded-full flex items-center justify-center font-bold text-[9px] px-1">{thread.unreadCount}</span>
                   )}
                 </div>
               </div>
@@ -1869,18 +1869,18 @@ export default function ChatsView({ onJoinMeeting, searchFilter }: ChatsViewProp
   );
 
   const renderChat = () => (
-    <div className="flex flex-col h-full bg-[#0e0e0e] relative">
+    <div className="flex flex-col h-full bg-[var(--ib-surface)] relative">
       {!activeThread ? (
         <div className="flex-1 flex flex-col items-center justify-center text-center p-8">
-          <div className="w-16 h-16 rounded-2xl bg-[#568dff]/10 flex items-center justify-center mb-4"><Sparkles className="w-8 h-8 text-[#b0c6ff]" /></div>
-          <h2 className="text-lg font-bold text-[#e5e2e1] mb-2">Welcome to IB Connect</h2>
-          <p className="text-sm text-[#8c90a1] mb-4">Select a conversation or start a new one</p>
-          <button onClick={() => setShowNewThread(true)} className="flex items-center gap-2 bg-[#568dff] text-[#002661] font-bold px-4 py-2.5 rounded-xl text-xs hover:bg-[#568dff]/90 transition-colors"><PlusCircle className="w-4 h-4" /> Start New Chat</button>
+          <div className="w-16 h-16 rounded-2xl bg-[var(--ib-blue-50)] flex items-center justify-center mb-4"><Sparkles className="w-8 h-8 text-[var(--ib-blue-500)]" /></div>
+          <h2 className="text-lg font-bold text-[var(--ib-text)] mb-2">Welcome to IB Connect</h2>
+          <p className="text-sm text-[var(--ib-text-muted)] mb-4">Select a conversation or start a new one</p>
+          <button onClick={() => setShowNewThread(true)} className="flex items-center gap-2 bg-[var(--ib-blue-500)] text-white font-bold px-4 py-2.5 rounded-xl text-xs hover:bg-[var(--ib-blue-600)] transition-colors cursor-pointer"><PlusCircle className="w-4 h-4" /> Start New Chat</button>
         </div>
       ) : (
         <>
-          <div className="flex items-center gap-2 sm:gap-3 px-3 sm:px-4 py-3 border-b border-[#424655] bg-[#0e0e0e] flex-shrink-0">
-            <button onClick={handleMobileBack} className="lg:hidden w-8 h-8 flex items-center justify-center rounded-lg text-[#8c90a1] hover:text-[#e5e2e1] hover:bg-[#201f1f] transition-colors flex-shrink-0">
+          <div className="flex items-center gap-2 sm:gap-3 px-3 sm:px-4 py-3 border-b border-[var(--ib-border)] bg-[var(--ib-surface-raised)] flex-shrink-0">
+            <button onClick={handleMobileBack} className="lg:hidden w-11 h-11 flex items-center justify-center rounded-lg text-[var(--ib-text-muted)] hover:text-[var(--ib-text)] hover:bg-[var(--ib-gray-100)] transition-colors flex-shrink-0">
               <ArrowLeft className="w-4 h-4" />
             </button>
             {(() => {
@@ -1889,26 +1889,26 @@ export default function ChatsView({ onJoinMeeting, searchFilter }: ChatsViewProp
               return (
                 <div className="relative cursor-pointer flex-shrink-0" onClick={() => setShowConversationInfo(true)}>
                   {activeThread.type === 'group' ? (
-                    <div className="w-9 h-9 rounded-xl bg-[#8083ff]/15 text-[#c0c1ff] flex items-center justify-center"><Users className="w-4 h-4" /></div>
+                    <div className="w-9 h-9 rounded-xl bg-[var(--ib-blue-50)] text-[var(--ib-blue-500)] flex items-center justify-center"><Users className="w-4 h-4" /></div>
                   ) : headerAvatar ? (
                     <img src={headerAvatar} alt={headerName} className="w-9 h-9 rounded-full object-cover" />
                   ) : (
-                    <div className="w-9 h-9 rounded-xl bg-[#568dff]/10 flex items-center justify-center"><span className="text-sm font-bold text-[#b0c6ff]">{headerName.charAt(0).toUpperCase()}</span></div>
+                    <div className="w-9 h-9 rounded-xl bg-[var(--ib-blue-50)] flex items-center justify-center"><span className="text-sm font-bold text-[var(--ib-blue-500)]">{headerName.charAt(0).toUpperCase()}</span></div>
                   )}
-                  {threadUser && <div className={`absolute bottom-0 right-0 w-2.5 h-2.5 rounded-full border border-[#0e0e0e] ${threadUser.status === 'online' ? 'bg-[#4dffb1]' : 'bg-[#8c90a1]'}`} />}
+                  {threadUser && <div className={`absolute bottom-0 right-0 w-2.5 h-2.5 rounded-full border-2 border-[var(--ib-surface-raised)] ${threadUser.status === 'online' ? 'bg-[var(--ib-good-dot)]' : 'bg-[var(--ib-gray-400)]'}`} />}
                 </div>
               );
             })()}
             <div className="flex-1 min-w-0">
-              <button onClick={() => setShowConversationInfo(true)} className="block max-w-full text-left">
-                <h3 className="font-bold text-sm text-[#e5e2e1] truncate hover:text-white">{getThreadDisplay(activeThread).name}</h3>
+              <button onClick={() => setShowConversationInfo(true)} className="flex items-center min-h-11 sm:min-h-0 max-w-full text-left cursor-pointer">
+                <h3 className="font-bold text-sm text-[var(--ib-text)] truncate">{getThreadDisplay(activeThread).name}</h3>
               </button>
-              <p className="text-[10px] text-[#8c90a1] truncate">
+              <p className="text-[10px] text-[var(--ib-text-muted)] truncate">
                 {activeTypingUsers.length > 0 ? `${activeTypingUsers.map(u => u.userName).join(', ')} is typing...` : (() => { const u = getThreadUser(activeThread); return u ? (u.status === 'online' ? 'Online' : 'Offline') : `${activeThread.participants.length} participants`; })()}
               </p>
             </div>
             <div className="relative flex-shrink-0">
-              <button onClick={() => setShowPersonalize(v => !v)} title="Personalize this chat" aria-label="Personalize this chat" className="w-8 h-8 flex items-center justify-center rounded-lg text-[#8c90a1] hover:text-[#e5e2e1] hover:bg-[#201f1f] transition-colors">
+              <button onClick={() => setShowPersonalize(v => !v)} title="Personalize this chat" aria-label="Personalize this chat" className="w-11 h-11 sm:w-8 sm:h-8 flex items-center justify-center rounded-lg text-[var(--ib-text-muted)] hover:text-[var(--ib-text)] hover:bg-[var(--ib-gray-100)] transition-colors cursor-pointer">
                 <Palette className="w-4 h-4" />
               </button>
               {showPersonalize && (
@@ -1922,11 +1922,14 @@ export default function ChatsView({ onJoinMeeting, searchFilter }: ChatsViewProp
                 />
               )}
             </div>
-            <button onClick={handleQuickJoin} disabled={isJoining} className="flex items-center gap-1.5 bg-[#568dff]/10 text-[#b0c6ff] border border-[#568dff]/30 px-2.5 sm:px-3 py-1.5 rounded-lg text-xs font-bold hover:bg-[#568dff]/20 transition-colors disabled:opacity-50 flex-shrink-0">
+            <button onClick={handleQuickJoin} disabled={isJoining} className="hidden sm:flex items-center gap-1.5 bg-[var(--ib-blue-50)] text-[var(--ib-blue-500)] border border-[var(--ib-blue-500)]/30 px-2.5 sm:px-3 py-1.5 rounded-lg text-xs font-bold hover:bg-[var(--ib-blue-500)]/20 transition-colors disabled:opacity-50 flex-shrink-0 cursor-pointer">
               <Video className="w-3.5 h-3.5" />
-              <span className="hidden sm:inline">{isJoining ? '...' : 'Start Call'}</span>
+              <span>{isJoining ? '...' : 'Start Call'}</span>
             </button>
-            <button onClick={() => setShowConversationInfo(true)} title={activeThread.type === 'group' ? 'Group info' : 'Contact info'} aria-label={activeThread.type === 'group' ? 'Open group info' : 'Open contact info'} className="grid h-8 w-8 shrink-0 place-items-center rounded-lg text-[#8c90a1] transition-colors hover:bg-[#201f1f] hover:text-[#e5e2e1]">
+            <button onClick={handleQuickJoin} disabled={isJoining} aria-label="Start Call" className="sm:hidden w-11 h-11 flex items-center justify-center rounded-lg bg-[var(--ib-blue-50)] text-[var(--ib-blue-500)] transition-colors disabled:opacity-50 flex-shrink-0 cursor-pointer">
+              <Video className="w-4 h-4" />
+            </button>
+            <button onClick={() => setShowConversationInfo(true)} title={activeThread.type === 'group' ? 'Group info' : 'Contact info'} aria-label={activeThread.type === 'group' ? 'Open group info' : 'Open contact info'} className="grid h-11 w-11 sm:h-8 sm:w-8 shrink-0 place-items-center rounded-lg text-[var(--ib-text-muted)] transition-colors hover:bg-[var(--ib-gray-100)] hover:text-[var(--ib-text)] cursor-pointer">
               <MoreVertical className="h-4 w-4" />
             </button>
           </div>
@@ -1935,16 +1938,16 @@ export default function ChatsView({ onJoinMeeting, searchFilter }: ChatsViewProp
             ref={chatScrollRef}
             className="flex-1 overflow-y-auto p-3 sm:p-4 flex flex-col gap-3 sm:gap-4 scroll-smooth"
             style={{
-              paddingBottom: '130px',
-              background: WALLPAPERS.find(w => w.key === personalization.wallpaper)?.css || undefined,
+              paddingBottom: 'calc(130px + env(safe-area-inset-bottom))',
+              background: WALLPAPERS.find(w => w.key === personalization.wallpaper)?.css || 'var(--ib-surface)',
               fontFamily: FONTS.find(f => f.key === personalization.font)?.css,
             }}
           >
             {messages.length === 0 ? (
               <div className="flex-1 flex items-center justify-center py-16">
                 <div className="text-center">
-                  <MessageSquare className="w-8 h-8 text-[#424655] mx-auto mb-2" />
-                  <p className="text-xs text-[#8c90a1]">No messages yet — say hello!</p>
+                  <MessageSquare className="w-8 h-8 text-[var(--ib-gray-400)] mx-auto mb-2" />
+                  <p className="text-xs text-[var(--ib-text-muted)]">No messages yet — say hello!</p>
                 </div>
               </div>
             ) : (
@@ -1969,22 +1972,22 @@ export default function ChatsView({ onJoinMeeting, searchFilter }: ChatsViewProp
                   <div key={msg.id} className={`flex gap-2 sm:gap-2.5 ${isMe ? 'flex-row-reverse' : 'flex-row'}`}>
                     <div className="flex-shrink-0 mt-0.5 cursor-pointer" onClick={() => { if (!isMe && sender) setViewingUser(sender as IBUser); }}>
                       {msg.senderAvatar ? (
-                        <img alt={msg.senderName} className="w-7 h-7 sm:w-8 sm:h-8 rounded-full object-cover ring-1 ring-[#424655]" src={msg.senderAvatar} />
+                        <img alt={msg.senderName} className="w-7 h-7 sm:w-8 sm:h-8 rounded-full object-cover ring-1 ring-[var(--ib-border)]" src={msg.senderAvatar} />
                       ) : (
-                        <div className={`w-7 h-7 sm:w-8 sm:h-8 rounded-full flex items-center justify-center text-xs font-bold ${isMe ? 'bg-[#568dff] text-[#002661]' : 'bg-[#201f1f] text-[#b0c6ff]'}`}>{msg.senderName.charAt(0).toUpperCase()}</div>
+                        <div className={`w-7 h-7 sm:w-8 sm:h-8 rounded-full flex items-center justify-center text-xs font-bold ${isMe ? 'bg-[var(--ib-blue-500)] text-white' : 'bg-[var(--ib-gray-100)] text-[var(--ib-blue-500)]'}`}>{msg.senderName.charAt(0).toUpperCase()}</div>
                       )}
                     </div>
                     <div className={`flex flex-col gap-1 ${isMe ? 'items-end' : 'items-start'}`} style={{ maxWidth: 'min(72%, 420px)' }}>
                       <div className={`flex items-baseline gap-2 ${isMe ? 'flex-row-reverse' : 'flex-row'}`}>
-                        <span className="text-[10px] font-semibold text-[#c2c6d8]">{msg.senderName}</span>
-                        <span className="text-[9px] text-[#8c90a1] flex-shrink-0">{messageTime}</span>
+                        <span className="text-[10px] font-semibold text-[var(--ib-text-muted)]">{msg.senderName}</span>
+                        <span className="text-[9px] text-[var(--ib-text-muted)] flex-shrink-0">{messageTime}</span>
                       </div>
                       {msg.fileAttachment ? (
                         <MessageAttachment file={msg.fileAttachment} isMe={isMe} onPreview={setPreviewFile} messageId={msg.id} />
                       ) : (
                         <>
                           <div
-                            className={`px-3 py-2.5 rounded-2xl text-[16px] sm:text-xs border leading-relaxed ${isMe ? 'text-white rounded-tr-sm' : 'bg-[#1c1b1b] text-[#e5e2e1] border-[#424655]/40 rounded-tl-sm'}`}
+                            className={`px-3 py-2.5 rounded-2xl text-base sm:text-xs border leading-relaxed ${isMe ? 'text-white rounded-tr-sm' : 'bg-[var(--ib-surface-raised)] text-[var(--ib-text)] border-[var(--ib-border)] rounded-tl-sm'}`}
                             style={{
                               wordBreak: 'break-word', overflowWrap: 'anywhere', whiteSpace: 'pre-wrap',
                               ...(isMe ? { background: accentHex, borderColor: accentHex } : {}),
@@ -2002,12 +2005,12 @@ export default function ChatsView({ onJoinMeeting, searchFilter }: ChatsViewProp
             )}
             {activeTypingUsers.length > 0 && (
               <div className="flex gap-2.5 items-end">
-                <div className="w-8 h-8 rounded-full bg-[#201f1f] flex items-center justify-center flex-shrink-0"><span className="text-xs font-bold text-[#b0c6ff]">{activeTypingUsers[0].userName.charAt(0).toUpperCase()}</span></div>
-                <div className="bg-[#1c1b1b] border border-[#424655]/40 rounded-2xl rounded-tl-sm px-4 py-3">
+                <div className="w-8 h-8 rounded-full bg-[var(--ib-gray-100)] flex items-center justify-center flex-shrink-0"><span className="text-xs font-bold text-[var(--ib-blue-500)]">{activeTypingUsers[0].userName.charAt(0).toUpperCase()}</span></div>
+                <div className="bg-[var(--ib-surface-raised)] border border-[var(--ib-border)] rounded-2xl rounded-tl-sm px-4 py-3">
                   <div className="flex gap-1 items-center">
-                    <div className="w-1.5 h-1.5 bg-[#8c90a1] rounded-full animate-bounce" style={{ animationDelay: '0ms' }} />
-                    <div className="w-1.5 h-1.5 bg-[#8c90a1] rounded-full animate-bounce" style={{ animationDelay: '150ms' }} />
-                    <div className="w-1.5 h-1.5 bg-[#8c90a1] rounded-full animate-bounce" style={{ animationDelay: '300ms' }} />
+                    <div className="w-1.5 h-1.5 bg-[var(--ib-text-muted)] rounded-full animate-bounce" style={{ animationDelay: '0ms' }} />
+                    <div className="w-1.5 h-1.5 bg-[var(--ib-text-muted)] rounded-full animate-bounce" style={{ animationDelay: '150ms' }} />
+                    <div className="w-1.5 h-1.5 bg-[var(--ib-text-muted)] rounded-full animate-bounce" style={{ animationDelay: '300ms' }} />
                   </div>
                 </div>
               </div>
@@ -2015,7 +2018,7 @@ export default function ChatsView({ onJoinMeeting, searchFilter }: ChatsViewProp
             <div ref={messagesEndRef} className="h-1 flex-shrink-0" />
           </div>
 
-          <div className="absolute bottom-0 left-0 right-0 p-2 sm:p-3 bg-gradient-to-t from-[#0e0e0e] via-[#0e0e0e]/98 to-transparent pt-6 sm:pt-8">
+          <div className="absolute bottom-0 left-0 right-0 p-2 sm:p-3 pb-[calc(0.5rem+env(safe-area-inset-bottom))] sm:pb-3 bg-gradient-to-t from-[var(--ib-surface)] via-[var(--ib-surface)]/98 to-transparent pt-6 sm:pt-8">
             {/* AI Reply: only worth offering when there's something to reply TO and the
                 composer isn't already mid-draft — filling suggestions into someone's own
                 half-written message would be more annoying than helpful. */}
@@ -2027,18 +2030,18 @@ export default function ChatsView({ onJoinMeeting, searchFilter }: ChatsViewProp
                       key={i}
                       onClick={() => handleUseSuggestion(s.text)}
                       title={s.tone}
-                      className="text-[11px] text-[#e5e2e1] bg-[#1c1b1b] border border-[#424655]/60 hover:border-[#568dff]/50 rounded-full px-3 py-1.5 max-w-[220px] truncate transition-colors"
+                      className="text-[11px] text-[var(--ib-text)] bg-[var(--ib-surface-raised)] border border-[var(--ib-border)] hover:border-[var(--ib-blue-500)]/50 rounded-full px-3 py-1.5 max-w-[220px] truncate transition-colors cursor-pointer"
                     >
                       {s.text}
                     </button>
                   ))}
-                  <button onClick={() => setReplySuggestions(null)} className="text-[11px] text-[#8c90a1] hover:text-[#e5e2e1] px-2 py-1.5"><X className="w-3 h-3" /></button>
+                  <button onClick={() => setReplySuggestions(null)} className="text-[11px] text-[var(--ib-text-muted)] hover:text-[var(--ib-text)] px-2 py-1.5 cursor-pointer"><X className="w-3 h-3" /></button>
                 </div>
               ) : (
                 <button
                   onClick={handleSuggestReplies}
                   disabled={isSuggestingReplies}
-                  className="flex items-center gap-1.5 text-[11px] text-[#b0c6ff] hover:text-[#c0c1ff] mb-2 disabled:opacity-50"
+                  className="flex items-center gap-1.5 text-[11px] text-[var(--ib-blue-500)] hover:text-[var(--ib-blue-800)] mb-2 disabled:opacity-50 cursor-pointer"
                 >
                   {isSuggestingReplies ? <Loader2 className="w-3 h-3 animate-spin" /> : <Sparkles className="w-3 h-3" />}
                   {isSuggestingReplies ? 'Thinking…' : 'Suggest replies'}
@@ -2046,17 +2049,17 @@ export default function ChatsView({ onJoinMeeting, searchFilter }: ChatsViewProp
               )
             )}
             {!canSendToActiveThread ? (
-              <div className="flex items-center justify-center gap-2 rounded-xl border border-[#718cff]/20 bg-[#111827]/95 px-4 py-3 text-xs text-[#9aa4b8] shadow-lg">
-                <ShieldCheck className="h-4 w-4 text-[#9bafff]" /> Only group admins can send messages in this conversation.
+              <div className="flex items-center justify-center gap-2 rounded-xl border border-[var(--ib-blue-500)]/20 bg-[var(--ib-surface-raised)] px-4 py-3 text-xs text-[var(--ib-text-muted)] shadow-[var(--ib-shadow-md)]">
+                <ShieldCheck className="h-4 w-4 text-[var(--ib-blue-500)]" /> Only group admins can send messages in this conversation.
               </div>
-            ) : <div className="bg-[#131313] rounded-xl border border-[#424655] shadow-lg focus-within:border-[#568dff] focus-within:ring-1 focus-within:ring-[#568dff]/50 transition-all flex flex-col">
+            ) : <div className="bg-[var(--ib-surface-raised)] rounded-xl border border-[var(--ib-border)] shadow-[var(--ib-shadow-md)] focus-within:border-[var(--ib-blue-500)] focus-within:shadow-[var(--ib-shadow-focus)] transition-all flex flex-col">
               {isRecording ? (
                 <div className="flex items-center gap-3 px-4 py-3">
-                  <button onClick={() => finishRecording(false)} title="Cancel recording" aria-label="Cancel recording" className="text-[#8c90a1] hover:text-[#ffb4ab] transition-colors flex-shrink-0">
+                  <button onClick={() => finishRecording(false)} title="Cancel recording" aria-label="Cancel recording" className="text-[var(--ib-text-muted)] hover:text-[var(--ib-bad-dot)] transition-colors flex-shrink-0 cursor-pointer">
                     <Trash2 className="w-4 h-4" />
                   </button>
                   <span className="w-2 h-2 rounded-full bg-[var(--ib-bad-dot)] animate-pulse flex-shrink-0" />
-                  <span className="text-xs text-[#e5e2e1] flex-shrink-0 tabular-nums">
+                  <span className="text-xs text-[var(--ib-text)] flex-shrink-0 tabular-nums">
                     {String(Math.floor(recordSeconds / 60)).padStart(2, '0')}:{String(recordSeconds % 60).padStart(2, '0')}
                   </span>
                   {/* Real mic levels (see startWaveform), not a decorative
@@ -2066,12 +2069,12 @@ export default function ChatsView({ onJoinMeeting, searchFilter }: ChatsViewProp
                     {waveformLevels.map((lvl, i) => (
                       <span
                         key={i}
-                        className="flex-1 min-w-[2px] rounded-full bg-[#568dff] transition-[height] duration-75"
+                        className="flex-1 min-w-[2px] rounded-full bg-[var(--ib-blue-500)] transition-[height] duration-75"
                         style={{ height: `${Math.max(8, lvl * 100)}%` }}
                       />
                     ))}
                   </div>
-                  <button onClick={() => finishRecording(true)} title="Send voice message" aria-label="Send voice message" className="bg-[#568dff] text-[#002661] w-8 h-8 rounded-lg flex items-center justify-center hover:bg-[#568dff]/90 transition-colors shadow-sm flex-shrink-0">
+                  <button onClick={() => finishRecording(true)} title="Send voice message" aria-label="Send voice message" className="bg-[var(--ib-blue-500)] text-white w-11 h-11 sm:w-8 sm:h-8 rounded-lg flex items-center justify-center hover:bg-[var(--ib-blue-600)] transition-colors shadow-[var(--ib-shadow-sm)] flex-shrink-0 cursor-pointer">
                     <Send className="w-3.5 h-3.5 stroke-[2.5]" />
                   </button>
                 </div>
@@ -2079,18 +2082,19 @@ export default function ChatsView({ onJoinMeeting, searchFilter }: ChatsViewProp
                 <>
                   <textarea
                     ref={textareaRef}
-                    className="w-full bg-transparent border-none focus:ring-0 resize-none py-3 px-4 text-[16px] sm:text-xs text-[#e5e2e1] placeholder-[#8c90a1]/60 outline-none leading-relaxed"
+                    className="w-full bg-transparent border-none focus:ring-0 resize-none py-3 px-4 text-base sm:text-xs text-[var(--ib-text)] placeholder-[var(--ib-text-muted)] outline-none leading-relaxed touch-manipulation"
                     style={{ minHeight: '44px', maxHeight: '112px', overflowY: 'auto' }}
                     placeholder="Type a message… (use **text** for bold)"
                     value={inputText}
                     onChange={handleInputChange}
                     onKeyDown={handleKeyDown}
+                    enterKeyHint="send"
                   />
-                  <div className="flex justify-between items-center px-3 py-2 border-t border-[#424655]/30 bg-[#1c1b1b]/40 rounded-b-xl">
+                  <div className="flex justify-between items-center px-3 py-2 border-t border-[var(--ib-border)] bg-[var(--ib-gray-50)]/60 rounded-b-xl">
                     <div className="flex gap-1 relative items-center">
-                      <button onClick={() => fileInputRef.current?.click()} className="w-7 h-7 flex items-center justify-center rounded-lg text-[#8c90a1] hover:bg-[#201f1f] hover:text-[#b0c6ff] transition-colors"><Paperclip className="w-3.5 h-3.5" /></button>
-                      <button onClick={handleBold} className="w-7 h-7 flex items-center justify-center rounded-lg text-[#8c90a1] hover:bg-[#201f1f] hover:text-[#e5e2e1] transition-colors"><Bold className="w-3.5 h-3.5" /></button>
-                      <button onClick={() => setShowEmoji(v => !v)} className={`w-7 h-7 flex items-center justify-center rounded-lg transition-colors ${showEmoji ? 'bg-[#568dff]/20 text-[#b0c6ff]' : 'text-[#8c90a1] hover:bg-[#201f1f] hover:text-[#b0c6ff]'}`}><Smile className="w-3.5 h-3.5" /></button>
+                      <button onClick={() => fileInputRef.current?.click()} className="w-11 h-11 sm:w-7 sm:h-7 flex items-center justify-center rounded-lg text-[var(--ib-text-muted)] hover:bg-[var(--ib-gray-100)] hover:text-[var(--ib-blue-500)] transition-colors cursor-pointer"><Paperclip className="w-3.5 h-3.5" /></button>
+                      <button onClick={handleBold} className="w-11 h-11 sm:w-7 sm:h-7 flex items-center justify-center rounded-lg text-[var(--ib-text-muted)] hover:bg-[var(--ib-gray-100)] hover:text-[var(--ib-text)] transition-colors cursor-pointer"><Bold className="w-3.5 h-3.5" /></button>
+                      <button onClick={() => setShowEmoji(v => !v)} className={`w-11 h-11 sm:w-7 sm:h-7 flex items-center justify-center rounded-lg transition-colors cursor-pointer ${showEmoji ? 'bg-[var(--ib-blue-50)] text-[var(--ib-blue-500)]' : 'text-[var(--ib-text-muted)] hover:bg-[var(--ib-gray-100)] hover:text-[var(--ib-blue-500)]'}`}><Smile className="w-3.5 h-3.5" /></button>
                       {showEmoji && <EmojiPicker onSelect={handleEmojiSelect} onClose={() => setShowEmoji(false)} />}
                       {/* AI Writing: rewrite/tone tools, disabled on an empty draft since there's
                           nothing to rewrite. */}
@@ -2098,19 +2102,19 @@ export default function ChatsView({ onJoinMeeting, searchFilter }: ChatsViewProp
                         onClick={() => setShowRewriteMenu(v => !v)}
                         disabled={!inputText.trim() || isRewriting}
                         title="Rewrite with AI"
-                        className={`w-7 h-7 flex items-center justify-center rounded-lg transition-colors disabled:opacity-30 ${showRewriteMenu ? 'bg-[#568dff]/20 text-[#b0c6ff]' : 'text-[#8c90a1] hover:bg-[#201f1f] hover:text-[#b0c6ff]'}`}
+                        className={`w-11 h-11 sm:w-7 sm:h-7 flex items-center justify-center rounded-lg transition-colors disabled:opacity-30 cursor-pointer ${showRewriteMenu ? 'bg-[var(--ib-blue-50)] text-[var(--ib-blue-500)]' : 'text-[var(--ib-text-muted)] hover:bg-[var(--ib-gray-100)] hover:text-[var(--ib-blue-500)]'}`}
                       >
                         {isRewriting ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Wand2 className="w-3.5 h-3.5" />}
                       </button>
                       {showRewriteMenu && <RewriteMenu onPick={handleRewrite} onClose={() => setShowRewriteMenu(false)} busy={isRewriting} />}
                       {rewriteUndo !== null && (
-                        <button onClick={handleUndoRewrite} title="Undo rewrite" className="flex items-center gap-1 text-[10px] text-[#8c90a1] hover:text-[#e5e2e1] px-1.5">
+                        <button onClick={handleUndoRewrite} title="Undo rewrite" className="flex items-center gap-1 text-[10px] text-[var(--ib-text-muted)] hover:text-[var(--ib-text)] px-1.5 cursor-pointer">
                           <RotateCcw className="w-3 h-3" />Undo
                         </button>
                       )}
                     </div>
                     {inputText.trim() ? (
-                      <button onClick={handleSend} className="text-[#002661] w-7 h-7 rounded-lg flex items-center justify-center transition-colors shadow-sm" style={{ background: accentHex }}>
+                      <button onClick={handleSend} className="text-white w-11 h-11 sm:w-7 sm:h-7 rounded-lg flex items-center justify-center transition-colors shadow-[var(--ib-shadow-sm)] cursor-pointer" style={{ background: accentHex }}>
                         <Send className="w-3 h-3 stroke-[2.5]" />
                       </button>
                     ) : (
@@ -2119,7 +2123,7 @@ export default function ChatsView({ onJoinMeeting, searchFilter }: ChatsViewProp
                         disabled={isStartingRecording}
                         title="Record a voice message"
                         aria-label="Record a voice message"
-                        className="w-7 h-7 flex items-center justify-center rounded-lg text-[#8c90a1] hover:bg-[#201f1f] hover:text-[#b0c6ff] transition-colors disabled:opacity-50"
+                        className="w-11 h-11 sm:w-7 sm:h-7 flex items-center justify-center rounded-lg text-[var(--ib-text-muted)] hover:bg-[var(--ib-gray-100)] hover:text-[var(--ib-blue-500)] transition-colors disabled:opacity-50 cursor-pointer"
                       >
                         {/* Visual feedback for the gap between the click and getUserMedia
                             actually resolving (a permission prompt can take a few seconds) —
@@ -2134,8 +2138,8 @@ export default function ChatsView({ onJoinMeeting, searchFilter }: ChatsViewProp
                 </>
               )}
             </div>}
-            {meetingError && <p className="text-[10px] text-[#ffb4ab] mt-1 text-center">{meetingError}</p>}
-            {aiError && <p className="text-[10px] text-[#ffb4ab] mt-1 text-center">{aiError}</p>}
+            {meetingError && <p className="text-[10px] text-[var(--ib-bad-text)] mt-1 text-center">{meetingError}</p>}
+            {aiError && <p className="text-[10px] text-[var(--ib-bad-text)] mt-1 text-center">{aiError}</p>}
           </div>
         </>
       )}
