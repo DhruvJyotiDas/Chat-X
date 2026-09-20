@@ -14,7 +14,7 @@ import { parseWhenPhrase } from '../../lib/aiDateParse';
 import { parseMeetingCard, type MeetingCardPayload } from '../../lib/aiMeetingCard';
 import { CalendarClock, CalendarX2, Palette } from 'lucide-react';
 import { loadChatPersonalization, saveChatPersonalization, WALLPAPERS, ACCENTS, FONTS, DEFAULT_PERSONALIZATION, type ChatPersonalization } from '../../lib/chatPersonalization';
-import { extractIntelligence, ITEM_ICONS, ITEM_COLORS } from '../../lib/intelligence';
+import { extractIntelligence, ITEM_ICONS, ITEM_COLORS_LIGHT } from '../../lib/intelligence';
 import { REWRITE_MODES } from '../../lib/aiWriting';
 import { CAPTION_LANGUAGES } from '../../lib/captions';
 import { useSuppressAipaLauncher } from '../../hooks/useSuppressAipaLauncher';
@@ -1165,7 +1165,7 @@ function IntelligenceSidebar({ intelligence, messages, activeThread, currentUser
           ) : (
             <div className="flex flex-col gap-2">
               {intelligence.map(item => (
-                <div key={item.id} className={`border rounded-xl p-3 text-[10px] leading-relaxed ${ITEM_COLORS[item.type]}`}>
+                <div key={item.id} className={`border rounded-xl p-3 text-[10px] leading-relaxed ${ITEM_COLORS_LIGHT[item.type]}`}>
                   <div className="flex items-start gap-1.5">
                     <span className="mt-0.5">{ITEM_ICONS[item.type]}</span>
                     <div><span className="font-bold uppercase text-[8px] tracking-wider block mb-0.5 opacity-70">{item.type}</span><span>{item.text}</span>{item.time && <span className="block mt-0.5 opacity-70">🕒 {item.time}</span>}</div>

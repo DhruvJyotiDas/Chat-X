@@ -31,21 +31,21 @@ const DIMENSION_LABELS: Record<string, string> = {
 };
 
 function scoreColor(n: number): string {
-  if (n >= 8) return 'text-[#4dffb1]';
-  if (n >= 6) return 'text-[#ffd60a]';
-  return 'text-[#ffb4ab]';
+  if (n >= 8) return 'text-[var(--ib-good-dot)]';
+  if (n >= 6) return 'text-[var(--ib-warn-text)]';
+  return 'text-[var(--ib-bad-dot)]';
 }
 function scoreBar(n: number): string {
-  if (n >= 8) return 'bg-[#4dffb1]';
-  if (n >= 6) return 'bg-[#ffd60a]';
-  return 'bg-[#ffb4ab]';
+  if (n >= 8) return 'bg-[var(--ib-good-dot)]';
+  if (n >= 6) return 'bg-[var(--ib-warn-dot)]';
+  return 'bg-[var(--ib-bad-dot)]';
 }
 
 function ScoreRow({ label, value }: { label: string; value: number }) {
   return (
     <div className="flex items-center gap-3">
-      <span className="text-[11px] text-[#8c90a1] w-28 shrink-0">{label}</span>
-      <div className="flex-1 h-1.5 rounded-full bg-[#424655]/40 overflow-hidden">
+      <span className="text-[11px] text-[var(--ib-text-muted)] w-28 shrink-0">{label}</span>
+      <div className="flex-1 h-1.5 rounded-full bg-[var(--ib-border)]/40 overflow-hidden">
         <div className={`h-full rounded-full ${scoreBar(value)}`} style={{ width: `${value * 10}%` }} />
       </div>
       <span className={`text-xs font-bold tabular-nums w-8 text-right ${scoreColor(value)}`}>
@@ -64,8 +64,8 @@ function EngineBanner({ status }: { status: InterviewEngineStatus | null }) {
   return (
     <div className={`flex items-start gap-3 rounded-xl border px-4 py-3 mb-5 ${
       configuring
-        ? 'bg-[#ffd60a]/10 border-[#ffd60a]/30 text-[#ffd60a]'
-        : 'bg-[#568dff]/10 border-[#568dff]/30 text-[#b0c6ff]'}`}>
+        ? 'bg-[var(--ib-warn-dot)]/10 border-[var(--ib-warn-dot)]/30 text-[var(--ib-warn-text)]'
+        : 'bg-[var(--ib-blue-500)]/10 border-[var(--ib-blue-500)]/30 text-[var(--ib-blue-500)]'}`}>
       {configuring ? <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" />
                    : <Loader2 className="w-4 h-4 shrink-0 mt-0.5 animate-spin" />}
       <div className="text-xs leading-relaxed">
@@ -243,40 +243,40 @@ export default function InterviewView() {
         <div
           onDragOver={(e) => e.preventDefault()}
           onDrop={(e) => { e.preventDefault(); const f = e.dataTransfer.files?.[0]; if (f) void onFile(f); }}
-          className="border-2 border-dashed border-[#424655] rounded-2xl p-8 sm:p-12 text-center bg-[#1c1b1b]"
+          className="border-2 border-dashed border-[var(--ib-border)] rounded-2xl p-8 sm:p-12 text-center bg-[var(--ib-surface-raised)]"
         >
-          <div className="w-14 h-14 rounded-2xl bg-[#568dff]/15 border border-[#568dff]/30 flex items-center justify-center mx-auto mb-4">
-            <Upload className="w-6 h-6 text-[#b0c6ff]" />
+          <div className="w-14 h-14 rounded-2xl bg-[var(--ib-blue-500)]/15 border border-[var(--ib-blue-500)]/30 flex items-center justify-center mx-auto mb-4">
+            <Upload className="w-6 h-6 text-[var(--ib-blue-500)]" />
           </div>
-          <h2 className="text-lg font-bold text-[#e5e2e1] mb-1.5">Start with your CV</h2>
-          <p className="text-xs text-[#8c90a1] max-w-md mx-auto mb-5 leading-relaxed">
+          <h2 className="text-lg font-bold text-[var(--ib-text)] mb-1.5">Start with your CV</h2>
+          <p className="text-xs text-[var(--ib-text-muted)] max-w-md mx-auto mb-5 leading-relaxed">
             We read your CV to write questions about <em>your</em> work rather than generic ones,
             and we&apos;ll pull in your public GitHub activity if you link it.
             PDF, DOCX or plain text.
           </p>
           <button
             onClick={() => fileRef.current?.click()}
-            className="px-5 py-2.5 min-h-[44px] rounded-xl bg-[#568dff] text-[#002661] text-xs font-bold hover:bg-[#568dff]/90 transition-colors cursor-pointer"
+            className="px-5 py-2.5 min-h-[44px] rounded-xl bg-[var(--ib-blue-500)] text-[#002661] text-xs font-bold hover:bg-[var(--ib-blue-500)]/90 transition-colors cursor-pointer"
           >
             Choose a file
           </button>
-          <p className="text-[10px] text-[#8c90a1] mt-3">or drop it here</p>
+          <p className="text-[10px] text-[var(--ib-text-muted)] mt-3">or drop it here</p>
         </div>
       ) : (
-        <div className="bg-[#1c1b1b] border border-[#424655] rounded-2xl p-5">
+        <div className="bg-[var(--ib-surface-raised)] border border-[var(--ib-border)] rounded-2xl p-5">
           <div className="flex items-start justify-between gap-3 mb-4">
             <div className="min-w-0">
-              <h2 className="text-base font-bold text-[#e5e2e1] truncate">
+              <h2 className="text-base font-bold text-[var(--ib-text)] truncate">
                 {profile.fullName || 'Your profile'}
               </h2>
-              {profile.headline && <p className="text-xs text-[#8c90a1] truncate">{profile.headline}</p>}
-              <p className="text-[10px] text-[#8c90a1] mt-1 flex items-center gap-1.5">
+              {profile.headline && <p className="text-xs text-[var(--ib-text-muted)] truncate">{profile.headline}</p>}
+              <p className="text-[10px] text-[var(--ib-text-muted)] mt-1 flex items-center gap-1.5">
                 <FileText className="w-3 h-3" /> {profile.fileName}
               </p>
             </div>
             <button
               onClick={() => fileRef.current?.click()}
-              className="text-[11px] text-[#b0c6ff] hover:text-[#568dff] shrink-0 min-h-[36px] px-2 cursor-pointer"
+              className="text-[11px] text-[var(--ib-blue-500)] hover:text-[var(--ib-blue-500)] shrink-0 min-h-[36px] px-2 cursor-pointer"
             >
               Replace
             </button>
@@ -285,7 +285,7 @@ export default function InterviewView() {
           {profile.skills.length > 0 && (
             <div className="flex flex-wrap gap-1.5 mb-4">
               {profile.skills.slice(0, 14).map((s) => (
-                <span key={s} className="px-2 py-1 rounded-lg bg-[#568dff]/10 border border-[#568dff]/20 text-[10px] text-[#b0c6ff]">
+                <span key={s} className="px-2 py-1 rounded-lg bg-[var(--ib-blue-500)]/10 border border-[var(--ib-blue-500)]/20 text-[10px] text-[var(--ib-blue-500)]">
                   {s}
                 </span>
               ))}
@@ -296,7 +296,7 @@ export default function InterviewView() {
             <div className="flex flex-wrap gap-2 mb-4">
               {profile.links.map((l) => (
                 <a key={l.url} href={l.url} target="_blank" rel="noreferrer"
-                   className="flex items-center gap-1.5 px-2.5 py-1.5 min-h-[32px] rounded-lg bg-[#201f1f] border border-[#424655] text-[10px] text-[#c2c6d8] hover:border-[#568dff] transition-colors">
+                   className="flex items-center gap-1.5 px-2.5 py-1.5 min-h-[32px] rounded-lg bg-[var(--ib-gray-100)] border border-[var(--ib-border)] text-[10px] text-[var(--ib-text)] hover:border-[var(--ib-blue-500)] transition-colors">
                   {l.platform === 'github' ? <Github className="w-3 h-3" />
                     : l.platform === 'linkedin' ? <Linkedin className="w-3 h-3" />
                     : <LinkIcon className="w-3 h-3" />}
@@ -307,21 +307,21 @@ export default function InterviewView() {
           )}
 
           {profile.github && (
-            <div className="rounded-xl bg-[#201f1f] border border-[#424655]/60 p-3.5">
+            <div className="rounded-xl bg-[var(--ib-gray-100)] border border-[var(--ib-border)]/60 p-3.5">
               {profile.github.unavailable ? (
-                <p className="text-[11px] text-[#8c90a1] flex items-center gap-2">
+                <p className="text-[11px] text-[var(--ib-text-muted)] flex items-center gap-2">
                   <Github className="w-3.5 h-3.5 shrink-0" /> {profile.github.unavailable}
                 </p>
               ) : (
                 <>
-                  <p className="text-[11px] font-semibold text-[#e5e2e1] flex items-center gap-2 mb-2">
+                  <p className="text-[11px] font-semibold text-[var(--ib-text)] flex items-center gap-2 mb-2">
                     <Github className="w-3.5 h-3.5" /> {profile.github.login}
-                    <span className="text-[10px] font-normal text-[#8c90a1]">
+                    <span className="text-[10px] font-normal text-[var(--ib-text-muted)]">
                       {profile.github.publicRepos} repos · {profile.github.totalStars} stars
                     </span>
                   </p>
                   {profile.github.topLanguages.length > 0 && (
-                    <p className="text-[10px] text-[#8c90a1]">
+                    <p className="text-[10px] text-[var(--ib-text-muted)]">
                       Mostly {profile.github.topLanguages.slice(0, 4).join(', ')}
                     </p>
                   )}
@@ -333,7 +333,7 @@ export default function InterviewView() {
           <button
             onClick={() => setStage('setup')}
             disabled={!status?.ready}
-            className="mt-4 w-full py-3 min-h-[44px] rounded-xl bg-[#568dff] text-[#002661] text-xs font-bold hover:bg-[#568dff]/90 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer transition-colors flex items-center justify-center gap-2"
+            className="mt-4 w-full py-3 min-h-[44px] rounded-xl bg-[var(--ib-blue-500)] text-[#002661] text-xs font-bold hover:bg-[var(--ib-blue-500)]/90 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer transition-colors flex items-center justify-center gap-2"
           >
             <Sparkles className="w-4 h-4" /> Set up an interview
           </button>
@@ -342,7 +342,7 @@ export default function InterviewView() {
 
       {history.length > 0 && (
         <div>
-          <h3 className="text-[11px] font-bold uppercase tracking-wider text-[#8c90a1] mb-2.5">
+          <h3 className="text-[11px] font-bold uppercase tracking-wider text-[var(--ib-text-muted)] mb-2.5">
             Past interviews
           </h3>
           <div className="flex flex-col gap-2">
@@ -356,11 +356,11 @@ export default function InterviewView() {
                     setReport(full.report ?? null); setStage('report');
                   } catch { /* stays on the list */ }
                 }}
-                className="w-full flex items-center gap-3 p-3 min-h-[52px] rounded-xl bg-[#1c1b1b] border border-[#424655] hover:border-[#568dff]/50 transition-colors text-left cursor-pointer"
+                className="w-full flex items-center gap-3 p-3 min-h-[52px] rounded-xl bg-[var(--ib-surface-raised)] border border-[var(--ib-border)] hover:border-[var(--ib-blue-500)]/50 transition-colors text-left cursor-pointer"
               >
                 <div className="flex-1 min-w-0">
-                  <p className="text-xs font-semibold text-[#e5e2e1] truncate">{h.role}</p>
-                  <p className="text-[10px] text-[#8c90a1]">
+                  <p className="text-xs font-semibold text-[var(--ib-text)] truncate">{h.role}</p>
+                  <p className="text-[10px] text-[var(--ib-text-muted)]">
                     {h.seniority} · {h.kind.replace('_', ' ')} ·{' '}
                     {new Date(h.createdAt).toLocaleDateString()}
                   </p>
@@ -370,9 +370,9 @@ export default function InterviewView() {
                     {h.overallScore.toFixed(1)}
                   </span>
                 ) : (
-                  <span className="text-[10px] text-[#8c90a1]">{h.status.replace('_', ' ')}</span>
+                  <span className="text-[10px] text-[var(--ib-text-muted)]">{h.status.replace('_', ' ')}</span>
                 )}
-                <ChevronRight className="w-4 h-4 text-[#8c90a1] shrink-0" />
+                <ChevronRight className="w-4 h-4 text-[var(--ib-text-muted)] shrink-0" />
               </button>
             ))}
           </div>
@@ -385,22 +385,22 @@ export default function InterviewView() {
     <div className="flex flex-col gap-5 max-w-xl">
       <EngineBanner status={status} />
       <div>
-        <label className="text-[10px] font-bold uppercase tracking-wider text-[#8c90a1]">Role</label>
+        <label className="text-[10px] font-bold uppercase tracking-wider text-[var(--ib-text-muted)]">Role</label>
         <input
           value={role} onChange={(e) => setRole(e.target.value)} autoFocus
           placeholder="e.g. Backend Engineer"
-          className="mt-1.5 w-full px-3 py-3 min-h-[44px] bg-[#131313] border border-[#424655] rounded-xl text-xs text-[#e5e2e1] placeholder-[#8c90a1]/60 focus:border-[#568dff] outline-none"
+          className="mt-1.5 w-full px-3 py-3 min-h-[44px] bg-[var(--ib-surface-raised)] border border-[var(--ib-border)] rounded-xl text-xs text-[var(--ib-text)] placeholder-[var(--ib-text-muted)]/60 focus:border-[var(--ib-blue-500)] outline-none"
         />
       </div>
 
       <div>
-        <label className="text-[10px] font-bold uppercase tracking-wider text-[#8c90a1]">Level</label>
+        <label className="text-[10px] font-bold uppercase tracking-wider text-[var(--ib-text-muted)]">Level</label>
         <div className="mt-1.5 flex flex-wrap gap-2">
           {SENIORITIES.map((s) => (
             <button key={s.v} onClick={() => setSeniority(s.v)}
               className={`px-3 py-2 min-h-[40px] rounded-xl text-[11px] font-semibold border transition-colors cursor-pointer ${
-                seniority === s.v ? 'bg-[#568dff]/20 border-[#568dff] text-[#b0c6ff]'
-                                  : 'bg-[#201f1f] border-[#424655] text-[#8c90a1] hover:text-[#e5e2e1]'}`}>
+                seniority === s.v ? 'bg-[var(--ib-blue-500)]/20 border-[var(--ib-blue-500)] text-[var(--ib-blue-500)]'
+                                  : 'bg-[var(--ib-gray-100)] border-[var(--ib-border)] text-[var(--ib-text-muted)] hover:text-[var(--ib-text)]'}`}>
               {s.label}
             </button>
           ))}
@@ -408,36 +408,36 @@ export default function InterviewView() {
       </div>
 
       <div>
-        <label className="text-[10px] font-bold uppercase tracking-wider text-[#8c90a1]">Focus</label>
+        <label className="text-[10px] font-bold uppercase tracking-wider text-[var(--ib-text-muted)]">Focus</label>
         <div className="mt-1.5 grid sm:grid-cols-2 gap-2">
           {KINDS.map((k) => (
             <button key={k.v} onClick={() => setKind(k.v)}
               className={`px-3 py-2.5 min-h-[52px] rounded-xl text-left border transition-colors cursor-pointer ${
-                kind === k.v ? 'bg-[#568dff]/20 border-[#568dff]' : 'bg-[#201f1f] border-[#424655] hover:border-[#568dff]/40'}`}>
-              <p className={`text-[11px] font-semibold ${kind === k.v ? 'text-[#b0c6ff]' : 'text-[#e5e2e1]'}`}>{k.label}</p>
-              <p className="text-[10px] text-[#8c90a1] mt-0.5">{k.hint}</p>
+                kind === k.v ? 'bg-[var(--ib-blue-500)]/20 border-[var(--ib-blue-500)]' : 'bg-[var(--ib-gray-100)] border-[var(--ib-border)] hover:border-[var(--ib-blue-500)]/40'}`}>
+              <p className={`text-[11px] font-semibold ${kind === k.v ? 'text-[var(--ib-blue-500)]' : 'text-[var(--ib-text)]'}`}>{k.label}</p>
+              <p className="text-[10px] text-[var(--ib-text-muted)] mt-0.5">{k.hint}</p>
             </button>
           ))}
         </div>
       </div>
 
       <div>
-        <label className="text-[10px] font-bold uppercase tracking-wider text-[#8c90a1]">
+        <label className="text-[10px] font-bold uppercase tracking-wider text-[var(--ib-text-muted)]">
           Questions — {count}
         </label>
         <input type="range" min={3} max={10} value={count}
           onChange={(e) => setCount(Number(e.target.value))}
-          className="mt-2 w-full accent-[#568dff]" />
-        <p className="text-[10px] text-[#8c90a1]">About {count * 2} minutes</p>
+          className="mt-2 w-full accent-[var(--ib-blue-500)]" />
+        <p className="text-[10px] text-[var(--ib-text-muted)]">About {count * 2} minutes</p>
       </div>
 
       <div className="flex gap-3">
         <button onClick={() => setStage('landing')}
-          className="px-4 py-3 min-h-[44px] rounded-xl bg-[#201f1f] border border-[#424655] text-xs font-semibold text-[#e5e2e1] hover:bg-[#2a2a2a] cursor-pointer transition-colors">
+          className="px-4 py-3 min-h-[44px] rounded-xl bg-[var(--ib-gray-100)] border border-[var(--ib-border)] text-xs font-semibold text-[var(--ib-text)] hover:bg-[var(--ib-gray-200)] cursor-pointer transition-colors">
           Back
         </button>
         <button onClick={startSession} disabled={!role.trim() || !!busy || !status?.ready}
-          className="flex-1 py-3 min-h-[44px] rounded-xl bg-[#568dff] text-[#002661] text-xs font-bold hover:bg-[#568dff]/90 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer transition-colors flex items-center justify-center gap-2">
+          className="flex-1 py-3 min-h-[44px] rounded-xl bg-[var(--ib-blue-500)] text-[#002661] text-xs font-bold hover:bg-[var(--ib-blue-500)]/90 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer transition-colors flex items-center justify-center gap-2">
           {busy ? <><Loader2 className="w-4 h-4 animate-spin" /> {busy}</> : <>Generate questions <ChevronRight className="w-4 h-4" /></>}
         </button>
       </div>
@@ -446,35 +446,35 @@ export default function InterviewView() {
 
   const renderReady = () => (
     <div className="flex flex-col gap-5 max-w-2xl">
-      <h2 className="text-lg font-bold text-[#e5e2e1]">Check your camera and mic</h2>
-      <div className="relative rounded-2xl overflow-hidden bg-[#202124] border border-[#424655] aspect-video">
+      <h2 className="text-lg font-bold text-[var(--ib-text)]">Check your camera and mic</h2>
+      <div className="relative rounded-2xl overflow-hidden bg-[var(--ib-gray-800)] border border-[var(--ib-border)] aspect-video">
         <video ref={videoRef} autoPlay playsInline muted className="w-full h-full object-cover" />
         {!rec.stream && (
-          <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 text-[#8c90a1]">
+          <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 text-[var(--ib-text-muted)]">
             <VideoOff className="w-8 h-8" />
             <span className="text-xs">Camera preview</span>
           </div>
         )}
       </div>
       {rec.error && (
-        <p className="text-xs text-[#ffb4ab] flex items-start gap-2">
+        <p className="text-xs text-[var(--ib-bad-dot)] flex items-start gap-2">
           <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" /> {rec.error}
         </p>
       )}
-      <div className="rounded-xl bg-[#201f1f] border border-[#424655]/60 p-4">
-        <p className="text-xs text-[#c2c6d8] leading-relaxed">
-          <strong className="text-[#e5e2e1]">{session?.questions.length} questions</strong> for a{' '}
+      <div className="rounded-xl bg-[var(--ib-gray-100)] border border-[var(--ib-border)]/60 p-4">
+        <p className="text-xs text-[var(--ib-text)] leading-relaxed">
+          <strong className="text-[var(--ib-text)]">{session?.questions.length} questions</strong> for a{' '}
           {session?.seniority} {session?.role}. Each question is read aloud; press record, answer
           naturally, then stop. You&apos;ll get feedback after every answer.
         </p>
       </div>
       <div className="flex gap-3">
         <button onClick={restart}
-          className="px-4 py-3 min-h-[44px] rounded-xl bg-[#201f1f] border border-[#424655] text-xs font-semibold text-[#e5e2e1] hover:bg-[#2a2a2a] cursor-pointer transition-colors">
+          className="px-4 py-3 min-h-[44px] rounded-xl bg-[var(--ib-gray-100)] border border-[var(--ib-border)] text-xs font-semibold text-[var(--ib-text)] hover:bg-[var(--ib-gray-200)] cursor-pointer transition-colors">
           Cancel
         </button>
         <button onClick={beginInterview}
-          className="flex-1 py-3 min-h-[44px] rounded-xl bg-[#4dffb1] text-[#002661] text-xs font-bold hover:bg-[#4dffb1]/90 cursor-pointer transition-colors flex items-center justify-center gap-2">
+          className="flex-1 py-3 min-h-[44px] rounded-xl bg-[var(--ib-good-dot)] text-[#002661] text-xs font-bold hover:bg-[var(--ib-good-dot)]/90 cursor-pointer transition-colors flex items-center justify-center gap-2">
           <Play className="w-4 h-4" /> Start interview
         </button>
       </div>
@@ -489,39 +489,39 @@ export default function InterviewView() {
     return (
       <div className="flex flex-col gap-4 max-w-3xl">
         <div>
-          <div className="flex items-center justify-between text-[10px] text-[#8c90a1] mb-1.5">
+          <div className="flex items-center justify-between text-[10px] text-[var(--ib-text-muted)] mb-1.5">
             <span>Question {qIndex + 1} of {session.questions.length}</span>
             <span className="uppercase tracking-wider">{q.category}</span>
           </div>
-          <div className="h-1 rounded-full bg-[#424655]/40 overflow-hidden">
-            <div className="h-full bg-[#568dff] transition-all duration-500" style={{ width: `${progress}%` }} />
+          <div className="h-1 rounded-full bg-[var(--ib-border)]/40 overflow-hidden">
+            <div className="h-full bg-[var(--ib-blue-500)] transition-all duration-500" style={{ width: `${progress}%` }} />
           </div>
         </div>
 
-        <div className="bg-[#1c1b1b] border border-[#424655] rounded-2xl p-5">
-          <p className="text-sm sm:text-base text-[#e5e2e1] leading-relaxed">{q.text}</p>
+        <div className="bg-[var(--ib-surface-raised)] border border-[var(--ib-border)] rounded-2xl p-5">
+          <p className="text-sm sm:text-base text-[var(--ib-text)] leading-relaxed">{q.text}</p>
           {q.rationale && (
-            <p className="text-[10px] text-[#8c90a1] mt-2.5 italic">Why this question: {q.rationale}</p>
+            <p className="text-[10px] text-[var(--ib-text-muted)] mt-2.5 italic">Why this question: {q.rationale}</p>
           )}
           <button onClick={() => speak(q.text)}
-            className="mt-3 text-[10px] text-[#b0c6ff] hover:text-[#568dff] min-h-[32px] cursor-pointer">
+            className="mt-3 text-[10px] text-[var(--ib-blue-500)] hover:text-[var(--ib-blue-500)] min-h-[32px] cursor-pointer">
             Read it again
           </button>
         </div>
 
-        <div className="relative rounded-2xl overflow-hidden bg-[#202124] border border-[#424655] aspect-video">
+        <div className="relative rounded-2xl overflow-hidden bg-[var(--ib-gray-800)] border border-[var(--ib-border)] aspect-video">
           <video ref={videoRef} autoPlay playsInline muted className="w-full h-full object-cover" />
           {rec.isRecording && (
             <>
-              <div className="absolute top-3 left-3 flex items-center gap-2 px-2.5 py-1 rounded-full bg-[#93000a]/80 backdrop-blur-sm">
-                <span className="w-2 h-2 rounded-full bg-[#ffb4ab] animate-pulse" />
+              <div className="absolute top-3 left-3 flex items-center gap-2 px-2.5 py-1 rounded-full bg-[var(--ib-bad-dot)] backdrop-blur-sm">
+                <span className="w-2 h-2 rounded-full bg-white animate-pulse" />
                 <span className="text-[10px] font-bold text-white tabular-nums">
                   {String(Math.floor(rec.elapsedSec / 60)).padStart(2, '0')}:
                   {String(rec.elapsedSec % 60).padStart(2, '0')}
                 </span>
               </div>
               <div className="absolute bottom-3 left-3 right-3 h-1 rounded-full bg-black/40 overflow-hidden">
-                <div className="h-full bg-[#4dffb1] transition-[width] duration-75"
+                <div className="h-full bg-[var(--ib-good-dot)] transition-[width] duration-75"
                      style={{ width: `${Math.min(100, rec.level * 160)}%` }} />
               </div>
             </>
@@ -529,10 +529,10 @@ export default function InterviewView() {
         </div>
 
         {lastAnswer ? (
-          <div className="bg-[#1c1b1b] border border-[#424655] rounded-2xl p-5 flex flex-col gap-3">
+          <div className="bg-[var(--ib-surface-raised)] border border-[var(--ib-border)] rounded-2xl p-5 flex flex-col gap-3">
             <div className="flex items-center justify-between">
-              <h3 className="text-xs font-bold text-[#e5e2e1] flex items-center gap-2">
-                <CheckCircle2 className="w-4 h-4 text-[#4dffb1]" /> Answer scored
+              <h3 className="text-xs font-bold text-[var(--ib-text)] flex items-center gap-2">
+                <CheckCircle2 className="w-4 h-4 text-[var(--ib-good-dot)]" /> Answer scored
               </h3>
               <span className={`text-lg font-bold tabular-nums ${scoreColor(lastAnswer.overall)}`}>
                 {lastAnswer.overall.toFixed(1)}
@@ -543,14 +543,14 @@ export default function InterviewView() {
                 <div key={k}><ScoreRow label={DIMENSION_LABELS[k] ?? k} value={Number(v)} /></div>
               ))}
             </div>
-            <p className="text-[11px] text-[#c2c6d8] leading-relaxed">{lastAnswer.feedback}</p>
-            <div className="flex flex-wrap gap-3 text-[10px] text-[#8c90a1]">
+            <p className="text-[11px] text-[var(--ib-text)] leading-relaxed">{lastAnswer.feedback}</p>
+            <div className="flex flex-wrap gap-3 text-[10px] text-[var(--ib-text-muted)]">
               <span className="flex items-center gap-1"><Clock className="w-3 h-3" /> {Math.round(lastAnswer.durationSec)}s</span>
               <span>{lastAnswer.wordsPerMinute} wpm</span>
               <span>{lastAnswer.fillerWords} filler words</span>
             </div>
             <button onClick={nextQuestion}
-              className="mt-1 w-full py-3 min-h-[44px] rounded-xl bg-[#568dff] text-[#002661] text-xs font-bold hover:bg-[#568dff]/90 cursor-pointer transition-colors flex items-center justify-center gap-2">
+              className="mt-1 w-full py-3 min-h-[44px] rounded-xl bg-[var(--ib-blue-500)] text-[#002661] text-xs font-bold hover:bg-[var(--ib-blue-500)]/90 cursor-pointer transition-colors flex items-center justify-center gap-2">
               {qIndex + 1 >= session.questions.length
                 ? <>Finish and see report <Award className="w-4 h-4" /></>
                 : <>Next question <ChevronRight className="w-4 h-4" /></>}
@@ -559,17 +559,17 @@ export default function InterviewView() {
         ) : (
           <div className="flex gap-3">
             <button onClick={() => void finishInterview()} disabled={answers.length === 0 || !!busy}
-              className="px-4 py-3 min-h-[44px] rounded-xl bg-[#201f1f] border border-[#424655] text-xs font-semibold text-[#e5e2e1] hover:bg-[#2a2a2a] disabled:opacity-40 cursor-pointer transition-colors">
+              className="px-4 py-3 min-h-[44px] rounded-xl bg-[var(--ib-gray-100)] border border-[var(--ib-border)] text-xs font-semibold text-[var(--ib-text)] hover:bg-[var(--ib-gray-200)] disabled:opacity-40 cursor-pointer transition-colors">
               End early
             </button>
             {!rec.isRecording ? (
               <button onClick={() => void rec.start()} disabled={!!busy}
-                className="flex-1 py-3 min-h-[44px] rounded-xl bg-[#4dffb1] text-[#002661] text-xs font-bold hover:bg-[#4dffb1]/90 disabled:opacity-40 cursor-pointer transition-colors flex items-center justify-center gap-2">
+                className="flex-1 py-3 min-h-[44px] rounded-xl bg-[var(--ib-good-dot)] text-[#002661] text-xs font-bold hover:bg-[var(--ib-good-dot)]/90 disabled:opacity-40 cursor-pointer transition-colors flex items-center justify-center gap-2">
                 <Mic className="w-4 h-4" /> Record answer
               </button>
             ) : (
               <button onClick={submitAnswer} disabled={!!busy}
-                className="flex-1 py-3 min-h-[44px] rounded-xl bg-[#ffb4ab] text-[#601410] text-xs font-bold hover:bg-[#ffb4ab]/90 disabled:opacity-40 cursor-pointer transition-colors flex items-center justify-center gap-2">
+                className="flex-1 py-3 min-h-[44px] rounded-xl bg-[var(--ib-bad-dot)] text-[#601410] text-xs font-bold hover:bg-[var(--ib-bad-dot)]/90 disabled:opacity-40 cursor-pointer transition-colors flex items-center justify-center gap-2">
                 {busy ? <><Loader2 className="w-4 h-4 animate-spin" /> {busy}</> : <><Square className="w-4 h-4" /> Stop and submit</>}
               </button>
             )}
@@ -584,26 +584,26 @@ export default function InterviewView() {
     return (
       <div className="flex flex-col gap-5 max-w-3xl">
         <button onClick={restart}
-          className="flex items-center gap-1.5 text-[11px] text-[#b0c6ff] hover:text-[#568dff] min-h-[36px] self-start cursor-pointer">
+          className="flex items-center gap-1.5 text-[11px] text-[var(--ib-blue-500)] hover:text-[var(--ib-blue-500)] min-h-[36px] self-start cursor-pointer">
           <ArrowLeft className="w-3.5 h-3.5" /> Back to interviews
         </button>
 
         {r && (
-          <div className="bg-[#1c1b1b] border border-[#424655] rounded-2xl p-5 sm:p-6">
+          <div className="bg-[var(--ib-surface-raised)] border border-[var(--ib-border)] rounded-2xl p-5 sm:p-6">
             <div className="flex items-start justify-between gap-4 mb-4">
               <div className="min-w-0">
-                <p className="text-[10px] uppercase tracking-wider text-[#8c90a1]">Overall</p>
+                <p className="text-[10px] uppercase tracking-wider text-[var(--ib-text-muted)]">Overall</p>
                 <p className={`text-4xl font-bold tabular-nums ${scoreColor(r.overall)}`}>
-                  {r.overall.toFixed(1)}<span className="text-lg text-[#8c90a1]">/10</span>
+                  {r.overall.toFixed(1)}<span className="text-lg text-[var(--ib-text-muted)]">/10</span>
                 </p>
-                <p className="text-xs font-semibold text-[#e5e2e1] mt-1">{r.verdict}</p>
+                <p className="text-xs font-semibold text-[var(--ib-text)] mt-1">{r.verdict}</p>
               </div>
-              <div className="w-12 h-12 rounded-2xl bg-[#568dff]/15 border border-[#568dff]/30 flex items-center justify-center shrink-0">
-                <TrendingUp className="w-5 h-5 text-[#b0c6ff]" />
+              <div className="w-12 h-12 rounded-2xl bg-[var(--ib-blue-500)]/15 border border-[var(--ib-blue-500)]/30 flex items-center justify-center shrink-0">
+                <TrendingUp className="w-5 h-5 text-[var(--ib-blue-500)]" />
               </div>
             </div>
 
-            <p className="text-xs text-[#c2c6d8] leading-relaxed mb-4">{r.summary}</p>
+            <p className="text-xs text-[var(--ib-text)] leading-relaxed mb-4">{r.summary}</p>
 
             {r.scores && (
               <div className="flex flex-col gap-1.5 mb-4">
@@ -614,19 +614,19 @@ export default function InterviewView() {
             )}
 
             <div className="grid sm:grid-cols-2 gap-3">
-              <div className="rounded-xl bg-[#4dffb1]/5 border border-[#4dffb1]/20 p-3.5">
-                <p className="text-[10px] font-bold uppercase tracking-wider text-[#4dffb1] mb-2">Strengths</p>
+              <div className="rounded-xl bg-[var(--ib-good-dot)]/5 border border-[var(--ib-good-dot)]/20 p-3.5">
+                <p className="text-[10px] font-bold uppercase tracking-wider text-[var(--ib-good-dot)] mb-2">Strengths</p>
                 <ul className="flex flex-col gap-1.5">
                   {r.strengths.map((s, i) => (
-                    <li key={i} className="text-[11px] text-[#c2c6d8] leading-relaxed">{s}</li>
+                    <li key={i} className="text-[11px] text-[var(--ib-text)] leading-relaxed">{s}</li>
                   ))}
                 </ul>
               </div>
-              <div className="rounded-xl bg-[#ffd60a]/5 border border-[#ffd60a]/20 p-3.5">
-                <p className="text-[10px] font-bold uppercase tracking-wider text-[#ffd60a] mb-2">Work on</p>
+              <div className="rounded-xl bg-[var(--ib-warn-dot)]/5 border border-[var(--ib-warn-dot)]/20 p-3.5">
+                <p className="text-[10px] font-bold uppercase tracking-wider text-[var(--ib-warn-text)] mb-2">Work on</p>
                 <ul className="flex flex-col gap-1.5">
                   {r.improvements.map((s, i) => (
-                    <li key={i} className="text-[11px] text-[#c2c6d8] leading-relaxed">{s}</li>
+                    <li key={i} className="text-[11px] text-[var(--ib-text)] leading-relaxed">{s}</li>
                   ))}
                 </ul>
               </div>
@@ -634,10 +634,10 @@ export default function InterviewView() {
 
             {r.focus_areas?.length > 0 && (
               <div className="mt-4">
-                <p className="text-[10px] font-bold uppercase tracking-wider text-[#8c90a1] mb-2">Focus next on</p>
+                <p className="text-[10px] font-bold uppercase tracking-wider text-[var(--ib-text-muted)] mb-2">Focus next on</p>
                 <div className="flex flex-wrap gap-1.5">
                   {r.focus_areas.map((f) => (
-                    <span key={f} className="px-2.5 py-1 rounded-lg bg-[#568dff]/10 border border-[#568dff]/20 text-[10px] text-[#b0c6ff]">{f}</span>
+                    <span key={f} className="px-2.5 py-1 rounded-lg bg-[var(--ib-blue-500)]/10 border border-[var(--ib-blue-500)]/20 text-[10px] text-[var(--ib-blue-500)]">{f}</span>
                   ))}
                 </div>
               </div>
@@ -647,28 +647,28 @@ export default function InterviewView() {
 
         {answers.length > 0 && (
           <div>
-            <h3 className="text-[11px] font-bold uppercase tracking-wider text-[#8c90a1] mb-2.5">
+            <h3 className="text-[11px] font-bold uppercase tracking-wider text-[var(--ib-text-muted)] mb-2.5">
               Question by question
             </h3>
             <div className="flex flex-col gap-2.5">
               {answers.map((a, i) => {
                 const q = session?.questions.find((x) => x.id === a.questionId);
                 return (
-                  <div key={a.questionId} className="bg-[#1c1b1b] border border-[#424655] rounded-xl p-4">
+                  <div key={a.questionId} className="bg-[var(--ib-surface-raised)] border border-[var(--ib-border)] rounded-xl p-4">
                     <div className="flex items-start justify-between gap-3 mb-2">
-                      <p className="text-xs font-semibold text-[#e5e2e1] leading-relaxed">
+                      <p className="text-xs font-semibold text-[var(--ib-text)] leading-relaxed">
                         {i + 1}. {q?.text ?? 'Question'}
                       </p>
                       <span className={`text-sm font-bold tabular-nums shrink-0 ${scoreColor(a.overall)}`}>
                         {a.overall.toFixed(1)}
                       </span>
                     </div>
-                    <p className="text-[11px] text-[#c2c6d8] leading-relaxed mb-2">{a.feedback}</p>
+                    <p className="text-[11px] text-[var(--ib-text)] leading-relaxed mb-2">{a.feedback}</p>
                     <details className="group">
-                      <summary className="text-[10px] text-[#8c90a1] cursor-pointer hover:text-[#b0c6ff] min-h-[28px] flex items-center">
+                      <summary className="text-[10px] text-[var(--ib-text-muted)] cursor-pointer hover:text-[var(--ib-blue-500)] min-h-[28px] flex items-center">
                         Your answer
                       </summary>
-                      <p className="text-[10px] text-[#8c90a1] leading-relaxed mt-1.5 pl-2 border-l-2 border-[#424655]">
+                      <p className="text-[10px] text-[var(--ib-text-muted)] leading-relaxed mt-1.5 pl-2 border-l-2 border-[var(--ib-border)]">
                         {a.transcript}
                       </p>
                     </details>
@@ -680,7 +680,7 @@ export default function InterviewView() {
         )}
 
         <button onClick={restart}
-          className="w-full py-3 min-h-[44px] rounded-xl bg-[#568dff] text-[#002661] text-xs font-bold hover:bg-[#568dff]/90 cursor-pointer transition-colors flex items-center justify-center gap-2">
+          className="w-full py-3 min-h-[44px] rounded-xl bg-[var(--ib-blue-500)] text-[#002661] text-xs font-bold hover:bg-[var(--ib-blue-500)]/90 cursor-pointer transition-colors flex items-center justify-center gap-2">
           <RotateCcw className="w-4 h-4" /> Practise again
         </button>
       </div>
@@ -696,18 +696,18 @@ export default function InterviewView() {
       />
 
       {error && (
-        <div className="flex items-start gap-3 rounded-xl border border-[#ffb4ab]/40 bg-[#93000a]/15 px-4 py-3 mb-4 max-w-3xl">
-          <AlertTriangle className="w-4 h-4 text-[#ffb4ab] shrink-0 mt-0.5" />
-          <p className="text-xs text-[#ffb4ab] flex-1 leading-relaxed">{error}</p>
+        <div className="flex items-start gap-3 rounded-xl border border-[var(--ib-bad-dot)]/40 bg-[var(--ib-bad-fill)]/15 px-4 py-3 mb-4 max-w-3xl">
+          <AlertTriangle className="w-4 h-4 text-[var(--ib-bad-dot)] shrink-0 mt-0.5" />
+          <p className="text-xs text-[var(--ib-bad-dot)] flex-1 leading-relaxed">{error}</p>
           <button onClick={() => setError(null)} aria-label="Dismiss"
-            className="w-7 h-7 rounded-lg flex items-center justify-center text-[#ffb4ab]/70 hover:text-white cursor-pointer shrink-0">
+            className="w-7 h-7 rounded-lg flex items-center justify-center text-[var(--ib-bad-dot)]/70 hover:text-white cursor-pointer shrink-0">
             <X className="w-3.5 h-3.5" />
           </button>
         </div>
       )}
 
       {busy && stage === 'landing' && (
-        <p className="text-xs text-[#b0c6ff] flex items-center gap-2 mb-4">
+        <p className="text-xs text-[var(--ib-blue-500)] flex items-center gap-2 mb-4">
           <Loader2 className="w-4 h-4 animate-spin" /> {busy}
         </p>
       )}
