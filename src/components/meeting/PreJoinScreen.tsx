@@ -5,6 +5,8 @@ import { describeMediaError } from '../../lib/mediaErrors';
 import { loadDevicePrefs, deviceConstraint, restoreSpeaker } from '../../lib/devicePrefs';
 import { useSilentMic } from '../../hooks/useSilentMic';
 import ConnectionTestPanel from './ConnectionTestPanel';
+import Input from '../ui/Input';
+import Button from '../ui/Button';
 
 interface Props {
   roomCode: string;
@@ -116,16 +118,20 @@ export default function PreJoinScreen({ roomCode, initialName, nameEditable = tr
   };
 
   return (
-    <div className="min-h-screen bg-[#111] text-[#e8eaed] flex flex-col items-center justify-center p-4 gap-6">
+    <div className="min-h-dvh bg-[var(--ib-gray-50)] text-[var(--ib-gray-900)] flex flex-col items-center justify-center p-4 gap-6">
       <div className="flex items-center gap-2.5">
-        <div className="w-9 h-9 rounded-xl bg-[#0066FF] flex items-center justify-center shadow-[0_0_24px_rgba(0,102,255,0.35)]">
+        <div className="w-9 h-9 rounded-xl bg-[var(--ib-blue-500)] flex items-center justify-center shadow-[0_0_24px_rgba(0,102,255,0.35)]">
           <BrandMark className="w-5 h-5" />
         </div>
         <span className="font-bold text-lg">IB Connect</span>
       </div>
 
       <div className="w-full max-w-4xl grid md:grid-cols-[1.4fr_1fr] gap-6 items-center">
-        {/* Camera preview */}
+        {/* Camera preview -- deliberately stays dark, matching ActiveMeetingView's
+            own carved-out exception (DESIGN_SYSTEM.md/CLAUDE.md): video content
+            reads better framed in a neutral dark tile regardless of the app's
+            theme, the same convention every major video app's own light theme
+            uses. Everything OUTSIDE this tile is page chrome and goes light. */}
         <div className="relative rounded-2xl overflow-hidden bg-[#202124] border border-[#3c4043] aspect-video shadow-2xl">
           <video
             ref={videoRef}
@@ -169,13 +175,13 @@ export default function PreJoinScreen({ roomCode, initialName, nameEditable = tr
         <form onSubmit={submit} className="flex flex-col gap-4 text-center md:text-left">
           <div>
             <h1 className="text-2xl font-semibold">Ready to join?</h1>
-            <p className="text-xs text-[#9aa0a6] mt-1.5">
-              Meeting code <span className="font-mono font-bold text-[#8ab4f8]">{roomCode}</span>
+            <p className="text-xs text-[var(--ib-gray-600)] mt-1.5">
+              Meeting code <span className="font-mono font-bold text-[var(--ib-blue-500)]">{roomCode}</span>
             </p>
           </div>
 
           {nameEditable && (
-            <input
+            <Input
               autoFocus
               type="text"
               value={name}
@@ -183,12 +189,11 @@ export default function PreJoinScreen({ roomCode, initialName, nameEditable = tr
               onChange={(e) => setName(e.target.value)}
               placeholder="Your name"
               aria-label="Your name"
-              className="w-full px-4 py-3 bg-[#202124] border border-[#5f6368] rounded-xl text-sm text-[#e8eaed] placeholder-[#9aa0a6]/60 focus:border-[#8ab4f8] focus:ring-1 focus:ring-[#8ab4f8] outline-none transition-all"
             />
           )}
 
           {error && (
-            <p className="text-xs text-[#f28b82] bg-[#f28b82]/10 border border-[#f28b82]/30 rounded-lg px-3 py-2">
+            <p className="text-xs text-[var(--ib-bad-text)] bg-[var(--ib-bad-fill)] border border-[var(--ib-bad-dot)]/30 rounded-lg px-3 py-2">
               {error}
             </p>
           )}
@@ -196,8 +201,8 @@ export default function PreJoinScreen({ roomCode, initialName, nameEditable = tr
           {/* Not styled as an error: nothing has failed as far as the browser is
               concerned, which is precisely why it needs saying out loud. */}
           {silentMic.status === 'silent' && (
-            <div className="flex items-start gap-2 text-left text-[11px] text-[#f8e7bd] bg-[#fdd663]/10 border border-[#fdd663]/30 rounded-lg px-3 py-2">
-              <AlertTriangle className="w-3.5 h-3.5 text-[#fdd663] shrink-0 mt-0.5" />
+            <div className="flex items-start gap-2 text-left text-[11px] text-[var(--ib-warn-text)] bg-[var(--ib-warn-fill)] border border-[var(--ib-warn-dot)]/30 rounded-lg px-3 py-2">
+              <AlertTriangle className="w-3.5 h-3.5 text-[var(--ib-warn-dot)] shrink-0 mt-0.5" />
               <span className="flex-1 leading-relaxed">
                 Your microphone isn't picking up any sound. Check it isn't muted by a switch on
                 your headset or in your system settings.
@@ -205,7 +210,7 @@ export default function PreJoinScreen({ roomCode, initialName, nameEditable = tr
               <button
                 type="button"
                 onClick={silentMic.dismiss}
-                className="shrink-0 text-[#f8e7bd]/60 hover:text-white cursor-pointer"
+                className="shrink-0 text-[var(--ib-warn-text)]/60 hover:text-[var(--ib-warn-text)] cursor-pointer"
                 aria-label="Dismiss microphone warning"
               >
                 <X className="w-3 h-3" />
@@ -213,28 +218,24 @@ export default function PreJoinScreen({ roomCode, initialName, nameEditable = tr
             </div>
           )}
 
-          <button
-            type="submit"
-            disabled={!name.trim() || joining}
-            className="w-full py-3 bg-[#8ab4f8] text-[#202124] rounded-xl text-sm font-bold hover:bg-[#aecbfa] disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer transition-colors flex items-center justify-center gap-2"
-          >
+          <Button type="submit" disabled={!name.trim() || joining} size="lg">
             {joining && <Loader2 className="w-4 h-4 animate-spin" />}
             {joining ? 'Joining…' : 'Join now'}
-          </button>
+          </Button>
 
           <button
             type="button"
             onClick={() => setTestOpen(true)}
-            className="flex items-center justify-center gap-1.5 text-[11px] text-[#9aa0a6] hover:text-[#8ab4f8] cursor-pointer transition-colors"
+            className="flex items-center justify-center gap-1.5 text-[11px] text-[var(--ib-gray-600)] hover:text-[var(--ib-blue-500)] cursor-pointer transition-colors"
           >
             <Activity className="w-3.5 h-3.5" />
             Having trouble? Test your connection
           </button>
 
           {onSignIn && (
-            <p className="text-[11px] text-[#9aa0a6]">
+            <p className="text-[11px] text-[var(--ib-gray-600)]">
               Have an IB account?{' '}
-              <button type="button" onClick={onSignIn} className="text-[#8ab4f8] hover:underline cursor-pointer font-semibold">
+              <button type="button" onClick={onSignIn} className="text-[var(--ib-blue-500)] hover:underline cursor-pointer font-semibold">
                 Sign in instead
               </button>
             </p>

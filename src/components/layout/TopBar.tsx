@@ -1,10 +1,10 @@
-import React, { useState, useEffect } from 'react';
-import { Search, Bell, HelpCircle, Plus, Sparkles, Phone, Calendar, Command, X } from 'lucide-react';
+import React, { useState, useEffect, useRef } from 'react';
+import { Search, Bell, HelpCircle, Plus, Sparkles, Command, X } from 'lucide-react';
 import { AppView } from '../../types';
 import { useAuth } from '../../context/AuthContext';
 import { useChat } from '../../context/ChatContext';
 import { loadNotifications } from '../../lib/preferences';
-import AIAssistantPanel from '../ai/AIAssistantPanel';
+import Modal from '../ui/Modal';
 
 interface TopBarProps {
   currentView: AppView;
@@ -26,9 +26,43 @@ const VIEW_INFO: Record<AppView, { title: string; subtitle: string; badge: strin
   interview: { title: 'Virtual Interview', subtitle: 'AI mock interviews from your CV', badge: 'AI COACH' },
 };
 
+function NotificationsBody({ unreadTotal, onOpenChats }: { unreadTotal: number; onOpenChats: () => void }) {
+  return (
+    <div className="flex flex-col">
+      <p className="px-2 pb-2 pt-1 text-[10px] font-bold uppercase tracking-[.16em] text-[var(--ib-text-muted)]">Notifications</p>
+      <button onClick={onOpenChats} className="flex w-full items-center gap-3 rounded-xl px-3 py-3 text-left cursor-pointer hover:bg-[var(--ib-gray-50)]">
+        <span className="grid h-9 w-9 shrink-0 place-items-center rounded-xl bg-[var(--ib-blue-50)] text-[var(--ib-blue-500)]"><Bell className="h-4 w-4" /></span>
+        <span>
+          <strong className="block text-xs font-semibold text-[var(--ib-text)]">{unreadTotal || 'No'} unread messages</strong>
+          <span className="text-[10px] text-[var(--ib-text-muted)]">{unreadTotal ? 'Open your inbox to catch up' : "You're all caught up"}</span>
+        </span>
+      </button>
+    </div>
+  );
+}
+
 export default function TopBar({ currentView, onViewChange, searchFilter, onSearchChange, onNewChatClicked }: TopBarProps) {
   const [notifOpen, setNotifOpen] = useState(false);
-  const [assistantOpen, setAssistantOpen] = useState(false);
+  const [mobileSearchOpen, setMobileSearchOpen] = useState(false);
+  const headerRef = useRef<HTMLElement>(null);
+
+  // Publishes the TopBar's REAL rendered height as --topbar-h on <html>, so
+  // anything that needs to avoid it (the AIPA popup, section 2 of the
+  // 2026-09-19 fix batch) sizes against the actual number instead of a
+  // guessed constant -- this row's height already varies today (the mobile
+  // search-expansion row adds a second sticky row below it).
+  useEffect(() => {
+    const el = headerRef.current;
+    if (!el) return;
+    const publish = () => {
+      document.documentElement.style.setProperty('--topbar-h', `${el.getBoundingClientRect().height}px`);
+    };
+    publish();
+    const ro = new ResizeObserver(publish);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [mobileSearchOpen]);
+
   const { currentUser } = useAuth();
   const { threads } = useChat();
   const info = VIEW_INFO[currentView] || VIEW_INFO.chats;
@@ -67,108 +101,146 @@ export default function TopBar({ currentView, onViewChange, searchFilter, onSear
     onNewChatClicked?.();
   };
 
+  const openChatsFromNotif = () => { setNotifOpen(false); onViewChange('chats'); };
+
   return (
     <>
-      <AIAssistantPanel open={assistantOpen} onClose={() => setAssistantOpen(false)} />
       {/* In-app companion to the OS Notification (which may not have permission,
           or may not be supported at all) — always shown regardless, so a meeting
           reminder is never silently invisible while the app is open. */}
       {reminderBanner && (
-        <div className="fixed top-3 left-1/2 -translate-x-1/2 z-[110] flex items-center gap-2.5 bg-[#1c1b1b] border border-[#568dff]/40 shadow-2xl rounded-xl px-4 py-2.5 max-w-[92vw]">
-          <Bell className="w-4 h-4 text-[#b0c6ff] flex-shrink-0" />
-          <span className="text-xs text-[#e5e2e1] truncate">
+        <div className="fixed top-3 left-1/2 -translate-x-1/2 z-[110] flex items-center gap-2.5 bg-[var(--ib-surface-raised)] border border-[var(--ib-blue-500)]/30 shadow-[var(--ib-shadow-lg)] rounded-xl px-4 py-2.5 max-w-[92vw]">
+          <Bell className="w-4 h-4 text-[var(--ib-blue-500)] flex-shrink-0" />
+          <span className="text-xs text-[var(--ib-text)] truncate">
             <strong className="font-bold">{reminderBanner.title}</strong> starts at {reminderBanner.time}{reminderBanner.location ? ` · ${reminderBanner.location}` : ''}
           </span>
-          <button onClick={() => setReminderBanner(null)} className="text-[#8c90a1] hover:text-[#e5e2e1] flex-shrink-0"><X className="w-3.5 h-3.5" /></button>
+          <button onClick={() => setReminderBanner(null)} className="text-[var(--ib-text-muted)] hover:text-[var(--ib-text)] flex-shrink-0"><X className="w-3.5 h-3.5" /></button>
         </div>
       )}
-      {/* THE FIX: Changed 'px-5' to 'pl-16 pr-5 md:px-5' to clear the hamburger button on mobile */}
-      <header className="relative h-14 w-full flex justify-between items-center pl-16 pr-5 md:px-5 border-b border-white/[0.07] bg-[#0d0f14]/90 backdrop-blur-xl z-40 sticky top-0 shrink-0 select-none">
+      <header ref={headerRef} className="relative h-14 w-full flex justify-between items-center pl-16 pr-5 md:px-5 border-b border-[var(--ib-border)] bg-[var(--ib-surface-raised)]/90 backdrop-blur-xl z-40 sticky top-0 shrink-0 select-none">
       <div className="flex items-center gap-3 min-w-0">
         <h1
-          className="font-bold text-base tracking-tight text-[#e5e2e1] cursor-pointer whitespace-nowrap"
+          className="font-bold text-base tracking-tight text-[var(--ib-text)] cursor-pointer whitespace-nowrap"
           onClick={() => onViewChange('dashboard')}
         >
           {info.title}
         </h1>
-        <div className="h-3.5 w-px bg-[#424655] hidden sm:block" />
-        <div className="hidden sm:flex items-center gap-1.5 text-xs text-[#c2c6d8] bg-[#201f1f] px-2.5 py-1 rounded-lg border border-[#424655]/40">
-          <Sparkles className="w-3 h-3 text-[#b0c6ff]" />
+        <div className="h-3.5 w-px bg-[var(--ib-border)] hidden sm:block" />
+        <div className="hidden sm:flex items-center gap-1.5 text-xs text-[var(--ib-text-muted)] bg-[var(--ib-gray-50)] px-2.5 py-1 rounded-lg border border-[var(--ib-border)]">
+          <Sparkles className="w-3 h-3 text-[var(--ib-blue-500)]" />
           <span className="truncate max-w-[180px]">{info.subtitle}</span>
         </div>
-        <span className="hidden lg:inline-block bg-[#00e598]/10 text-[#70ffba] border border-[#00e296]/30 text-[9px] font-bold tracking-wider px-2 py-0.5 rounded uppercase whitespace-nowrap">
+        <span className="hidden lg:inline-block bg-[var(--ib-good-fill)] text-[var(--ib-good-text)] border border-[var(--ib-good-dot)]/30 text-[9px] font-bold tracking-wider px-2 py-0.5 rounded uppercase whitespace-nowrap">
           {info.badge}
         </span>
       </div>
 
       <div className="flex items-center gap-2 flex-shrink-0">
-        <div className="relative hidden sm:flex items-center bg-[#1c1b1b] rounded-lg border border-[#424655]/60 w-44 hover:border-[#b0c6ff]/60 focus-within:border-[#568dff] focus-within:ring-1 focus-within:ring-[#568dff]/50 transition-all">
-          <Search className="w-3.5 h-3.5 text-[#8c90a1] absolute left-2.5" />
+        {/* Search: full field >=sm, collapses to a 44px icon button below sm
+            (theme brief, sub-unit 3) -- tapping it expands an inline field
+            below the header rather than navigating anywhere. */}
+        <div className="relative hidden sm:flex items-center bg-[var(--ib-gray-50)] rounded-lg border border-[var(--ib-border)] w-44 hover:border-[var(--ib-blue-500)]/40 focus-within:border-[var(--ib-blue-500)] focus-within:shadow-[var(--ib-shadow-focus)] transition-all">
+          <Search className="w-3.5 h-3.5 text-[var(--ib-text-muted)] absolute left-2.5" />
           <input
             type="text"
-            className="bg-transparent border-none focus:ring-0 text-xs text-[#e5e2e1] pl-8 pr-3 py-2 w-full outline-none placeholder:text-[#8c90a1]/60"
+            className="bg-transparent border-none focus:ring-0 text-base md:text-sm text-[var(--ib-text)] pl-8 pr-3 py-2 w-full outline-none placeholder:text-[var(--ib-text-muted)]"
             placeholder={currentView === 'support' ? 'Search FAQs...' : 'Search...'}
             value={searchFilter}
             onChange={e => onSearchChange(e.target.value)}
           />
         </div>
+        <button
+          onClick={() => setMobileSearchOpen(v => !v)}
+          aria-label="Search"
+          aria-expanded={mobileSearchOpen}
+          className="sm:hidden w-11 h-11 flex items-center justify-center rounded-lg text-[var(--ib-text-muted)] hover:bg-[var(--ib-gray-100)] hover:text-[var(--ib-text)] transition-colors cursor-pointer"
+        >
+          <Search className="w-4 h-4" />
+        </button>
 
+        {/* pointer-coarse:hidden -- a keyboard shortcut hint is meaningless on
+            a touch-primary device even at a width where the sm breakpoint
+            would otherwise show it (a touchscreen laptop, say). */}
         <button
           onClick={() => window.dispatchEvent(new CustomEvent('ibconnect:cmdk'))}
           title="Command palette (Ctrl/Cmd+K)"
-          className="hidden md:flex items-center gap-1 bg-[#1c1b1b] border border-[#424655]/60 hover:border-[#568dff]/60 text-[#8c90a1] hover:text-[#b0c6ff] rounded-lg px-2 py-1.5 text-[10px] font-bold transition-colors cursor-pointer"
+          className="hidden md:flex pointer-coarse:hidden items-center gap-1 bg-[var(--ib-gray-50)] border border-[var(--ib-border)] hover:border-[var(--ib-blue-500)]/40 text-[var(--ib-text-muted)] hover:text-[var(--ib-blue-500)] rounded-lg px-2 py-1.5 text-[10px] font-bold transition-colors cursor-pointer"
         >
           <Command className="w-3 h-3" />K
-        </button>
-
-        <button
-          onClick={() => setAssistantOpen(true)}
-          className="group flex h-8 items-center gap-1.5 rounded-xl border border-[#718cff]/25 bg-[#718cff]/10 px-2.5 text-[10px] font-semibold text-[#aebaff] transition hover:border-[#718cff]/50 hover:bg-[#718cff]/15 hover:text-white"
-          title="Ask AIPA"
-        >
-          <Sparkles className="h-3.5 w-3.5 transition-transform group-hover:rotate-12" />
-          <span className="hidden lg:inline">Ask AIPA</span>
         </button>
 
         {currentView !== 'active_meeting' && currentView !== 'dashboard' && (
           <button
             onClick={handleAction}
-            className="flex items-center gap-1.5 bg-[#568dff] text-[#002661] font-bold text-xs py-2 px-3 rounded-lg hover:bg-[#568dff]/90 active:scale-95 transition-all shadow-sm"
+            className="flex items-center gap-1.5 bg-[var(--ib-blue-500)] text-white font-bold text-xs py-2 px-3 rounded-lg hover:bg-[var(--ib-blue-600)] active:scale-95 transition-all shadow-[var(--ib-shadow-sm)]"
           >
             <Plus className="w-3.5 h-3.5 stroke-[2.5]" />
             <span className="hidden sm:inline">{actionLabel}</span>
           </button>
         )}
 
-        <div className="h-5 w-px bg-[#424655]" />
+        <div className="h-5 w-px bg-[var(--ib-border)]" />
 
+        {/* Notifications: anchored popover >=md, bottom sheet <md (theme brief, sub-unit 3). */}
+        <div className="hidden md:block relative">
+          <button
+            onClick={() => setNotifOpen(v => !v)}
+            aria-label="Notifications"
+            aria-expanded={notifOpen}
+            className="w-8 h-8 flex items-center justify-center rounded-lg text-[var(--ib-text-muted)] hover:bg-[var(--ib-gray-100)] hover:text-[var(--ib-blue-500)] transition-colors relative cursor-pointer"
+          >
+            <Bell className="w-4 h-4" />
+            {showNotifDot && <span className="absolute top-1.5 right-1.5 w-1.5 h-1.5 rounded-full bg-[var(--ib-bad-dot)]" />}
+          </button>
+          {notifOpen && (
+            <>
+              <button aria-label="Close notifications" onClick={() => setNotifOpen(false)} className="fixed inset-0 z-40 cursor-default" />
+              <div className="absolute right-0 top-11 z-50 w-72 rounded-2xl border border-[var(--ib-border)] bg-[var(--ib-surface-raised)] p-3 shadow-[var(--ib-shadow-lg)]">
+                <NotificationsBody unreadTotal={unreadTotal} onOpenChats={openChatsFromNotif} />
+              </div>
+            </>
+          )}
+        </div>
         <button
-          onClick={() => setNotifOpen(v => !v)}
-          className="w-8 h-8 flex items-center justify-center rounded-lg text-[#8c90a1] hover:bg-[#201f1f] hover:text-[#b0c6ff] transition-colors relative"
+          onClick={() => setNotifOpen(true)}
+          aria-label="Notifications"
+          className="md:hidden w-11 h-11 flex items-center justify-center rounded-lg text-[var(--ib-text-muted)] hover:bg-[var(--ib-gray-100)] transition-colors relative cursor-pointer"
         >
           <Bell className="w-4 h-4" />
-          {showNotifDot && <span className="absolute top-1.5 right-1.5 w-1.5 h-1.5 rounded-full bg-[#ffb4ab]" />}
+          {showNotifDot && <span className="absolute top-2 right-2 w-1.5 h-1.5 rounded-full bg-[var(--ib-bad-dot)]" />}
         </button>
-
-        {notifOpen && (
-          <div className="absolute right-12 top-12 z-50 w-72 rounded-2xl border border-white/10 bg-[#12141b]/95 p-3 shadow-2xl backdrop-blur-xl">
-            <p className="px-2 pb-2 text-[10px] font-bold uppercase tracking-[.16em] text-[#737b8e]">Notifications</p>
-            <button onClick={() => { setNotifOpen(false); onViewChange('chats'); }} className="flex w-full items-center gap-3 rounded-xl px-3 py-3 text-left hover:bg-white/[0.05]">
-              <span className="grid h-9 w-9 place-items-center rounded-xl bg-[#718cff]/10 text-[#9bafff]"><Bell className="h-4 w-4" /></span>
-              <span><strong className="block text-xs font-semibold text-white">{unreadTotal || 'No'} unread messages</strong><span className="text-[10px] text-[#7f8798]">{unreadTotal ? 'Open your inbox to catch up' : "You're all caught up"}</span></span>
-            </button>
-          </div>
-        )}
+        <div className="md:hidden">
+          <Modal open={notifOpen} onClose={() => setNotifOpen(false)} variant="sheet" aria-label="Notifications">
+            <div className="p-3">
+              <NotificationsBody unreadTotal={unreadTotal} onOpenChats={openChatsFromNotif} />
+            </div>
+          </Modal>
+        </div>
 
         <button
           onClick={() => onViewChange('support')}
-          className="w-8 h-8 flex items-center justify-center rounded-lg text-[#8c90a1] hover:bg-[#201f1f] hover:text-[#b0c6ff] transition-colors"
+          className="w-11 h-11 md:w-8 md:h-8 flex items-center justify-center rounded-lg text-[var(--ib-text-muted)] hover:bg-[var(--ib-gray-100)] hover:text-[var(--ib-blue-500)] transition-colors cursor-pointer"
           title="Help"
         >
           <HelpCircle className="w-4 h-4" />
         </button>
       </div>
     </header>
+    {mobileSearchOpen && (
+      <div className="sm:hidden sticky top-14 z-30 bg-[var(--ib-surface-raised)] border-b border-[var(--ib-border)] px-4 py-2.5">
+        <div className="relative flex items-center bg-[var(--ib-gray-50)] rounded-lg border border-[var(--ib-border)] focus-within:border-[var(--ib-blue-500)] focus-within:shadow-[var(--ib-shadow-focus)]">
+          <Search className="w-3.5 h-3.5 text-[var(--ib-text-muted)] absolute left-2.5" />
+          <input
+            autoFocus
+            type="text"
+            className="bg-transparent border-none focus:ring-0 text-base text-[var(--ib-text)] pl-8 pr-3 py-2.5 w-full outline-none placeholder:text-[var(--ib-text-muted)] touch-manipulation"
+            placeholder={currentView === 'support' ? 'Search FAQs...' : 'Search...'}
+            value={searchFilter}
+            onChange={e => onSearchChange(e.target.value)}
+          />
+        </div>
+      </div>
+    )}
     </>
   );
 }

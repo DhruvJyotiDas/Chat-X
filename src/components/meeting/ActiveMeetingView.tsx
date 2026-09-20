@@ -32,6 +32,9 @@ import { api, type MeetingSummary } from '../../lib/api';
 import { useSilentMic } from '../../hooks/useSilentMic';
 import { useCallShortcuts, SHORTCUT_HINTS } from '../../hooks/useCallShortcuts';
 import { REACTIONS } from '../../lib/reactions';
+import Avatar from '../ui/Avatar';
+import Switch from '../ui/Switch';
+import BrandDots from '../BrandDots';
 
 export type BgMode = 'none' | 'blur' | 'blur-heavy' | 'color-dark' | 'color-space';
 
@@ -136,18 +139,23 @@ function PeerAudio({ peer }: { peer: PeerInfo }) {
 // saying: a healthy link renders nothing at all. An indicator that is always lit is an
 // indicator nobody reads, and in a mesh call the useful signal is precisely the
 // exception — one peer's link degrading while everyone else's is fine.
-function QualityBadge({ quality, relayed }: { quality: LinkQuality; relayed: boolean }) {
+function QualityBadge({ quality, relayed, variant = 'dark' }: { quality: LinkQuality; relayed: boolean; variant?: 'dark' | 'light' }) {
   if (quality === 'good' || quality === 'unknown') return null;
 
   const bars = quality === 'fair' ? 2 : 1;
-  const colour = quality === 'fair' ? 'bg-[#fdd663]' : 'bg-[#f28b82]';
+  const colour = quality === 'fair' ? 'bg-[var(--ib-warn-dot)]' : 'bg-[var(--ib-bad-dot)]';
   const label = quality === 'fair'
     ? `Unstable connection${relayed ? ' (relayed)' : ''}`
     : `Poor connection${relayed ? ' (relayed)' : ''}`;
+  // 'dark' sits on a video tile (bg-black/60 chip, per theme brief D's "video
+  // stays dark"). 'light' sits in the roster row inside the retoned white
+  // panel (sub-unit 4) -- same badge, different container to match its host.
+  const containerCls = variant === 'dark' ? 'bg-black/60 backdrop-blur-sm' : 'bg-[var(--ib-gray-100)]';
+  const offBarCls = variant === 'dark' ? 'bg-[#5f6368]' : 'bg-[var(--ib-gray-200)]';
 
   return (
     <div
-      className="flex items-end gap-[2px] h-3 px-1.5 py-1 rounded-md bg-black/60 backdrop-blur-sm"
+      className={`flex items-end gap-[2px] h-3 px-1.5 py-1 rounded-md ${containerCls}`}
       title={label}
       aria-label={label}
       role="img"
@@ -155,7 +163,7 @@ function QualityBadge({ quality, relayed }: { quality: LinkQuality; relayed: boo
       {[0, 1, 2].map((i) => (
         <span
           key={i}
-          className={`w-[3px] rounded-sm ${i < bars ? colour : 'bg-[#5f6368]'}`}
+          className={`w-[3px] rounded-sm ${i < bars ? colour : offBarCls}`}
           style={{ height: `${4 + i * 3}px` }}
         />
       ))}
@@ -196,7 +204,7 @@ function ReactionBar({ onPick, onClose }: { onPick: (emoji: string) => void; onC
     // Tighter on mobile — 36px is still at the tap-target minimum used elsewhere in
     // this file — and wrapping as a last resort rather than spilling off screen.
     <div
-      className="absolute bottom-20 left-1/2 -translate-x-1/2 flex flex-wrap justify-center items-center gap-1 p-1.5 md:p-2 rounded-2xl bg-[#202124] border border-[#5f6368] shadow-2xl z-30 max-w-[92vw]"
+      className="absolute bottom-20 left-1/2 -translate-x-1/2 flex flex-wrap justify-center items-center gap-1 p-1.5 md:p-2 rounded-2xl bg-[var(--ib-surface-raised)] border border-[var(--ib-gray-100)] shadow-[var(--ib-shadow-lg)] z-30 max-w-[92vw]"
       role="group"
       aria-label="Send a reaction"
     >
@@ -204,7 +212,7 @@ function ReactionBar({ onPick, onClose }: { onPick: (emoji: string) => void; onC
         <button
           key={emoji}
           onClick={() => { onPick(emoji); onClose(); }}
-          className="w-9 h-9 md:w-10 md:h-10 flex items-center justify-center rounded-xl text-lg md:text-xl hover:bg-[#3c4043] active:scale-90 transition-all cursor-pointer"
+          className="w-9 h-9 md:w-10 md:h-10 flex items-center justify-center rounded-xl text-lg md:text-xl hover:bg-[var(--ib-gray-100)] active:scale-90 transition-all cursor-pointer"
           aria-label={`React with ${emoji}`}
         >
           {emoji}
@@ -380,9 +388,7 @@ function LocalTile({ stream, isVideoOff, name, bgMode }: { stream: MediaStream |
       {showCanvas && <canvas ref={canvasRef} className="w-full h-full object-cover" style={{ display: 'block' }} />}
       {isVideoOff && (
         <div className="absolute inset-0 flex flex-col items-center justify-center">
-          <div className="w-14 h-14 md:w-16 md:h-16 rounded-full bg-[#568dff]/20 flex items-center justify-center mb-2 shadow-lg border border-[#568dff]/30">
-            <span className="text-xl md:text-2xl font-bold text-[#b0c6ff]">{name.charAt(0).toUpperCase()}</span>
-          </div>
+          <Avatar initials={name.charAt(0).toUpperCase()} size="lg" className="mb-2 shadow-lg" />
           <span className="text-xs text-[#9aa0a6] font-medium tracking-wide truncate max-w-[90%]">{name}</span>
         </div>
       )}
@@ -495,11 +501,11 @@ function RemoteTile({ peer, videoWithheld = false }: { peer: PeerInfo; videoWith
   if (!peer.stream) {
     return (
       <div className="w-full h-full flex flex-col items-center justify-center bg-[#202124]">
-        <div className="w-14 h-14 md:w-16 md:h-16 rounded-full bg-[#c0c1ff]/10 flex items-center justify-center mb-2 animate-pulse border border-[#c0c1ff]/20">
-          <span className="text-xl md:text-2xl font-bold text-[#c0c1ff]">{peer.name.charAt(0).toUpperCase()}</span>
-        </div>
+        <Avatar initials={peer.name.charAt(0).toUpperCase()} size="lg" className="mb-2" />
         <span className="text-xs font-medium text-[#e8eaed] truncate max-w-[90%]">{peer.name}</span>
-        <span className="text-[9px] md:text-[10px] text-[#8ab4f8] mt-1 animate-pulse">Connecting…</span>
+        <span className="flex items-center gap-1.5 text-[9px] md:text-[10px] text-[#8ab4f8] mt-1">
+          <BrandDots mode="loading" size={6} />Connecting…
+        </span>
       </div>
     );
   }
@@ -532,14 +538,14 @@ function RemoteTile({ peer, videoWithheld = false }: { peer: PeerInfo; videoWith
           as before this distinction existed. */}
       {!hasVideo && (
         <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 bg-[#202124]">
-          <div className="w-14 h-14 md:w-16 md:h-16 rounded-full bg-[#c0c1ff]/10 flex items-center justify-center border border-[#c0c1ff]/20">
-            <span className="text-xl md:text-2xl font-bold text-[#c0c1ff]">{peer.name.charAt(0).toUpperCase()}</span>
-          </div>
+          <Avatar initials={peer.name.charAt(0).toUpperCase()} size="lg" />
           {/* A tile whose video we deliberately did not subscribe (see the
               subscription tiers above) is neither connecting nor camera-off —
               claiming either would be a lie. Show the avatar and say nothing. */}
           {videoWithheld ? null : stillConnecting ? (
-            <span className="text-[9px] md:text-[10px] text-[#8ab4f8] animate-pulse">Connecting…</span>
+            <span className="flex items-center gap-1.5 text-[9px] md:text-[10px] text-[#8ab4f8]">
+              <BrandDots mode="loading" size={6} />Connecting…
+            </span>
           ) : (
             <span className="text-[9px] md:text-[10px] text-[#9aa0a6] flex items-center gap-1">
               <VideoOff className="w-3 h-3" />Camera off
@@ -623,7 +629,9 @@ function ScreenTile({ stream, label, compact = false, isPinned = false, onToggle
       ) : (
         <div className="flex flex-col items-center gap-2 text-[#9aa0a6]">
           <ScreenShare className={compact ? 'w-5 h-5 animate-pulse' : 'w-8 h-8 animate-pulse'} />
-          <span className="text-xs">Connecting…</span>
+          <span className="flex items-center gap-1.5 text-xs">
+            <BrandDots mode="loading" size={6} />Connecting…
+          </span>
         </div>
       )}
       <div className={`absolute bg-[#111]/80 backdrop-blur-sm font-semibold text-white flex items-center gap-1.5 shadow-sm truncate ${
@@ -641,7 +649,7 @@ function ScreenTile({ stream, label, compact = false, isPinned = false, onToggle
           aria-label={isPinned ? `Unpin ${label}` : `Pin ${label}`}
           title={isPinned ? 'Unpin' : 'Pin to main view'}
           className={`absolute top-1.5 right-1.5 md:top-2 md:right-2 p-1.5 rounded-lg bg-[#202124]/85 backdrop-blur-sm border border-[#5f6368]/50 text-white shadow-lg cursor-pointer transition-opacity hover:bg-[#3c4043] focus-visible:opacity-100 ${
-            isPinned ? 'opacity-100 text-[#8ab4f8]' : 'opacity-0 group-hover:opacity-100'
+            isPinned ? 'opacity-100 text-[var(--ib-blue-500)]' : 'opacity-0 group-hover:opacity-100'
           }`}
         >
           {isPinned ? <PinOff className={compact ? 'w-3 h-3' : 'w-3.5 h-3.5'} /> : <Pin className={compact ? 'w-3 h-3' : 'w-3.5 h-3.5'} />}
@@ -714,7 +722,7 @@ function PresentingCard({ compact = false, onStop, onToggleFocus }: {
       {!compact && onStop && (
         <button
           onClick={(e) => { e.stopPropagation(); onStop(); }}
-          className="mt-1 md:mt-2 flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[#ea4335] hover:bg-[#d33b2c] active:scale-95 text-white text-xs font-semibold transition-all cursor-pointer"
+          className="mt-1 md:mt-2 flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[var(--ib-bad-dot)] hover:bg-[var(--ib-bad-text)] active:scale-95 text-white text-xs font-semibold transition-all cursor-pointer"
         >
           <ScreenShareOff className="w-3.5 h-3.5" />
           Stop sharing
@@ -732,7 +740,7 @@ function ParticipantTile({
   return (
     <div
       className={`group relative w-full h-full rounded-xl md:rounded-2xl overflow-hidden bg-[#202124] border shadow-lg transition-colors ${
-        isSpeaking ? 'border-[#8ab4f8] ring-2 ring-[#8ab4f8]/70' : 'border-[#3c4043]'
+        isSpeaking ? 'border-[var(--ib-blue-500)] ring-2 ring-[var(--ib-blue-500)]/70' : 'border-[#3c4043]'
       }`}
     >
       {isLocal
@@ -757,7 +765,7 @@ function ParticipantTile({
           open. Positioned left so it never collides with the pin control. */}
       {handRaised && (
         <div
-          className={`absolute rounded-lg bg-[#fdd663] text-[#202124] shadow-lg flex items-center justify-center ${
+          className={`absolute rounded-lg bg-[var(--ib-warn-dot)] text-[var(--ib-gray-900)] shadow-lg flex items-center justify-center ${
             compact ? 'top-1 left-1 w-5 h-5' : 'top-1.5 left-1.5 md:top-2 md:left-2 w-7 h-7'
           }`}
           title={`${name} has their hand raised`}
@@ -774,7 +782,7 @@ function ParticipantTile({
         aria-label={isFocused ? `Unpin ${name}` : `Pin ${name}`}
         title={isFocused ? 'Unpin' : 'Pin to main view'}
         className={`absolute top-1.5 right-1.5 md:top-2 md:right-2 p-1.5 rounded-lg bg-[#202124]/85 backdrop-blur-sm border border-[#5f6368]/50 text-white shadow-lg cursor-pointer transition-opacity hover:bg-[#3c4043] focus-visible:opacity-100 ${
-          isFocused ? 'opacity-100 text-[#8ab4f8]' : 'opacity-0 group-hover:opacity-100'
+          isFocused ? 'opacity-100 text-[var(--ib-blue-500)]' : 'opacity-0 group-hover:opacity-100'
         }`}
       >
         {isFocused
@@ -801,14 +809,14 @@ function DeviceSelect({ label, Icon, devices, selected, onChange }: {
 }) {
   return (
     <div className="flex flex-col gap-1.5">
-      <div className="flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-wider text-[#9aa0a6]">
+      <div className="flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-wider text-[var(--ib-gray-600)]">
         <Icon className="w-3 h-3" />{label}
       </div>
       <div className="relative">
         <select
           value={selected}
           onChange={(e) => onChange(e.target.value)}
-          className="w-full bg-[#3c4043] border border-[#5f6368] rounded-lg px-3 py-2 text-xs text-[#e8eaed] outline-none appearance-none cursor-pointer"
+          className="w-full bg-[var(--ib-gray-50)] border border-[var(--ib-gray-200)] rounded-lg px-3 py-2 text-xs text-[var(--ib-gray-900)] outline-none appearance-none cursor-pointer focus:border-[var(--ib-blue-500)]"
         >
           {devices.length === 0 && <option value="">No devices found</option>}
           {devices.map(d => (
@@ -817,7 +825,7 @@ function DeviceSelect({ label, Icon, devices, selected, onChange }: {
             </option>
           ))}
         </select>
-        <ChevronDown className="w-3 h-3 text-[#9aa0a6] absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
+        <ChevronDown className="w-3 h-3 text-[var(--ib-gray-600)] absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
       </div>
     </div>
   );
@@ -837,27 +845,32 @@ function SettingsPanel({
 }) {
   const [tab, setTab] = useState<'bg' | 'devices' | 'keys'>('bg');
   return (
-    <div className="absolute bottom-20 right-4 w-[90vw] md:w-72 max-w-sm bg-[#202124] border border-[#5f6368] rounded-2xl shadow-2xl z-30 overflow-hidden">
-      <div className="flex items-center justify-between px-4 py-3 border-b border-[#3c4043]">
-        <div className="flex gap-1">
+    <div className="absolute bottom-20 right-4 w-[90vw] md:w-72 max-w-sm bg-[var(--ib-surface-raised)] border border-[var(--ib-gray-100)] rounded-2xl shadow-[var(--ib-shadow-lg)] z-30 overflow-hidden">
+      {/* gap-1 -> gap-0.5, px-3 -> px-2: pre-existing tightness, not
+          introduced by this retheme (only colors changed elsewhere in this
+          panel) -- three tab labels plus the outer panel's overflow-hidden
+          was clipping "Shortcuts" to "Shortcu", caught while screenshotting
+          this sub-unit at 1280px. */}
+      <div className="flex items-center justify-between px-4 py-3 border-b border-[var(--ib-gray-100)]">
+        <div className="flex gap-0.5">
           {(['bg', 'devices', 'keys'] as const).map(t => (
-            <button key={t} onClick={() => setTab(t)} className={`px-3 py-1 rounded-lg text-xs font-semibold transition-colors ${tab === t ? 'bg-[#8ab4f8]/20 text-[#8ab4f8]' : 'text-[#9aa0a6] hover:text-[#e8eaed]'}`}>
+            <button key={t} onClick={() => setTab(t)} className={`px-2 py-1 rounded-lg text-xs font-semibold transition-colors ${tab === t ? 'bg-[var(--ib-blue-50)] text-[var(--ib-blue-500)]' : 'text-[var(--ib-gray-600)] hover:text-[var(--ib-gray-900)]'}`}>
               {t === 'bg' ? 'Backgrounds' : t === 'devices' ? 'Devices' : 'Shortcuts'}
             </button>
           ))}
         </div>
-        <button onClick={onClose} className="text-[#9aa0a6] hover:text-[#e8eaed] cursor-pointer"><X className="w-4 h-4" /></button>
+        <button onClick={onClose} className="text-[var(--ib-gray-600)] hover:text-[var(--ib-gray-900)] cursor-pointer"><X className="w-4 h-4" /></button>
       </div>
       <div className="p-4">
         {tab === 'bg' && (
           <div className="flex flex-col gap-3">
-            <p className="text-[10px] text-[#9aa0a6] uppercase font-bold tracking-wider">Virtual Background</p>
+            <p className="text-[10px] text-[var(--ib-gray-600)] uppercase font-bold tracking-wider">Virtual Background</p>
             <div className="grid grid-cols-5 gap-2">
               {BG_OPTIONS.map(opt => (
                 <button
                   key={opt.mode}
                   onClick={() => onBgChange(opt.mode)}
-                  className={`flex flex-col items-center gap-1 p-2 rounded-xl text-[10px] font-semibold cursor-pointer transition-all ${bgMode === opt.mode ? 'bg-[#8ab4f8]/20 text-[#8ab4f8] border border-[#8ab4f8]/50' : 'bg-[#3c4043] text-[#9aa0a6] hover:bg-[#4a4d51] border border-transparent'}`}
+                  className={`flex flex-col items-center gap-1 p-2 rounded-xl text-[10px] font-semibold cursor-pointer transition-all ${bgMode === opt.mode ? 'bg-[var(--ib-blue-50)] text-[var(--ib-blue-500)] border border-[var(--ib-blue-100)]' : 'bg-[var(--ib-gray-50)] text-[var(--ib-gray-600)] hover:bg-[var(--ib-gray-100)] border border-transparent'}`}
                 >
                   <span className="text-base md:text-xl">{opt.icon}</span>
                   <span className="hidden md:inline">{opt.label}</span>
@@ -877,8 +890,8 @@ function SettingsPanel({
               <DeviceSelect label="Speaker" Icon={Volume2} devices={outputDevices} selected={selectedSpeaker} onChange={onSpeakerChange} />
             ) : (
               <div className="flex flex-col gap-1">
-                <span className="text-[10px] text-[#9aa0a6] uppercase font-bold tracking-wider">Speaker</span>
-                <p className="text-[11px] text-[#9aa0a6] leading-snug">
+                <span className="text-[10px] text-[var(--ib-gray-600)] uppercase font-bold tracking-wider">Speaker</span>
+                <p className="text-[11px] text-[var(--ib-gray-600)] leading-snug">
                   This browser can't choose an output device. Pick your speaker in the operating system's sound settings.
                 </p>
               </div>
@@ -889,8 +902,8 @@ function SettingsPanel({
           <div className="flex flex-col gap-2">
             {SHORTCUT_HINTS.map((s) => (
               <div key={s.keys} className="flex items-center justify-between gap-3">
-                <span className="text-xs text-[#e8eaed]">{s.action}</span>
-                <kbd className="px-2 py-0.5 rounded-md bg-[#3c4043] border border-[#5f6368] text-[10px] font-mono text-[#9aa0a6] whitespace-nowrap">{s.keys}</kbd>
+                <span className="text-xs text-[var(--ib-gray-900)]">{s.action}</span>
+                <kbd className="px-2 py-0.5 rounded-md bg-[var(--ib-gray-100)] border border-[var(--ib-gray-200)] text-[10px] font-mono text-[var(--ib-gray-600)] whitespace-nowrap">{s.keys}</kbd>
               </div>
             ))}
           </div>
@@ -905,13 +918,13 @@ function SettingsPanel({
 
 function SummarySection({ icon: Icon, title, tone, items }: { icon: React.ElementType; title: string; tone: string; items: string[] }) {
   return (
-    <div className="rounded-xl border border-white/[0.06] bg-black/10 p-2.5">
+    <div className="rounded-xl border border-[var(--ib-gray-100)] bg-[var(--ib-gray-50)] p-2.5">
       <p className={`mb-2 flex items-center gap-1.5 text-[9px] font-bold uppercase tracking-[.12em] ${tone}`}>
         <Icon className="h-3 w-3" />{title}
       </p>
       <div className="space-y-2">
         {items.map((item, index) => (
-          <div key={index} className="flex gap-2 text-[10px] leading-4 text-[#dce1e8]">
+          <div key={index} className="flex gap-2 text-[10px] leading-4 text-[var(--ib-gray-800)]">
             <span className="mt-1 h-1.5 w-1.5 shrink-0 rounded-full bg-current opacity-70" />
             <span>{item}</span>
           </div>
@@ -1011,17 +1024,22 @@ function RightPanel({
   };
 
   return (
-    <div className="w-full h-full flex flex-col bg-[#202124] overflow-hidden">
-      <div className="flex items-center border-b border-[#3c4043] px-1 pt-1 md:px-2 md:pt-2 bg-[#1a1b1e] shrink-0">
+    <div className="w-full h-full flex flex-col bg-[var(--ib-surface-raised)] overflow-hidden">
+      <div className="flex items-center border-b border-[var(--ib-gray-100)] px-1 pt-1 md:px-2 md:pt-2 bg-[var(--ib-surface-raised)] shrink-0">
         {(captionsSupported ? (['chat', 'people', 'captions'] as const) : (['chat', 'people'] as const)).map(t => (
           <button
             key={t} onClick={() => onTabChange(t)}
-            className={`flex-1 py-2.5 text-[10px] md:text-xs font-semibold border-b-2 transition-colors ${tab === t ? 'border-[#8ab4f8] text-[#8ab4f8]' : 'border-transparent text-[#9aa0a6] hover:text-[#e8eaed]'}`}
+            aria-label={t === 'captions' ? 'Live captions' : undefined}
+            className={`min-h-11 flex-1 py-2.5 text-[10px] md:text-xs font-semibold border-b-2 whitespace-nowrap transition-colors ${tab === t ? 'border-[var(--ib-blue-500)] text-[var(--ib-blue-500)]' : 'border-transparent text-[var(--ib-gray-600)] hover:text-[var(--ib-gray-900)]'}`}
           >
             <div className="flex items-center justify-center gap-1 md:gap-1.5">
-              {t === 'chat' && <><MessageSquare className="w-3.5 h-3.5" /><span className="hidden sm:inline">Chat</span></>}
-              {t === 'people' && <><Users className="w-3.5 h-3.5" /><span className="hidden sm:inline">People</span></>}
-              {t === 'captions' && <><Captions className="w-3.5 h-3.5" /><span className="hidden sm:inline">Live Captions</span></>}
+              {/* "Captions", not "Live Captions" -- the two-word label was
+                  what wrapped onto its own line in a narrow panel (live bug
+                  report, section 5); "Live captions" moves to aria-label so
+                  the fuller meaning isn't lost for screen readers. */}
+              {t === 'chat' && <><MessageSquare className="w-3.5 h-3.5 shrink-0" /><span className="hidden sm:inline">Chat</span></>}
+              {t === 'people' && <><Users className="w-3.5 h-3.5 shrink-0" /><span className="hidden sm:inline">People</span></>}
+              {t === 'captions' && <><Captions className="w-3.5 h-3.5 shrink-0" /><span className="hidden sm:inline">Captions</span></>}
             </div>
           </button>
         ))}
@@ -1030,26 +1048,26 @@ function RightPanel({
       {tab === 'chat' && (
         <div className="flex-1 flex flex-col min-h-0">
           <div className="flex-1 overflow-y-auto p-3 space-y-3 scrollbar-hide">
-            {chatMessages.length === 0 && <p className="text-[11px] text-[#5f6368] text-center mt-10">No messages yet. Say hello!</p>}
+            {chatMessages.length === 0 && <p className="text-[11px] text-[var(--ib-gray-600)] text-center mt-10">No messages yet. Say hello!</p>}
             {chatMessages.map((msg) => (
               <div key={msg.id} className={`flex flex-col gap-0.5 ${msg.isSelf ? 'items-end' : 'items-start'}`}>
-                <span className="text-[9px] text-[#5f6368]">{msg.fromName} · {msg.time}</span>
-                <div className={`px-3 py-2 rounded-2xl text-xs max-w-[90%] leading-relaxed shadow-sm ${msg.isSelf ? 'bg-[#8ab4f8] text-[#202124] rounded-br-sm' : 'bg-[#3c4043] text-[#e8eaed] rounded-bl-sm'}`}>
+                <span className="text-[9px] text-[var(--ib-gray-600)]">{msg.fromName} · {msg.time}</span>
+                <div className={`px-3 py-2 rounded-2xl text-xs max-w-[90%] leading-relaxed shadow-sm ${msg.isSelf ? 'bg-[var(--ib-blue-500)] text-white rounded-br-sm' : 'bg-[var(--ib-gray-100)] text-[var(--ib-gray-900)] rounded-bl-sm'}`}>
                   {msg.text}
                 </div>
               </div>
             ))}
             <div ref={chatEndRef} />
           </div>
-          <div className="p-2 border-t border-[#3c4043] bg-[#202124] shrink-0">
-            <div className="flex items-center gap-2 bg-[#3c4043] rounded-full px-3 py-1.5 border border-[#5f6368]/30">
+          <div className="p-2 pb-[calc(0.5rem+env(safe-area-inset-bottom))] border-t border-[var(--ib-gray-100)] bg-[var(--ib-surface-raised)] shrink-0">
+            <div className="flex items-center gap-1 bg-[var(--ib-gray-50)] rounded-full pl-3 pr-1 py-1 border border-[var(--ib-gray-200)]">
               <input
                 value={input} onChange={(e) => setInput(e.target.value)}
                 onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); } }}
                 placeholder="Message…"
-                className="flex-1 bg-transparent text-xs text-[#e8eaed] placeholder-[#9aa0a6] outline-none min-w-0"
+                className="flex-1 bg-transparent text-base md:text-xs text-[var(--ib-gray-900)] placeholder-[var(--ib-gray-600)] outline-none min-w-0 touch-manipulation"
               />
-              <button onClick={send} disabled={!input.trim()} className="text-[#8ab4f8] hover:text-[#aecbfa] disabled:opacity-30 cursor-pointer shrink-0">
+              <button onClick={send} disabled={!input.trim()} aria-label="Send" className="grid place-items-center w-11 h-11 md:w-8 md:h-8 shrink-0 rounded-full text-[var(--ib-blue-500)] hover:bg-[var(--ib-blue-50)] hover:text-[var(--ib-blue-800)] disabled:opacity-30 disabled:hover:bg-transparent cursor-pointer">
                 <Send className="w-3.5 h-3.5" />
               </button>
             </div>
@@ -1059,37 +1077,42 @@ function RightPanel({
 
       {tab === 'people' && (
         <div className="flex-1 overflow-y-auto p-3 space-y-1.5 scrollbar-hide min-h-0">
-          <div className="flex items-center gap-3 p-2 md:p-2.5 rounded-xl hover:bg-[#3c4043] transition-colors">
-            <div className="w-8 h-8 md:w-9 md:h-9 rounded-full bg-[#8ab4f8]/20 flex items-center justify-center shrink-0 border border-[#8ab4f8]/30">
-              <span className="text-xs md:text-sm font-bold text-[#8ab4f8]">{userName.charAt(0).toUpperCase()}</span>
-            </div>
+          <div className="flex items-center gap-3 min-h-12 md:min-h-0 p-2 md:p-2.5 rounded-xl hover:bg-[var(--ib-gray-50)] transition-colors">
+            <Avatar initials={userName.charAt(0).toUpperCase()} size="sm" />
             <div className="flex-1 min-w-0">
-              <p className="text-[11px] md:text-xs font-semibold text-[#e8eaed] truncate">{userName} <span className="text-[9px] text-[#8ab4f8]">(you)</span></p>
+              <p title={userName} className="text-[11px] md:text-xs font-semibold text-[var(--ib-gray-900)] truncate">{userName} <span className="text-[9px] text-[var(--ib-blue-500)]">(you)</span></p>
             </div>
-            {isHandRaised && <Hand className="w-3 h-3 text-[#fdd663] shrink-0" aria-label="Your hand is raised" />}
-            {isMuted && <MicOff className="w-3 h-3 text-[#f28b82] shrink-0" />}
+            {isHandRaised && <Hand className="w-3 h-3 text-[var(--ib-warn-dot)] shrink-0" aria-label="Your hand is raised" />}
+            {isMuted && <MicOff className="w-3 h-3 text-[var(--ib-bad-dot)] shrink-0" />}
           </div>
           {peers.map((peer) => {
             const link = links.get(peer.id);
             return (
-            <div key={peer.id} className="flex items-center gap-3 p-2 md:p-2.5 rounded-xl hover:bg-[#3c4043] transition-colors">
-              <div className="w-8 h-8 md:w-9 md:h-9 rounded-full bg-[#81c995]/10 flex items-center justify-center shrink-0 border border-[#81c995]/20">
-                <span className="text-xs md:text-sm font-bold text-[#81c995]">{peer.name.charAt(0).toUpperCase()}</span>
-              </div>
+            <div key={peer.id} className="flex items-center gap-3 min-h-12 md:min-h-0 p-2 md:p-2.5 rounded-xl hover:bg-[var(--ib-gray-50)] transition-colors">
+              <Avatar initials={peer.name.charAt(0).toUpperCase()} size="sm" />
               <div className="flex-1 min-w-0">
-                <p className="text-[11px] md:text-xs font-semibold text-[#e8eaed] truncate">{peer.name}</p>
+                <p title={peer.name} className="text-[11px] md:text-xs font-semibold text-[var(--ib-gray-900)] truncate">{peer.name}</p>
                 {/* The roster is where a connection problem should be diagnosable, so
                     unlike the tile badge this spells out the path rather than only
                     grading it — "relayed" is the answer to "why is this call bad on
                     the college wifi but fine at home". */}
-                <p className="text-[9px] text-[#81c995]">
-                  {peer.stream ? 'Connected' : 'Connecting…'}
-                  {link?.stats?.rttMs !== undefined && <span className="text-[#9aa0a6]"> · {link.stats.rttMs} ms</span>}
-                  {link?.stats?.relayed && <span className="text-[#9aa0a6]"> · relayed</span>}
-                </p>
+                {/* div, not p -- BrandDots renders its own div internally,
+                    and a <p> can't legally contain one (pre-existing
+                    hydration warning, found and fixed while in this file
+                    for section 5, unrelated to any of that section's own
+                    changes). */}
+                <div className="flex items-center gap-1 text-[9px]">
+                  {peer.stream ? (
+                    <span className="text-[var(--ib-good-text)]">Connected</span>
+                  ) : (
+                    <span className="flex items-center gap-1 text-[var(--ib-blue-500)]"><BrandDots mode="loading" size={5} />Connecting…</span>
+                  )}
+                  {link?.stats?.rttMs !== undefined && <span className="text-[var(--ib-gray-600)]"> · {link.stats.rttMs} ms</span>}
+                  {link?.stats?.relayed && <span className="text-[var(--ib-gray-600)]"> · relayed</span>}
+                </div>
               </div>
-              {raisedHands.has(peer.id) && <Hand className="w-3 h-3 text-[#fdd663] shrink-0" aria-label={`${peer.name} has their hand raised`} />}
-              {link && <QualityBadge quality={link.quality} relayed={!!link.stats?.relayed} />}
+              {raisedHands.has(peer.id) && <Hand className="w-3 h-3 text-[var(--ib-warn-dot)] shrink-0" aria-label={`${peer.name} has their hand raised`} />}
+              {link && <QualityBadge quality={link.quality} relayed={!!link.stats?.relayed} variant="light" />}
             </div>
             );
           })}
@@ -1097,18 +1120,18 @@ function RightPanel({
       )}
 
       {captionsSupported && tab === 'captions' && (
-        <div className="flex-1 flex flex-col overflow-hidden min-h-0 bg-[#202124]">
+        <div className="flex-1 flex flex-col overflow-hidden min-h-0 bg-[var(--ib-surface-raised)]">
           {/* Settings: on/off, language, size — everything captions-related lives
               here now, next to Chat/People, instead of scattered across a
               separate always-open desktop sidebar and a floating picker on the
               on-screen caption bar itself. */}
-          <div className="p-3 border-b border-[#3c4043] flex flex-col gap-2.5 shrink-0">
+          <div className="p-3 border-b border-[var(--ib-gray-100)] flex flex-col gap-2.5 shrink-0">
             <div className="flex items-center justify-between">
-              <span className="text-[10px] text-[#9aa0a6] font-bold uppercase tracking-wider">Live Captions</span>
+              <span className="text-[10px] text-[var(--ib-gray-600)] font-bold uppercase tracking-wider">Live Captions</span>
               <button
                 onClick={() => (transcribing ? onStopCaptions() : onStartCaptions())}
                 className={`px-2.5 py-1 rounded-full text-[9px] font-bold cursor-pointer transition-colors ${
-                  transcribing ? 'bg-[#8ab4f8]/20 text-[#8ab4f8]' : 'bg-[#3c4043] text-[#9aa0a6] hover:text-[#e8eaed]'
+                  transcribing ? 'bg-[var(--ib-blue-50)] text-[var(--ib-blue-500)]' : 'bg-[var(--ib-gray-100)] text-[var(--ib-gray-600)] hover:text-[var(--ib-gray-900)]'
                 }`}
               >
                 {transcribing ? 'On' : 'Off'}
@@ -1122,23 +1145,18 @@ function RightPanel({
                   translating that English into one other language, not a
                   "pick your caption language from many" picker the way it
                   used to be — captions are always English unless this is on. */}
-              <label className="flex items-center justify-between cursor-pointer select-none">
-                <span className="text-[9px] text-[#9aa0a6] font-semibold">Translate from English</span>
-                <button
-                  type="button"
-                  role="switch"
-                  aria-checked={myCaptionLang !== null}
+              <div className="flex items-center justify-between select-none">
+                <span className="text-[9px] text-[var(--ib-gray-600)] font-semibold">Translate from English</span>
+                <Switch
+                  checked={myCaptionLang !== null}
+                  onChange={() => onCaptionLangChange(myCaptionLang !== null ? null : (CAPTION_TARGET_LANGUAGES[0]?.code ?? null))}
                   aria-label="Translate captions from English"
-                  onClick={() => onCaptionLangChange(myCaptionLang !== null ? null : (CAPTION_TARGET_LANGUAGES[0]?.code ?? null))}
-                  className={`relative shrink-0 w-8 h-[18px] rounded-full transition-colors ${myCaptionLang !== null ? 'bg-[#8ab4f8]' : 'bg-[#3c4043]'}`}
-                >
-                  <span className={`absolute top-0.5 w-[14px] h-[14px] rounded-full bg-white transition-transform ${myCaptionLang !== null ? 'translate-x-[17px]' : 'translate-x-0.5'}`} />
-                </button>
-              </label>
+                />
+              </div>
               {myCaptionLang !== null && (
                 <select
                   value={myCaptionLang} onChange={(e) => onCaptionLangChange(e.target.value)}
-                  className="bg-[#3c4043] text-[#e8eaed] text-[10px] rounded-lg px-2 py-1.5 border border-[#5f6368]/30 cursor-pointer"
+                  className="bg-[var(--ib-gray-50)] text-[var(--ib-gray-900)] text-[10px] rounded-lg px-2 py-1.5 border border-[var(--ib-gray-200)] cursor-pointer"
                   title="Translate captions into"
                 >
                   {CAPTION_TARGET_LANGUAGES.map((l) => <option key={l.code} value={l.code}>{l.label}</option>)}
@@ -1147,14 +1165,14 @@ function RightPanel({
             </div>
 
             <div className="flex flex-col gap-1">
-              <span className="text-[9px] text-[#9aa0a6] font-semibold">Caption size</span>
-              <div className="flex gap-1 bg-[#3c4043] rounded-lg p-0.5">
+              <span className="text-[9px] text-[var(--ib-gray-600)] font-semibold">Caption size</span>
+              <div className="flex gap-1 bg-[var(--ib-gray-100)] rounded-lg p-0.5">
                 {CAPTION_SIZES.map((s) => (
                   <button
                     key={s.value}
                     onClick={() => onCaptionSizeChange(s.value)}
                     className={`flex-1 py-1 rounded-md text-[9px] font-bold cursor-pointer transition-colors ${
-                      captionSize === s.value ? 'bg-[#8ab4f8] text-[#202124]' : 'text-[#9aa0a6] hover:text-[#e8eaed]'
+                      captionSize === s.value ? 'bg-[var(--ib-blue-500)] text-white' : 'text-[var(--ib-gray-600)] hover:text-[var(--ib-gray-900)]'
                     }`}
                   >
                     {s.label}
@@ -1165,7 +1183,7 @@ function RightPanel({
           </div>
 
           {captionsUnavailable && (
-            <p className="text-[10px] text-[#f28b82] px-3 pt-2 shrink-0">
+            <p className="text-[10px] text-[var(--ib-bad-text)] px-3 pt-2 shrink-0">
               {captionsUnavailable === 'not_configured' ? "Captions aren't set up yet."
                 : captionsUnavailable === 'loading' ? 'Captions are starting up — try again shortly.'
                 : 'Captions are temporarily unavailable.'}
@@ -1180,7 +1198,7 @@ function RightPanel({
               <button
                 onClick={handleDownloadTranscript}
                 disabled={!roomId || isDownloading}
-                className="flex-1 flex items-center justify-center gap-1.5 border border-white/[0.08] bg-white/[0.045] hover:bg-white/[0.08] disabled:opacity-40 text-[#d9dce2] text-[10px] font-semibold py-2 rounded-xl transition-all cursor-pointer"
+                className="flex-1 flex items-center justify-center gap-1.5 border border-[var(--ib-gray-200)] bg-[var(--ib-gray-50)] hover:bg-[var(--ib-gray-100)] disabled:opacity-40 text-[var(--ib-gray-800)] text-[10px] font-semibold py-2 rounded-xl transition-all cursor-pointer"
               >
                 {isDownloading ? <Loader2 className="w-3 h-3 animate-spin" /> : <Download className="w-3 h-3" />}
                 Transcript
@@ -1188,59 +1206,59 @@ function RightPanel({
               <button
                 onClick={handleGenerateSummary}
                 disabled={!roomId || isSummarizing}
-                className="group flex-1 flex items-center justify-center gap-1.5 border border-[#8ab4f8]/25 bg-[#8ab4f8]/10 hover:border-[#8ab4f8]/45 hover:bg-[#8ab4f8]/15 disabled:opacity-40 text-[#aecbfa] text-[10px] font-semibold py-2 rounded-xl transition-all cursor-pointer"
+                className="group flex-1 flex items-center justify-center gap-1.5 border border-[var(--ib-blue-500)]/25 bg-[var(--ib-blue-50)] hover:border-[var(--ib-blue-500)]/45 hover:bg-[var(--ib-blue-500)]/15 disabled:opacity-40 text-[var(--ib-blue-800)] text-[10px] font-semibold py-2 rounded-xl transition-all cursor-pointer"
               >
                 {isSummarizing ? <Loader2 className="w-3 h-3 animate-spin" /> : <Sparkles className="w-3 h-3 transition-transform group-hover:rotate-12" />}
                 {isSummarizing ? 'Creating…' : summary ? 'Regenerate' : 'AI summary'}
               </button>
             </div>
             {transcriptError && (
-              <div className="flex items-start gap-2 rounded-xl border border-[#f28b82]/20 bg-[#f28b82]/[0.07] px-3 py-2.5">
-                <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-[#f28b82]" />
-                <p className="min-w-0 flex-1 text-[10px] leading-4 text-[#f6bbb5]">{transcriptError}</p>
-                <button onClick={handleGenerateSummary} disabled={isSummarizing} className="shrink-0 text-[#f6bbb5] hover:text-white" title="Try summary again"><RotateCcw className="h-3.5 w-3.5" /></button>
+              <div className="flex items-start gap-2 rounded-xl border border-[var(--ib-bad-dot)]/20 bg-[var(--ib-bad-fill)] px-3 py-2.5">
+                <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-[var(--ib-bad-dot)]" />
+                <p className="min-w-0 flex-1 text-[10px] leading-4 text-[var(--ib-bad-text)]">{transcriptError}</p>
+                <button onClick={handleGenerateSummary} disabled={isSummarizing} className="shrink-0 text-[var(--ib-bad-text)] hover:text-[var(--ib-bad-dot)]" title="Try summary again"><RotateCcw className="h-3.5 w-3.5" /></button>
               </div>
             )}
             {isSummarizing && (
-              <div className="overflow-hidden rounded-xl border border-[#8ab4f8]/15 bg-[#8ab4f8]/[0.055] px-3 py-2.5">
-                <div className="flex items-center gap-2"><span className="relative flex h-2 w-2"><span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-[#8ab4f8] opacity-60" /><span className="relative inline-flex h-2 w-2 rounded-full bg-[#8ab4f8]" /></span><p className="text-[10px] font-semibold text-[#c6dafc]">AIPA is reviewing the transcript</p></div>
-                <p className="mt-1 pl-4 text-[9px] leading-4 text-[#8e98a8]">Extracting topics, decisions, and follow-ups. You can keep using the meeting while this runs.</p>
+              <div className="overflow-hidden rounded-xl border border-[var(--ib-blue-500)]/15 bg-[var(--ib-blue-50)] px-3 py-2.5">
+                <div className="flex items-center gap-2"><span className="relative flex h-2 w-2"><span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-[var(--ib-blue-500)] opacity-60" /><span className="relative inline-flex h-2 w-2 rounded-full bg-[var(--ib-blue-500)]" /></span><p className="text-[10px] font-semibold text-[var(--ib-blue-800)]">AIPA is reviewing the transcript</p></div>
+                <p className="mt-1 pl-4 text-[9px] leading-4 text-[var(--ib-gray-600)]">Extracting topics, decisions, and follow-ups. You can keep using the meeting while this runs.</p>
               </div>
             )}
           </div>
 
           {summary && (
-            <div className="mx-3 mb-1 mt-3 max-h-[22rem] shrink-0 overflow-y-auto rounded-2xl border border-[#8ab4f8]/20 bg-gradient-to-b from-[#252b38] to-[#1b1f27] shadow-[0_12px_36px_rgba(0,0,0,.22)] scrollbar-hide">
-              <div className="sticky top-0 z-10 flex items-center justify-between border-b border-white/[0.07] bg-[#222833]/95 px-3 py-2.5 backdrop-blur-md">
+            <div className="mx-3 mb-1 mt-3 max-h-[22rem] shrink-0 overflow-y-auto rounded-2xl border border-[var(--ib-blue-500)]/20 bg-[var(--ib-blue-50)] shadow-[var(--ib-shadow-lg)] scrollbar-hide">
+              <div className="sticky top-0 z-10 flex items-center justify-between border-b border-[var(--ib-gray-100)] bg-[var(--ib-surface-raised)]/95 px-3 py-2.5 backdrop-blur-md">
                 <div className="flex items-center gap-2">
-                  <span className="grid h-7 w-7 place-items-center rounded-lg bg-[#8ab4f8]/15 text-[#aecbfa]"><FileText className="h-3.5 w-3.5" /></span>
-                  <div><p className="text-[10px] font-bold text-[#eef2f8]">Meeting intelligence</p><p className="text-[8px] text-[#8893a5]">Generated from the saved transcript</p></div>
+                  <span className="grid h-7 w-7 place-items-center rounded-lg bg-[var(--ib-blue-50)] text-[var(--ib-blue-800)]"><FileText className="h-3.5 w-3.5" /></span>
+                  <div><p className="text-[10px] font-bold text-[var(--ib-gray-900)]">Meeting intelligence</p><p className="text-[8px] text-[var(--ib-gray-600)]">Generated from the saved transcript</p></div>
                 </div>
                 <div className="flex items-center gap-1">
-                  <button onClick={handleCopySummary} className="grid h-7 w-7 place-items-center rounded-lg text-[#9aa4b4] transition hover:bg-white/[0.07] hover:text-white" title="Copy summary">{summaryCopied ? <Check className="h-3.5 w-3.5 text-[#81c995]" /> : <Copy className="h-3.5 w-3.5" />}</button>
-                  <button onClick={() => setSummary(null)} className="grid h-7 w-7 place-items-center rounded-lg text-[#9aa4b4] transition hover:bg-white/[0.07] hover:text-white" title="Close summary"><X className="h-3.5 w-3.5" /></button>
+                  <button onClick={handleCopySummary} className="grid h-7 w-7 place-items-center rounded-lg text-[var(--ib-gray-600)] transition hover:bg-[var(--ib-gray-100)] hover:text-[var(--ib-gray-900)]" title="Copy summary">{summaryCopied ? <Check className="h-3.5 w-3.5 text-[var(--ib-good-dot)]" /> : <Copy className="h-3.5 w-3.5" />}</button>
+                  <button onClick={() => setSummary(null)} className="grid h-7 w-7 place-items-center rounded-lg text-[var(--ib-gray-600)] transition hover:bg-[var(--ib-gray-100)] hover:text-[var(--ib-gray-900)]" title="Close summary"><X className="h-3.5 w-3.5" /></button>
                 </div>
               </div>
               <div className="flex flex-col gap-3 p-3">
-                <p className="text-[11px] leading-[1.65] text-[#e3e7ed]">{summary.summary}</p>
-                {summary.attendees.length > 0 && <div className="flex flex-wrap gap-1.5">{summary.attendees.map(name => <span key={name} className="rounded-full border border-white/[0.07] bg-white/[0.045] px-2 py-1 text-[9px] text-[#b8c0cd]">{name}</span>)}</div>}
-                {summary.keyPoints.length > 0 && <SummarySection icon={Lightbulb} title="Key points" tone="text-[#fdd663]" items={summary.keyPoints} />}
-                {summary.decisions.length > 0 && <SummarySection icon={CheckCircle2} title="Decisions" tone="text-[#81c995]" items={summary.decisions} />}
+                <p className="text-[11px] leading-[1.65] text-[var(--ib-gray-900)]">{summary.summary}</p>
+                {summary.attendees.length > 0 && <div className="flex flex-wrap gap-1.5">{summary.attendees.map(name => <span key={name} className="rounded-full border border-[var(--ib-gray-200)] bg-[var(--ib-surface-raised)] px-2 py-1 text-[9px] text-[var(--ib-gray-800)]">{name}</span>)}</div>}
+                {summary.keyPoints.length > 0 && <SummarySection icon={Lightbulb} title="Key points" tone="text-[var(--ib-warn-text)]" items={summary.keyPoints} />}
+                {summary.decisions.length > 0 && <SummarySection icon={CheckCircle2} title="Decisions" tone="text-[var(--ib-good-text)]" items={summary.decisions} />}
                 {summary.actionItems.length > 0 && (
-                  <div className="rounded-xl border border-white/[0.06] bg-black/10 p-2.5">
-                    <p className="mb-2 flex items-center gap-1.5 text-[9px] font-bold uppercase tracking-[.12em] text-[#aecbfa]"><ListChecks className="h-3 w-3" /> Action items</p>
-                    <div className="space-y-2">{summary.actionItems.map((item, index) => <div key={index} className="flex gap-2 text-[10px] leading-4 text-[#dce1e8]"><span className="mt-1 h-1.5 w-1.5 shrink-0 rounded-full bg-[#8ab4f8]" /><span>{item.description}{item.owner && item.owner.toLowerCase() !== 'unclear' && <span className="ml-1 text-[#8f99aa]">— {item.owner}</span>}</span></div>)}</div>
+                  <div className="rounded-xl border border-[var(--ib-gray-100)] bg-[var(--ib-surface-raised)] p-2.5">
+                    <p className="mb-2 flex items-center gap-1.5 text-[9px] font-bold uppercase tracking-[.12em] text-[var(--ib-blue-800)]"><ListChecks className="h-3 w-3" /> Action items</p>
+                    <div className="space-y-2">{summary.actionItems.map((item, index) => <div key={index} className="flex gap-2 text-[10px] leading-4 text-[var(--ib-gray-800)]"><span className="mt-1 h-1.5 w-1.5 shrink-0 rounded-full bg-[var(--ib-blue-500)]" /><span>{item.description}{item.owner && item.owner.toLowerCase() !== 'unclear' && <span className="ml-1 text-[var(--ib-gray-600)]">— {item.owner}</span>}</span></div>)}</div>
                   </div>
                 )}
-                <p className="border-t border-white/[0.06] pt-2 text-[8px] leading-3 text-[#737e90]">AI-generated notes can miss context. Review important decisions and assignments before sharing.</p>
+                <p className="border-t border-[var(--ib-gray-100)] pt-2 text-[8px] leading-3 text-[var(--ib-gray-600)]">AI-generated notes can miss context. Review important decisions and assignments before sharing.</p>
               </div>
             </div>
           )}
 
           {keyPoints.length > 0 && (
-            <div className="border-b border-[#3c4043] p-3 shrink-0">
-              <p className="text-[9px] font-bold uppercase tracking-wider text-[#9aa0a6] mb-2 flex items-center gap-1">
-                <Lightbulb className="w-3 h-3 text-[#fdd663]" />Key Points
+            <div className="border-b border-[var(--ib-gray-100)] p-3 shrink-0">
+              <p className="text-[9px] font-bold uppercase tracking-wider text-[var(--ib-gray-600)] mb-2 flex items-center gap-1">
+                <Lightbulb className="w-3 h-3 text-[var(--ib-warn-dot)]" />Key Points
               </p>
               <div className="space-y-1.5 max-h-32 overflow-y-auto scrollbar-hide">
                 {keyPoints.slice(-8).map((kp) => {
@@ -1258,15 +1276,15 @@ function RightPanel({
           )}
 
           <div className="flex-1 overflow-y-auto p-3 space-y-2 scrollbar-hide">
-            {!transcribing && transcriptLines.length === 0 && <p className="text-[10px] text-[#9aa0a6]">Turn on captions above to start.</p>}
-            {transcribing && transcriptLines.length === 0 && <p className="text-[10px] text-[#9aa0a6] animate-pulse">Listening for speech…</p>}
+            {!transcribing && transcriptLines.length === 0 && <p className="text-[10px] text-[var(--ib-gray-600)]">Turn on captions above to start.</p>}
+            {transcribing && transcriptLines.length === 0 && <p className="text-[10px] text-[var(--ib-gray-600)] animate-pulse">Listening for speech…</p>}
             {transcriptLines.map((line) => (
               <div key={line.id} className="flex flex-col gap-0.5">
                 <div className="flex items-center gap-1.5">
-                  <span className="text-[9px] font-bold text-[#8ab4f8]">{line.speaker}</span>
-                  <span className="text-[9px] text-[#5f6368]">{line.timestamp}</span>
+                  <span className="text-[9px] font-bold text-[var(--ib-blue-500)]">{line.speaker}</span>
+                  <span className="text-[9px] text-[var(--ib-gray-600)]">{line.timestamp}</span>
                 </div>
-                <p className="text-[11px] text-[#e8eaed] leading-relaxed bg-[#3c4043]/40 rounded-lg px-2 py-1.5 border border-[#5f6368]/20">
+                <p className="text-[11px] text-[var(--ib-gray-900)] leading-relaxed bg-[var(--ib-gray-50)] rounded-lg px-2 py-1.5 border border-[var(--ib-gray-200)]">
                   {resolveCaptionText(line, myCaptionLang)}
                 </p>
               </div>
@@ -1282,10 +1300,16 @@ function RightPanel({
 // ─── Main ────────────────────────────────────────────────────────────────────
 
 const KP_ICONS: Record<string, React.FC<{ className?: string }>> = { action: Zap, decision: Check, question: HelpCircle, number: Hash, name: Tag };
+// number/name keep their original purple/orange hues -- no --ib-* token
+// exists for either, so introducing one is out of scope for a presentation
+// pass. Their TEXT shade was darkened from the original light-on-dark pastel
+// (#c58af9/#f8a97d) since that pairing loses contrast on the new white
+// panel; the fill/border opacity tints are kept as pale washes of the same
+// hue, matching the good/warn/bad token triads' own dot/fill/text pattern.
 const KP_COLORS: Record<string, string> = {
-  action: 'text-[#8ab4f8] bg-[#8ab4f8]/10 border-[#8ab4f8]/20', decision: 'text-[#81c995] bg-[#81c995]/10 border-[#81c995]/20',
-  question: 'text-[#fdd663] bg-[#fdd663]/10 border-[#fdd663]/20', number: 'text-[#c58af9] bg-[#c58af9]/10 border-[#c58af9]/20',
-  name: 'text-[#f8a97d] bg-[#f8a97d]/10 border-[#f8a97d]/20',
+  action: 'text-[var(--ib-blue-500)] bg-[var(--ib-blue-50)] border-[var(--ib-blue-500)]/20', decision: 'text-[var(--ib-good-text)] bg-[var(--ib-good-fill)] border-[var(--ib-good-dot)]/20',
+  question: 'text-[var(--ib-warn-text)] bg-[var(--ib-warn-fill)] border-[var(--ib-warn-dot)]/20', number: 'text-[#7c3aed] bg-[#c58af9]/10 border-[#c58af9]/30',
+  name: 'text-[#c2410c] bg-[#f8a97d]/15 border-[#f8a97d]/30',
 };
 
 export default function ActiveMeetingView({ onLeaveMeeting, onMinimize }: Props) {
@@ -1651,7 +1675,7 @@ export default function ActiveMeetingView({ onLeaveMeeting, onMinimize }: Props)
   }, [videoPeerIds, stagePeerId, audioPeerIds, setVisiblePeerIds]);
 
   const meetingContent = (
-    <div className="fixed inset-0 z-[9999] flex flex-col lg:flex-row bg-[#111] overflow-hidden select-none text-[#e8eaed]">
+    <div className="fixed inset-0 z-[9999] flex flex-col lg:flex-row bg-[var(--ib-gray-200)] overflow-hidden select-none text-[var(--ib-text)]">
 
       {/* Remote audio for EVERY peer, independent of what the stage is showing.
           Must stay outside the focus/grid ternary below — that ternary swaps two
@@ -1668,12 +1692,12 @@ export default function ActiveMeetingView({ onLeaveMeeting, onMinimize }: Props)
           clear it is to actually leave — dismissing without leaving would just hide the
           message while this tab sits there uselessly with the camera/mic still live. */}
       {evictedNotice && (
-        <div className="absolute top-3 left-1/2 -translate-x-1/2 z-[10002] max-w-[92vw] sm:max-w-md flex items-start gap-3 bg-[#3c2b28] border border-[#f28b82]/50 text-[#f6d5d2] rounded-xl px-4 py-3 shadow-2xl">
-          <AlertTriangle className="w-4 h-4 text-[#f28b82] shrink-0 mt-0.5" />
+        <div className="absolute top-3 left-1/2 -translate-x-1/2 z-[10002] max-w-[92vw] sm:max-w-md flex items-start gap-3 bg-[var(--ib-bad-fill)] border border-[var(--ib-bad-dot)]/30 text-[var(--ib-bad-text)] rounded-xl px-4 py-3 shadow-[var(--ib-shadow-lg)]">
+          <AlertTriangle className="w-4 h-4 text-[var(--ib-bad-dot)] shrink-0 mt-0.5" />
           <p className="text-xs leading-relaxed flex-1">{evictedNotice}</p>
           <button
             onClick={() => { dismissEvictedNotice(); leaveMeeting(); }}
-            className="shrink-0 text-xs font-semibold px-2.5 py-1 -mt-0.5 -mr-1 rounded-lg bg-white/10 hover:bg-white/20 transition-colors cursor-pointer"
+            className="shrink-0 text-xs font-semibold px-2.5 py-1 -mt-0.5 -mr-1 rounded-lg bg-[var(--ib-bad-dot)] text-white hover:bg-[var(--ib-bad-text)] transition-colors cursor-pointer"
           >
             Leave
           </button>
@@ -1684,13 +1708,13 @@ export default function ActiveMeetingView({ onLeaveMeeting, onMinimize }: Props)
           revoked mid-call, or another app grabbed the device) left the button looking
           simply dead, with the reason only in the console. */}
       {mediaNotice && (
-        <div className="absolute top-3 left-1/2 -translate-x-1/2 z-[10001] max-w-[92vw] sm:max-w-md flex items-start gap-3 bg-[#3c2b28] border border-[#f28b82]/50 text-[#f6d5d2] rounded-xl px-4 py-3 shadow-2xl">
-          <AlertTriangle className="w-4 h-4 text-[#f28b82] shrink-0 mt-0.5" />
+        <div className="absolute top-3 left-1/2 -translate-x-1/2 z-[10001] max-w-[92vw] sm:max-w-md flex items-start gap-3 bg-[var(--ib-bad-fill)] border border-[var(--ib-bad-dot)]/30 text-[var(--ib-bad-text)] rounded-xl px-4 py-3 shadow-[var(--ib-shadow-lg)]">
+          <AlertTriangle className="w-4 h-4 text-[var(--ib-bad-dot)] shrink-0 mt-0.5" />
           <p className="text-xs leading-relaxed flex-1">{mediaNotice}</p>
           <button
             onClick={dismissMediaNotice}
             aria-label="Dismiss"
-            className="shrink-0 w-7 h-7 -mt-0.5 -mr-1 rounded-lg flex items-center justify-center text-[#f6d5d2]/70 hover:text-white hover:bg-white/10 transition-colors cursor-pointer"
+            className="shrink-0 w-7 h-7 -mt-0.5 -mr-1 rounded-lg flex items-center justify-center text-[var(--ib-bad-text)]/70 hover:text-[var(--ib-bad-text)] hover:bg-[var(--ib-bad-dot)]/10 transition-colors cursor-pointer"
           >
             <X className="w-3.5 h-3.5" />
           </button>
@@ -1704,8 +1728,8 @@ export default function ActiveMeetingView({ onLeaveMeeting, onMinimize }: Props)
           styled as an error — nothing has failed as far as the browser is concerned,
           which is exactly why the user needs telling. */}
       {silentMic.status === 'silent' && (
-        <div className="absolute top-3 left-1/2 -translate-x-1/2 z-[10000] max-w-[92vw] sm:max-w-md flex items-start gap-3 bg-[#3d3323] border border-[#fdd663]/50 text-[#f8e7bd] rounded-xl px-4 py-3 shadow-2xl" style={{ top: mediaNotice ? '5.25rem' : '0.75rem' }}>
-          <MicOff className="w-4 h-4 text-[#fdd663] shrink-0 mt-0.5" />
+        <div className="absolute top-3 left-1/2 -translate-x-1/2 z-[10000] max-w-[92vw] sm:max-w-md flex items-start gap-3 bg-[var(--ib-warn-fill)] border border-[var(--ib-warn-dot)]/30 text-[var(--ib-warn-text)] rounded-xl px-4 py-3 shadow-[var(--ib-shadow-lg)]" style={{ top: mediaNotice ? '5.25rem' : '0.75rem' }}>
+          <MicOff className="w-4 h-4 text-[var(--ib-warn-dot)] shrink-0 mt-0.5" />
           <p className="text-xs leading-relaxed flex-1">
             Your microphone isn't picking up any sound. Check that it isn't muted in your
             system settings or by a switch on your headset, then try selecting a different
@@ -1714,7 +1738,7 @@ export default function ActiveMeetingView({ onLeaveMeeting, onMinimize }: Props)
           <button
             onClick={silentMic.dismiss}
             aria-label="Dismiss microphone warning"
-            className="shrink-0 w-7 h-7 -mt-0.5 -mr-1 rounded-lg flex items-center justify-center text-[#f8e7bd]/70 hover:text-white hover:bg-white/10 transition-colors cursor-pointer"
+            className="shrink-0 w-7 h-7 -mt-0.5 -mr-1 rounded-lg flex items-center justify-center text-[var(--ib-warn-text)]/70 hover:text-[var(--ib-warn-text)] hover:bg-[var(--ib-warn-dot)]/10 transition-colors cursor-pointer"
           >
             <X className="w-3.5 h-3.5" />
           </button>
@@ -1743,8 +1767,22 @@ export default function ActiveMeetingView({ onLeaveMeeting, onMinimize }: Props)
       {/* ── Center/Right Wrapper ──────────────────────────────────────────────── */}
       <section className="flex-1 flex flex-col md:flex-row min-w-0 min-h-0 relative h-full">
 
-        {/* VIDEO GRID & CONTROLS */}
-        <div className="flex-1 flex flex-col relative min-w-0 min-h-0 bg-[#111]">
+        {/* VIDEO GRID & CONTROLS -- bug-batch 2026-09-19, section 7: the
+            stage now follows theme tokens (--ib-gray-200: a soft neutral in
+            light, a deep neutral in dark -- not pure black either way)
+            instead of a fixed near-black that flipped the whole app dark
+            the moment you joined a call while the lobby/panels/control bar
+            around it stayed light. NOT --ib-gray-100, which the floating
+            control bar's own background (--ib-surface-raised) resolves to
+            in dark mode -- same value would have made the bar invisible
+            against its own stage; -200 stays visually distinct from
+            -raised in both themes (checked the token values, not
+            assumed). Tiles keep their own dark video frames (untouched);
+            name chips and mute icons (bg-[#111]/70-80 above) stay
+            dark-translucent with white text on purpose -- they sit on top
+            of video, not the stage, and need to read on ANY video content
+            regardless of app theme. */}
+        <div className="flex-1 flex flex-col relative min-w-0 min-h-0 bg-[var(--ib-gray-200)]">
 
           <div className="absolute top-2 left-2 z-10 flex items-center gap-2 max-w-[92%]">
           {/* The toolbar's minimise glyph is one unlabelled circle among seven — nobody
@@ -1956,8 +1994,11 @@ export default function ActiveMeetingView({ onLeaveMeeting, onMinimize }: Props)
               anyone's speech produces a caption, and disappears again on its own. */}
           <CaptionBar liveCaptions={liveCaptions} myLang={myCaptionLang} size={captionSize} />
 
-          {/* FLOATING CONTROLS */}
-          <div className="absolute bottom-3 md:bottom-6 left-1/2 -translate-x-1/2 flex items-center gap-1.5 md:gap-2 bg-[#202124]/90 backdrop-blur-xl border border-[#5f6368]/40 rounded-2xl p-1.5 md:p-2 shadow-2xl z-20 w-[max-content] max-w-[95vw] overflow-x-auto scrollbar-hide">
+          {/* FLOATING CONTROLS -- white pill, two-layer shadow (theme brief D).
+              bottom offset adds env(safe-area-inset-bottom) on mobile so the
+              bar clears a home indicator (viewport-fit=cover already set in
+              index.html) -- unaffected on desktop, no notch to clear there. */}
+          <div className="absolute bottom-[calc(0.75rem+env(safe-area-inset-bottom))] md:bottom-6 left-1/2 -translate-x-1/2 flex items-center gap-1.5 md:gap-2 bg-[var(--ib-surface-raised)]/95 backdrop-blur-xl border border-[var(--ib-gray-100)] rounded-2xl p-1.5 md:p-2 shadow-[var(--ib-shadow-lg)] z-20 w-[max-content] max-w-[95vw] overflow-x-auto scrollbar-hide">
             <CtrlBtn onClick={toggleMic} danger={isMuted} title={isMuted ? 'Unmute' : 'Mute'}>
               {isMuted ? <MicOff className="w-4 h-4 md:w-5 md:h-5" /> : <Mic className="w-4 h-4 md:w-5 md:h-5" />}
             </CtrlBtn>
@@ -1966,14 +2007,14 @@ export default function ActiveMeetingView({ onLeaveMeeting, onMinimize }: Props)
             </CtrlBtn>
             {/* Desktop: every secondary action inline, as before. */}
             <div className="hidden md:flex items-center gap-2">
-              <div className="w-px h-8 bg-[#5f6368]/50 mx-1 shrink-0" />
+              <div className="w-px h-8 bg-[var(--ib-gray-200)] mx-1 shrink-0" />
               {/* Keyed wrapper, not a key on CtrlBtn: React 19's bundled types reject
                   `key` on a custom component inside .map() (see CLAUDE.md). */}
               {secondaryActions.map(({ key, label, Icon, onClick, active, badge }) => (
                 <div key={key} className="contents">
                   <CtrlBtn onClick={onClick} highlight={active} title={label}>
                     <Icon className="w-5 h-5" />
-                    {badge && <span className="absolute top-1 right-1 w-2 h-2 rounded-full bg-[#f28b82] border-2 border-[#202124]" />}
+                    {badge && <span className="absolute top-1 right-1 w-2 h-2 rounded-full bg-[var(--ib-bad-dot)] border-2 border-white" />}
                   </CtrlBtn>
                 </div>
               ))}
@@ -1985,13 +2026,23 @@ export default function ActiveMeetingView({ onLeaveMeeting, onMinimize }: Props)
               <CtrlBtn onClick={() => setMoreOpen((v) => !v)} highlight={moreOpen} title="More options">
                 <MoreVertical className="w-4 h-4" />
                 {secondaryActions.some((x) => x.badge) && !moreOpen && (
-                  <span className="absolute top-1 right-1 w-2 h-2 rounded-full bg-[#f28b82] border-2 border-[#202124]" />
+                  <span className="absolute top-1 right-1 w-2 h-2 rounded-full bg-[var(--ib-bad-dot)] border-2 border-white" />
                 )}
               </CtrlBtn>
             </div>
 
-            <div className="w-px h-6 md:h-8 bg-[#5f6368]/50 mx-0.5 md:mx-1 shrink-0" />
-            <button onClick={handleLeave} className="px-3 md:px-5 h-9 md:h-11 flex items-center gap-1.5 rounded-xl bg-[#f28b82] text-[#202124] hover:bg-[#f06e62] active:scale-95 font-bold text-[10px] md:text-xs cursor-pointer transition-all shadow-sm shrink-0">
+            <div className="w-px h-6 md:h-8 bg-[var(--ib-gray-200)] mx-0.5 md:mx-1 shrink-0" />
+            {/* Leave: the one place a solid, saturated bad-dot fill is correct --
+                everywhere else danger states use the soft fill+dot pairing, but
+                this is a terminal action that should read as unambiguously final. */}
+            {/* h-12 (48px), px-4 on mobile -- was h-9/px-3 (36x38px), under
+                the 44px tap-target floor on both axes (the "Leave" text is
+                hidden below sm, leaving only the icon + padding for width).
+                Every other control bar button already meets 44px (sub-unit
+                1); this one was missed, caught in sub-unit 6's viewport
+                audit. Mobile > desktop height mirrors CtrlBtn's own
+                w-12/md:w-11 mobile-bigger convention. */}
+            <button onClick={handleLeave} className="px-4 md:px-5 h-12 md:h-11 flex items-center gap-1.5 rounded-xl bg-[var(--ib-bad-dot)] text-white hover:bg-[var(--ib-bad-text)] active:scale-95 font-bold text-[10px] md:text-xs cursor-pointer transition-all shadow-sm shrink-0">
               <PhoneOff className="w-3.5 h-3.5 md:w-4 md:h-4" /><span className="hidden sm:inline">Leave</span>
             </button>
           </div>
@@ -2005,18 +2056,18 @@ export default function ActiveMeetingView({ onLeaveMeeting, onMinimize }: Props)
                 aria-label="Close options"
                 onClick={() => setMoreOpen(false)}
               />
-              <div className="md:hidden absolute bottom-20 left-1/2 -translate-x-1/2 w-[min(88vw,20rem)] bg-[#202124] border border-[#5f6368] rounded-2xl shadow-2xl z-30 overflow-hidden">
+              <div className="md:hidden absolute bottom-20 left-1/2 -translate-x-1/2 w-[min(88vw,20rem)] bg-[var(--ib-surface-raised)] border border-[var(--ib-gray-100)] rounded-2xl shadow-[var(--ib-shadow-lg)] z-30 overflow-hidden">
                 {secondaryActions.map(({ key, label, Icon, onClick, active, badge }) => (
                   <button
                     key={key}
                     onClick={() => { onClick(); setMoreOpen(false); }}
-                    className={`w-full flex items-center gap-3 px-4 py-3 text-left border-b border-[#3c4043] last:border-b-0 active:bg-[#3c4043] cursor-pointer transition-colors ${
-                      active ? 'text-[#8ab4f8]' : 'text-[#e8eaed]'
+                    className={`w-full flex items-center gap-3 px-4 py-3 text-left border-b border-[var(--ib-gray-100)] last:border-b-0 active:bg-[var(--ib-gray-50)] cursor-pointer transition-colors ${
+                      active ? 'text-[var(--ib-blue-500)]' : 'text-[var(--ib-gray-800)]'
                     }`}
                   >
                     <Icon className="w-4 h-4 shrink-0" />
                     <span className="text-xs font-medium flex-1">{label}</span>
-                    {badge && <span className="w-2 h-2 rounded-full bg-[#f28b82] shrink-0" />}
+                    {badge && <span className="w-2 h-2 rounded-full bg-[var(--ib-bad-dot)] shrink-0" />}
                   </button>
                 ))}
               </div>
@@ -2041,29 +2092,56 @@ export default function ActiveMeetingView({ onLeaveMeeting, onMinimize }: Props)
           )}
         </div>
 
-        {/* ── FIX: MOBILE CHAT OVERLAY ───────────────── */}
+        {/* Side panel -- bottom sheet on mobile, white Card docked to the right
+            on desktop (theme brief D). Kept the existing lg: breakpoint rather
+            than brief D's literal "<md" wording: this panel was already
+            gated on lg (not md) before this retheme, and widening the mobile
+            layout to md/tablet would squeeze the video area, a layout change
+            beyond this presentation-only pass. */}
         {rightOpen && (
-          <div className="fixed inset-0 z-40 lg:static lg:w-80 lg:h-full lg:shrink-0 lg:border-l border-[#3c4043] bg-[#202124] flex flex-col shadow-2xl transition-transform transform translate-y-0 lg:translate-y-0">
-            {/* Mobile Header overlay to close it clearly */}
-            <div className="lg:hidden flex items-center justify-between p-3 bg-[#1a1b1e] border-b border-[#3c4043]">
-              <span className="text-xs font-bold text-[#e8eaed]">Meeting Details</span>
-              <button onClick={() => setRightOpen(false)} className="p-1 rounded-md bg-[#3c4043] text-[#e8eaed]"><X className="w-4 h-4" /></button>
-            </div>
-            <RightPanel
-              tab={rightTab} onTabChange={setRightTab}
-              chatMessages={chatMessages} onSend={sendChatMessage}
-              peers={peers} userName={displayName} isMuted={isMuted}
-              onClose={() => setRightOpen(false)}
-              links={links} raisedHands={raisedHands} isHandRaised={isHandRaised}
-              transcribing={transcribing} captionsSupported={captionsSupported} captionsUnavailable={captionsUnavailable}
-              transcriptLines={transcriptLines} keyPoints={keyPoints}
-              transcriptEndRef={transcriptEndRef}
-              myCaptionLang={myCaptionLang} onCaptionLangChange={setCaptionLang}
-              captionSize={captionSize} onCaptionSizeChange={setCaptionSize}
-              onStartCaptions={() => void startTranscription()} onStopCaptions={stopTranscription}
-              roomId={roomId}
+          <>
+            {/* Backdrop, <lg only (mobile bottom sheet AND tablet drawer both
+                get one) -- the desktop dock has no backdrop, it just
+                occupies the docked column. */}
+            <button
+              aria-label="Close panel"
+              onClick={() => setRightOpen(false)}
+              className="fixed inset-0 z-40 bg-[var(--ib-gray-900)]/40 lg:hidden"
             />
-          </div>
+            {/* Three tiers (bug-batch 2026-09-19, section 5): <md bottom
+                sheet (unchanged shape), md-to-lg a right-edge overlay drawer
+                (min(380px, 100vw-48px), was still the bottom sheet in this
+                range before), >=lg the docked column (380px, was 320px). */}
+            <div className="fixed inset-x-0 bottom-0 z-40 h-[80vh] w-full rounded-t-2xl overflow-hidden pb-[env(safe-area-inset-bottom)]
+                md:inset-x-auto md:inset-y-0 md:right-0 md:bottom-auto md:h-full md:w-[min(380px,100vw-48px)] md:rounded-none md:rounded-l-2xl md:pb-0 md:border-l
+                lg:static lg:w-[380px] lg:shrink-0 lg:rounded-none lg:border-l
+                min-w-0 border-[var(--ib-gray-100)] bg-[var(--ib-surface-raised)] flex flex-col shadow-[var(--ib-shadow-lg)] lg:shadow-none">
+              {/* Drag-handle affordance, mobile bottom sheet only -- not the
+                  tablet drawer, which slides from the side, not up. */}
+              <div className="md:hidden flex justify-center pt-2 pb-1 shrink-0">
+                <div className="w-9 h-1 rounded-full bg-[var(--ib-gray-200)]" />
+              </div>
+              {/* Header overlay to close it clearly -- mobile sheet + tablet drawer, not the desktop dock. */}
+              <div className="lg:hidden flex items-center justify-between px-3 pb-2 border-b border-[var(--ib-gray-100)] shrink-0">
+                <span className="text-xs font-bold text-[var(--ib-gray-900)]">Meeting Details</span>
+                <button onClick={() => setRightOpen(false)} aria-label="Close panel" className="grid place-items-center w-11 h-11 rounded-md bg-[var(--ib-gray-100)] text-[var(--ib-gray-800)] cursor-pointer"><X className="w-4 h-4" /></button>
+              </div>
+              <RightPanel
+                tab={rightTab} onTabChange={setRightTab}
+                chatMessages={chatMessages} onSend={sendChatMessage}
+                peers={peers} userName={displayName} isMuted={isMuted}
+                onClose={() => setRightOpen(false)}
+                links={links} raisedHands={raisedHands} isHandRaised={isHandRaised}
+                transcribing={transcribing} captionsSupported={captionsSupported} captionsUnavailable={captionsUnavailable}
+                transcriptLines={transcriptLines} keyPoints={keyPoints}
+                transcriptEndRef={transcriptEndRef}
+                myCaptionLang={myCaptionLang} onCaptionLangChange={setCaptionLang}
+                captionSize={captionSize} onCaptionSizeChange={setCaptionSize}
+                onStartCaptions={() => void startTranscription()} onStopCaptions={stopTranscription}
+                roomId={roomId}
+              />
+            </div>
+          </>
         )}
       </section>
     </div>
@@ -2073,11 +2151,19 @@ export default function ActiveMeetingView({ onLeaveMeeting, onMinimize }: Props)
 }
 
 function CtrlBtn({ onClick, children, danger, highlight, title }: { onClick: () => void; children: React.ReactNode; danger?: boolean; highlight?: boolean; title?: string; }) {
-  const cls = danger ? 'bg-[#f28b82]/15 text-[#f28b82] hover:bg-[#f28b82]/25' : highlight ? 'bg-[#8ab4f8]/20 text-[#8ab4f8]' : 'bg-[#3c4043] text-[#e8eaed] hover:bg-[#4a4d51]';
+  // Light redesign, 2026-09-18: the bar itself inverted from a dark pill with
+  // light icons to a white pill with dark icons (theme brief D) -- every
+  // state here follows. highlight mirrors Sidebar's own active-nav pairing
+  // (--ib-blue-50 fill, --ib-blue-500 icon) for the same "this is on" meaning
+  // in both places. danger (muted mic / camera off -- NOT the Leave button,
+  // that's separate below) uses the same fill/dot pairing Badge uses.
+  const cls = danger ? 'bg-[var(--ib-bad-fill)] text-[var(--ib-bad-dot)] hover:bg-[var(--ib-bad-fill)] hover:brightness-95' : highlight ? 'bg-[var(--ib-blue-50)] text-[var(--ib-blue-500)]' : 'bg-[var(--ib-gray-100)] text-[var(--ib-gray-800)] hover:bg-[var(--ib-gray-200)]';
   return (
     // Tooltips don't exist on touch, so `title` alone leaves every call control
     // unnamed for screen readers and on phones — mirror it into aria-label.
-    <button onClick={onClick} title={title} aria-label={title} className={`relative w-9 h-9 md:w-11 md:h-11 flex items-center justify-center rounded-xl transition-all active:scale-90 cursor-pointer shrink-0 ${cls}`}>
+    // 48px on mobile (was 36px, under the 44px tap-target floor), 44px desktop
+    // -- theme brief D's explicit sizing, touch needs more room than a pointer.
+    <button onClick={onClick} title={title} aria-label={title} className={`relative w-12 h-12 md:w-11 md:h-11 flex items-center justify-center rounded-xl transition-all active:scale-90 cursor-pointer shrink-0 ${cls}`}>
       {children}
     </button>
   );

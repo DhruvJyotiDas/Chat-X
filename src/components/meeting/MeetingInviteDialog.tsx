@@ -77,7 +77,7 @@ export default function MeetingInviteDialog({ onClose, onAddPeople }: MeetingInv
           <button
             onClick={onClose}
             aria-label="Close"
-            className="shrink-0 -mt-1 -mr-1 w-8 h-8 flex items-center justify-center rounded-full text-[#9aa0a6] hover:bg-[#3c4043] hover:text-[#e8eaed] transition-colors cursor-pointer"
+            className="shrink-0 -mt-1 -mr-1 w-11 h-11 md:w-8 md:h-8 flex items-center justify-center rounded-full text-[#9aa0a6] hover:bg-[#3c4043] hover:text-[#e8eaed] transition-colors cursor-pointer"
           >
             <X className="w-4 h-4" />
           </button>
@@ -85,7 +85,7 @@ export default function MeetingInviteDialog({ onClose, onAddPeople }: MeetingInv
 
         <button
           onClick={() => onAddPeople?.()}
-          className="flex items-center justify-center gap-2 bg-[#8ab4f8] text-[#062e6f] font-semibold text-sm py-2.5 rounded-xl hover:bg-[#aecbfa] active:scale-[0.98] transition-all cursor-pointer"
+          className="flex items-center justify-center gap-2 bg-[#8ab4f8] text-[#062e6f] font-semibold text-sm min-h-[44px] md:min-h-0 py-2.5 rounded-xl hover:bg-[#aecbfa] active:scale-[0.98] transition-all cursor-pointer"
         >
           <UserPlus className="w-4 h-4" />
           Add people
@@ -99,7 +99,7 @@ export default function MeetingInviteDialog({ onClose, onAddPeople }: MeetingInv
             </span>
             <button
               onClick={handleCopy}
-              className={`shrink-0 flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-semibold transition-colors cursor-pointer ${
+              className={`shrink-0 flex items-center gap-1.5 px-2.5 min-h-[44px] md:min-h-0 py-1.5 rounded-lg text-xs font-semibold transition-colors cursor-pointer ${
                 copied ? 'bg-[#0f3d24] text-[#81c995]' : 'bg-[#3c4043] text-[#e8eaed] hover:bg-[#4a4d51]'
               }`}
             >

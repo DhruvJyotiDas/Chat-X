@@ -26,22 +26,28 @@ function initials(name: string): string {
   return name.split(/\s+/).map(part => part[0]).join('').slice(0, 2).toUpperCase();
 }
 
-function SettingRow({ icon, title, detail, children }: {
-  icon: React.ReactNode; title: string; detail?: string; children?: React.ReactNode;
+// `light` -- see the note above Toggle; same narrow scope (group-admin
+// controls only).
+function SettingRow({ icon, title, detail, children, light = false }: {
+  icon: React.ReactNode; title: string; detail?: string; children?: React.ReactNode; light?: boolean;
 }) {
   return (
     <div className="flex min-h-14 items-center gap-3 px-4 py-3">
-      <span className="grid h-9 w-9 shrink-0 place-items-center rounded-xl bg-[#718cff]/10 text-[#9bafff]">{icon}</span>
+      <span className={`grid h-9 w-9 shrink-0 place-items-center rounded-xl ${light ? 'bg-[var(--ib-blue-50)] text-[var(--ib-blue-500)]' : 'bg-[#718cff]/10 text-[#9bafff]'}`}>{icon}</span>
       <div className="min-w-0 flex-1">
-        <p className="text-xs font-semibold text-[#e5e2e1]">{title}</p>
-        {detail && <p className="mt-0.5 text-[10px] leading-relaxed text-[#8c90a1]">{detail}</p>}
+        <p className={`text-xs font-semibold ${light ? 'text-[var(--ib-text)]' : 'text-[#e5e2e1]'}`}>{title}</p>
+        {detail && <p className={`mt-0.5 text-[10px] leading-relaxed ${light ? 'text-[var(--ib-text-muted)]' : 'text-[#8c90a1]'}`}>{detail}</p>}
       </div>
       {children}
     </div>
   );
 }
 
-function Toggle({ checked, disabled, label, onChange }: { checked: boolean; disabled?: boolean; label: string; onChange: () => void }) {
+// `light` is scoped to the group-admin permission toggles only (sub-unit 4:
+// "group-admin controls retheme only") -- the rest of this panel (mute
+// notifications, etc.) is untouched this pass, so the default dark styling
+// stays the default and only these two instances opt into tokens.
+function Toggle({ checked, disabled, label, onChange, light = false }: { checked: boolean; disabled?: boolean; label: string; onChange: () => void; light?: boolean }) {
   return (
     <button
       type="button"
@@ -50,7 +56,17 @@ function Toggle({ checked, disabled, label, onChange }: { checked: boolean; disa
       aria-label={label}
       disabled={disabled}
       onClick={onChange}
-      className={`relative h-6 w-11 shrink-0 rounded-full border transition-colors disabled:cursor-not-allowed disabled:opacity-40 ${checked ? 'border-[#718cff] bg-[#718cff]' : 'border-[#424655] bg-[#201f1f]'}`}
+      className={`relative h-6 w-11 shrink-0 rounded-full border transition-colors disabled:cursor-not-allowed disabled:opacity-40 ${
+        light
+          // bug-batch 2026-09-19, section 3: off-state border was
+          // --ib-gray-200, the same low (~2.5:1, fails the 3:1 non-text
+          // floor) contrast bug the new shared Switch component was built
+          // to fix. Can't just migrate this one onto Switch -- the same
+          // component also serves the still-dark rest of this panel via
+          // this `light` prop -- so the fix is applied here directly.
+          ? checked ? 'border-[var(--ib-blue-500)] bg-[var(--ib-blue-500)]' : 'border-[var(--ib-gray-600)] bg-[var(--ib-gray-100)]'
+          : checked ? 'border-[#718cff] bg-[#718cff]' : 'border-[#424655] bg-[#201f1f]'
+      }`}
     >
       <span className={`absolute top-0.5 h-4.5 w-4.5 rounded-full bg-white shadow transition-transform ${checked ? 'translate-x-5' : 'translate-x-0.5'}`} />
     </button>
@@ -127,7 +143,7 @@ export default function ConversationInfoPanel({
     <div className="fixed inset-0 z-[95] bg-black/55 backdrop-blur-[2px]" onMouseDown={event => { if (event.target === event.currentTarget) onClose(); }}>
       <aside className="ml-auto flex h-full w-full max-w-[420px] animate-[panel-in_.2s_ease-out] flex-col border-l border-white/10 bg-[#0d121d]/98 shadow-[-24px_0_70px_rgba(0,0,0,.42)]">
         <header className="flex h-16 shrink-0 items-center gap-3 border-b border-white/[0.08] px-4">
-          <button onClick={onClose} aria-label="Close info" className="grid h-9 w-9 place-items-center rounded-xl text-[#8c90a1] hover:bg-white/[0.06] hover:text-white"><X className="h-4 w-4" /></button>
+          <button onClick={onClose} aria-label="Close info" className="grid h-11 w-11 md:h-9 md:w-9 place-items-center rounded-xl text-[#8c90a1] hover:bg-white/[0.06] hover:text-white cursor-pointer"><X className="h-4 w-4" /></button>
           <div><h2 className="text-sm font-bold text-[#e5e2e1]">{title}</h2><p className="text-[10px] text-[#8c90a1]">Details, media and conversation controls</p></div>
         </header>
 
@@ -138,14 +154,14 @@ export default function ConversationInfoPanel({
               {displayAvatar ? <img src={displayAvatar} alt="" className="h-full w-full rounded-[28px] border-4 border-[#151c2a] object-cover shadow-2xl" /> : (
                 <div className="grid h-full w-full place-items-center rounded-[28px] border-4 border-[#151c2a] bg-gradient-to-br from-[#718cff]/35 to-[#35cdb0]/20 text-2xl font-bold text-white shadow-2xl">{isGroup ? <Users className="h-8 w-8" /> : initials(displayName)}</div>
               )}
-              {canEditGroupInfo && <button onClick={() => iconInputRef.current?.click()} aria-label="Change group icon" className="absolute -bottom-1 -right-1 grid h-8 w-8 place-items-center rounded-xl border-2 border-[#0d121d] bg-[#718cff] text-white shadow-lg"><Camera className="h-3.5 w-3.5" /></button>}
+              {canEditGroupInfo && <button onClick={() => iconInputRef.current?.click()} aria-label="Change group icon" className="absolute -bottom-1 -right-1 grid h-11 w-11 md:h-8 md:w-8 place-items-center rounded-xl border-2 border-[#0d121d] bg-[#718cff] text-white shadow-lg cursor-pointer"><Camera className="h-3.5 w-3.5" /></button>}
               <input ref={iconInputRef} type="file" accept="image/*" className="hidden" onChange={event => handleIcon(event.target.files?.[0])} />
             </div>
 
             {canEditGroupInfo ? (
               <div className="mx-auto max-w-sm space-y-2">
                 <input value={name} maxLength={100} onChange={event => setName(event.target.value)} aria-label="Group name" className="w-full rounded-xl border border-white/10 bg-white/[0.04] px-3 py-2 text-center text-base font-bold text-white outline-none focus:border-[#718cff]/60" />
-                <textarea value={description} maxLength={500} onChange={event => setDescription(event.target.value)} placeholder="Add a group description" aria-label="Group description" rows={2} className="w-full resize-none rounded-xl border border-white/10 bg-white/[0.04] px-3 py-2 text-center text-xs leading-relaxed text-[#c2c6d8] outline-none placeholder:text-[#596174] focus:border-[#718cff]/60" />
+                <textarea value={description} maxLength={500} onChange={event => setDescription(event.target.value)} placeholder="Add a group description" aria-label="Group description" rows={2} className="w-full resize-none rounded-xl border border-white/10 bg-white/[0.04] px-3 py-2 text-center text-base md:text-xs leading-relaxed text-[#c2c6d8] outline-none placeholder:text-[#596174] focus:border-[#718cff]/60 touch-manipulation" />
               </div>
             ) : (
               <>
@@ -211,16 +227,19 @@ export default function ConversationInfoPanel({
                 </div>
               </section>
 
-              <section className="mx-4 mb-6 overflow-hidden rounded-2xl border border-white/[0.08] bg-white/[0.025]">
-                <div className="border-b border-white/[0.06] px-4 py-3"><p className="text-[9px] font-bold uppercase tracking-[.16em] text-[#667085]">Group permissions</p></div>
-                <SettingRow icon={<ShieldCheck className="h-4 w-4" />} title="Edit group info" detail={adminsEditInfo ? 'Only admins can change the name, description and icon' : 'All participants can change group info'}>
-                  <Toggle checked={adminsEditInfo} disabled={!isAdmin} label="Only admins can edit group info" onChange={() => setAdminsEditInfo(value => !value)} />
+              {/* Group permissions -- retoned onto tokens (sub-unit 4: "group-admin
+                  controls retheme only"); the rest of this panel is untouched
+                  this pass, so it stays on its existing dark styling. */}
+              <section className="mx-4 mb-6 overflow-hidden rounded-2xl border border-[var(--ib-border)] bg-[var(--ib-surface-raised)]">
+                <div className="border-b border-[var(--ib-border)] px-4 py-3"><p className="text-[9px] font-bold uppercase tracking-[.16em] text-[var(--ib-text-muted)]">Group permissions</p></div>
+                <SettingRow light icon={<ShieldCheck className="h-4 w-4" />} title="Edit group info" detail={adminsEditInfo ? 'Only admins can change the name, description and icon' : 'All participants can change group info'}>
+                  <Toggle light checked={adminsEditInfo} disabled={!isAdmin} label="Only admins can edit group info" onChange={() => setAdminsEditInfo(value => !value)} />
                 </SettingRow>
-                <div className="mx-4 border-t border-white/[0.06]" />
-                <SettingRow icon={<MessageSquare className="h-4 w-4" />} title="Send messages" detail={adminsSend ? 'Only admins can send messages' : 'All participants can send messages'}>
-                  <Toggle checked={adminsSend} disabled={!isAdmin} label="Only admins can send messages" onChange={() => setAdminsSend(value => !value)} />
+                <div className="mx-4 border-t border-[var(--ib-border)]" />
+                <SettingRow light icon={<MessageSquare className="h-4 w-4" />} title="Send messages" detail={adminsSend ? 'Only admins can send messages' : 'All participants can send messages'}>
+                  <Toggle light checked={adminsSend} disabled={!isAdmin} label="Only admins can send messages" onChange={() => setAdminsSend(value => !value)} />
                 </SettingRow>
-                {!isAdmin && <p className="border-t border-white/[0.06] px-4 py-3 text-[10px] text-[#8c90a1]">Only the group admin can change these permissions.</p>}
+                {!isAdmin && <p className="border-t border-[var(--ib-border)] px-4 py-3 text-[10px] text-[var(--ib-text-muted)]">Only the group admin can change these permissions.</p>}
               </section>
             </>
           )}

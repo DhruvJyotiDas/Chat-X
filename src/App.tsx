@@ -2,6 +2,9 @@ import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { useParams } from 'react-router-dom';
 import { Routes, Route } from 'react-router-dom';
 import { motion, AnimatePresence } from 'motion/react';
+import { CircleSlash } from 'lucide-react';
+import BrandDots from './components/BrandDots';
+import Button from './components/ui/Button';
 
 // Auth
 import { AuthProvider, useAuth } from './context/AuthContext';
@@ -33,17 +36,19 @@ import PreJoinScreen from './components/meeting/PreJoinScreen';
 import { useChat } from './context/ChatContext';
 import IncomingCallModal from './components/meeting/IncomingCallModal';
 import CommandPalette from './components/CommandPalette';
+import AskAIPA from './components/ai/AskAIPA';
 
 // Types & data
 import { AppView, ComplianceLog } from './types';
 import { useTheme } from './hooks/useTheme';
+import { useVisualViewport } from './hooks/useVisualViewport';
 import { api } from './lib/api';
 
 function ViewLoader() {
   return (
-    <div className="flex flex-1 items-center justify-center bg-[#090a0d]">
-      <div className="flex items-center gap-2 text-xs text-[#7d8598]">
-        <span className="h-4 w-4 animate-spin rounded-full border-2 border-[#718cff] border-t-transparent" />
+    <div className="flex flex-1 items-center justify-center bg-[var(--ib-surface)]">
+      <div className="flex items-center gap-2 text-xs text-[var(--ib-text-muted)]">
+        <BrandDots mode="loading" size={6} />
         Loading workspace…
       </div>
     </div>
@@ -221,8 +226,8 @@ function AppContent({ pendingRoomCode }: { pendingRoomCode?: string }) {
 
   if (isLoading) {
     return (
-      <div className="min-h-screen bg-[#0e0e0e] flex items-center justify-center">
-        <div className="w-8 h-8 rounded-full border-2 border-[#568dff] border-t-transparent animate-spin" />
+      <div className="min-h-dvh bg-[var(--ib-surface)] flex items-center justify-center">
+        <BrandDots mode="loading" size={12} />
       </div>
     );
   }
@@ -242,10 +247,10 @@ function AppContent({ pendingRoomCode }: { pendingRoomCode?: string }) {
   // Redialling the room a reload interrupted.
   if (!isInMeeting && rejoinState === 'pending') {
     return (
-      <div className="min-h-screen bg-[#111] flex flex-col items-center justify-center gap-3 text-[#e8eaed]">
-        <div className="w-8 h-8 rounded-full border-2 border-[#8ab4f8] border-t-transparent animate-spin" />
-        <p className="text-sm text-[#9aa0a6]">
-          Rejoining <span className="font-mono font-bold text-[#8ab4f8]">{rejoinTarget}</span>…
+      <div className="min-h-dvh bg-[var(--ib-surface)] flex flex-col items-center justify-center gap-3 text-[var(--ib-text)]">
+        <BrandDots mode="loading" size={12} />
+        <p className="text-sm text-[var(--ib-text-muted)]">
+          Rejoining <span className="font-mono font-bold text-[var(--ib-blue-600)]">{rejoinTarget}</span>…
         </p>
       </div>
     );
@@ -259,32 +264,37 @@ function AppContent({ pendingRoomCode }: { pendingRoomCode?: string }) {
   // which naturally falls through past this block on the next render.
   if (!isInMeeting && awaitingApproval) {
     return (
-      <div className="min-h-screen bg-[#111] flex flex-col items-center justify-center gap-3 text-[#e8eaed] px-4 text-center">
-        <div className="w-10 h-10 rounded-full border-2 border-[#8ab4f8] border-t-transparent animate-spin" />
+      <div className="min-h-dvh bg-[var(--ib-gray-50)] flex flex-col items-center justify-center gap-4 text-[var(--ib-gray-900)] px-4 text-center">
+        {/* The three-dot mark's loading state (DESIGN_SYSTEM.md section 7) --
+            this waiting room is exactly the surface that section proposed it
+            for, not a generic spinner borrowed from elsewhere. */}
+        <BrandDots mode="loading" size={12} />
         <p className="text-base font-semibold">Waiting to be let in…</p>
-        <p className="text-sm text-[#9aa0a6] max-w-xs">Someone in the meeting needs to accept you before you can join.</p>
+        <p className="text-sm text-[var(--ib-gray-600)] max-w-xs">Someone in the meeting needs to accept you before you can join.</p>
       </div>
     );
   }
 
   if (!isInMeeting && joinDeniedReason) {
     return (
-      <div className="min-h-screen bg-[#111] flex flex-col items-center justify-center gap-3 text-[#e8eaed] px-4 text-center">
-        <div className="w-12 h-12 rounded-full bg-[#3c1f1f] flex items-center justify-center text-2xl">🚫</div>
+      <div className="min-h-dvh bg-[var(--ib-gray-50)] flex flex-col items-center justify-center gap-3 text-[var(--ib-gray-900)] px-4 text-center">
+        {/* Lucide icon, not an emoji -- the rest of the app (Sidebar, TopBar,
+            every other status surface) speaks lucide-react; an emoji here
+            was the one place that didn't. */}
+        <div className="w-12 h-12 rounded-full bg-[var(--ib-bad-fill)] flex items-center justify-center">
+          <CircleSlash className="w-6 h-6 text-[var(--ib-bad-dot)]" />
+        </div>
         <p className="text-base font-semibold">
           {joinDeniedReason === 'timed_out' ? 'Nobody let you in' : "You weren't let into this meeting"}
         </p>
-        <p className="text-sm text-[#9aa0a6] max-w-xs">
+        <p className="text-sm text-[var(--ib-gray-600)] max-w-xs">
           {joinDeniedReason === 'timed_out'
             ? 'Nobody in the meeting responded in time. Ask them to expect your request, then try again.'
             : 'Someone in the meeting turned down your request to join.'}
         </p>
-        <button
-          onClick={clearJoinDenied}
-          className="mt-2 px-4 py-2 rounded-lg bg-[#8ab4f8] text-[#062e6f] font-semibold text-sm hover:bg-[#aecbfa] transition-colors"
-        >
+        <Button onClick={clearJoinDenied} className="mt-2">
           Try again
-        </button>
+        </Button>
       </div>
     );
   }
@@ -323,11 +333,11 @@ function AppContent({ pendingRoomCode }: { pendingRoomCode?: string }) {
 
   return (
     <>
-    <div className="min-h-screen text-[#e5e2e1] bg-[#0e0e0e] flex font-sans overflow-hidden w-full max-w-full">
+    <div className="min-h-dvh text-[var(--ib-text)] bg-[var(--ib-surface)] flex font-sans overflow-hidden w-full max-w-full">
       <Sidebar currentView={effectiveView} onViewChange={setCurrentView} isInMeeting={isInMeeting} />
 
       {/* FIXED: pl-0 on mobile, pl-[76px] on desktop to match the sidebar rail width */}
-      <div className="flex-1 pl-0 md:pl-[76px] flex flex-col h-screen overflow-hidden w-full">
+      <div className="flex-1 pl-0 md:pl-[76px] flex flex-col h-dvh overflow-hidden w-full">
         {effectiveView !== 'active_meeting' && (
           <TopBar
             currentView={effectiveView}
@@ -411,6 +421,7 @@ function AppContent({ pendingRoomCode }: { pendingRoomCode?: string }) {
     )}
 
     <CommandPalette onNavigate={setCurrentView} onJoinMeeting={() => setCurrentView('active_meeting')} />
+    <AskAIPA hidden={effectiveView === 'active_meeting' || effectiveView === 'interview'} />
     </>
   );
 }
@@ -422,6 +433,7 @@ function RoomCodeRoute() {
 
 export default function App() {
   useTheme();
+  useVisualViewport();
 
   return (
     <AuthProvider>

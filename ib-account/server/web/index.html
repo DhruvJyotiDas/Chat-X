@@ -2,19 +2,33 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="robots" content="noindex">
 <title>IB Account</title>
 <style>
+  /* Light-theme redesign, 2026-09-18 -- mirrors DESIGN_SYSTEM.md's tokens
+   * into this file's own pre-existing plain-:root mechanism rather than
+   * introducing Tailwind here (separate build, separate service, no Vite --
+   * see UI_REDESIGN_PLAN.md section 0). Values are the same tokens the main
+   * app uses under different names, so the two apps read as one product:
+   * --blue/--blue-h are intentionally UNCHANGED (#0066FF/#0052cc already
+   * matched --ib-blue-500/600 exactly, nothing to fix).
+   *
+   * This one shared stylesheet covers all seven states this file renders
+   * (login, register, verify, forgot, reset, account, OAuth continuation --
+   * confirmed by reading render()/wireForms(), not assumed from screen
+   * names) -- retheming it here is retheming the entire ib-account surface
+   * in one pass, not just sign-in/forgot-password as originally scoped.
+   */
   :root{
-    --bg:#0e0e0e; --card:#131313; --border:#2a2d38; --border2:#424655;
-    --text:#e5e2e1; --muted:#8c90a1; --blue:#0066FF; --blue-h:#0052cc;
-    --err:#ff6b6b; --ok:#4dffb1;
+    --bg:#F7F8FA; --card:#FFFFFF; --border:#EEF1F5; --border2:#DEE3EA;
+    --text:#12161D; --muted:#5B6572; --blue:#0066FF; --blue-h:#0052cc;
+    --err:#A32F27; --ok:#0F7A49;
   }
   *{box-sizing:border-box}
   body{margin:0;background:var(--bg);color:var(--text);
     font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
-    min-height:100vh;display:flex;align-items:center;justify-content:center;padding:16px}
+    min-height:100dvh;display:flex;align-items:center;justify-content:center;padding:16px}
   .wrap{width:100%;max-width:400px}
   .brand{display:flex;flex-direction:column;align-items:center;margin-bottom:22px}
   .logo{width:52px;height:52px;border-radius:15px;background:var(--blue);display:flex;
@@ -22,27 +36,28 @@
     box-shadow:0 0 30px rgba(0,102,255,.35);margin-bottom:12px}
   h1{font-size:22px;margin:0}
   .sub{font-size:13px;color:var(--muted);margin-top:3px}
-  .card{background:var(--card);border:1px solid var(--border2);border-radius:18px;padding:26px}
-  .ctx{margin-bottom:16px;padding:9px 12px;border-radius:10px;background:rgba(86,141,255,.1);
-    border:1px solid rgba(86,141,255,.3);font-size:12px;color:#b0c6ff;text-align:center}
+  .card{background:var(--card);border:1px solid var(--border2);border-radius:18px;padding:26px;
+    box-shadow:0 1px 2px rgba(18,22,29,.04),0 4px 12px rgba(18,22,29,.08)}
+  .ctx{margin-bottom:16px;padding:9px 12px;border-radius:10px;background:#EAF1FF;
+    border:1px solid #D2E3FF;font-size:12px;color:#003D99;text-align:center}
   label{display:block;font-size:12px;color:var(--muted);margin:14px 0 6px}
   input{width:100%;padding:11px 12px;border-radius:10px;border:1px solid var(--border2);
-    background:#0e0e0e;color:var(--text);font-size:14px;outline:none}
-  input:focus{border-color:var(--blue)}
+    background:var(--bg);color:var(--text);font-size:14px;outline:none}
+  input:focus{border-color:var(--blue);background:var(--card)}
   button.primary{width:100%;margin-top:18px;padding:12px;border:0;border-radius:11px;
     background:var(--blue);color:#fff;font-weight:700;font-size:14px;cursor:pointer}
   button.primary:hover{background:var(--blue-h)}
   button.primary:disabled{opacity:.6;cursor:default}
   .links{margin-top:16px;display:flex;justify-content:space-between;font-size:12px}
-  a.link,button.link{background:0;border:0;color:#7fb0ff;cursor:pointer;font-size:12px;
+  a.link,button.link{background:0;border:0;color:var(--blue);cursor:pointer;font-size:12px;
     text-decoration:none;padding:0}
   a.link:hover,button.link:hover{text-decoration:underline}
   a.secondary{display:block;margin-top:12px;padding:11px;border:1px solid var(--blue);
-    border-radius:11px;color:#9fc0ff;text-align:center;text-decoration:none;font-size:13px}
-  a.secondary:hover{background:rgba(0,102,255,.12)}
+    border-radius:11px;color:var(--blue);text-align:center;text-decoration:none;font-size:13px}
+  a.secondary:hover{background:#EAF1FF}
   .msg{margin-top:14px;font-size:13px;min-height:18px}
   .msg.err{color:var(--err)} .msg.ok{color:var(--ok)}
-  .foot{text-align:center;font-size:10px;color:rgba(140,144,161,.5);margin-top:20px}
+  .foot{text-align:center;font-size:10px;color:rgba(91,101,114,.6);margin-top:20px}
   .code-input{letter-spacing:6px;text-align:center;font-size:18px;font-weight:700}
   .row{display:flex;gap:10px} .row>div{flex:1}
   .kv{font-size:13px;color:var(--muted);margin:6px 0}

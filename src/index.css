@@ -1,46 +1,179 @@
 @import "tailwindcss";
 
+/* Removed 2026-09-18: a Material-Design-3 color palette (--color-primary,
+ * --color-surface-*, --color-secondary/tertiary/error, --color-background)
+ * that predates the --ib-* tokens below. Confirmed dead before deletion, two
+ * ways: no component uses the Tailwind utility classes it would generate
+ * (bg-primary, text-on-surface, ...), and no raw var(--color-*) reference
+ * exists anywhere in src/ either. Superseding it is what this file now does.
+ *
+ * --font-sans/--font-mono kept and moved here unchanged in kind (values
+ * updated) -- these are NOT dead the way the colors were: Tailwind v4
+ * recognizes --font-sans/--font-mono as real theme namespaces and generates
+ * the font-sans/font-mono utility classes from them, and font-mono
+ * specifically is live in ~15 files. --font-sans's old value led with
+ * "Inter", which index.html never actually loads (it loads Geist and
+ * JetBrains Mono instead, and NEITHER of those is referenced by name
+ * anywhere in this stylesheet either -- two Google Fonts requests on every
+ * page load currently render nothing; flagged, not fixed in this unit).
+ * Inter being unavailable meant this always fell through to the system
+ * stack in practice regardless -- dropped the dead name rather than keep
+ * citing a font that was never being used. */
 @theme {
-  --color-primary: #0066FF;
-  --color-on-primary: #ffffff;
-  --color-primary-container: #0044cc;
-  --color-on-primary-container: #ffffff;
-  --color-surface-dim: #070a11;
-  --color-surface-bright: #20293a;
-  --color-surface-container-lowest: #080b12;
-  --color-surface-container-low: #0c111b;
-  --color-surface-container: #111827;
-  --color-surface-container-high: #182132;
-  --color-surface-container-highest: #222c3f;
-  --color-on-surface: #f3f6ff;
-  --color-on-surface-variant: #9aa4b8;
-  --color-inverse-surface: #ffffff;
-  --color-inverse-on-surface: #0e0e0e;
-  --color-outline: rgba(255, 255, 255, 0.15);
-  --color-outline-variant: rgba(255, 255, 255, 0.08);
-  --color-surface-tint: #718cff;
-  
-  --color-secondary: #35cdb0;
-  --color-on-secondary: #041914;
-  --color-secondary-container: rgba(53, 205, 176, 0.12);
-  --color-on-secondary-container: #54d6c8;
-  
-  --color-tertiary: #c0c1ff;
-  --color-on-tertiary: #1000a9;
-  --color-tertiary-container: #8083ff;
-  --color-on-tertiary-container: #0d0096;
-  
-  --color-error: #ffb4ab;
-  --color-on-error: #690005;
-  --color-error-container: #93000a;
-  --color-on-error-container: #ffdad6;
-  
-  --color-background: #080b12;
-  --color-on-background: #f3f6ff;
-  --color-surface-variant: #182132;
-
-  --font-sans: Inter, ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  /* Literal value, not var(--ib-font-body) -- @theme is a distinct Tailwind
+   * v4 construct from the plain :root block below holding that token, and
+   * cross-referencing between them isn't something worth relying on
+   * unverified. Same string either way; keep them in sync by hand if the
+   * body font stack ever changes. */
+  --font-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
   --font-mono: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+}
+
+/* ── Design tokens (light-theme redesign, DESIGN_SYSTEM.md) ─────────────────
+ * Plain :root custom properties, not @theme -- consumed via Tailwind's
+ * arbitrary-value syntax (e.g. bg-[var(--ib-blue-500)]), matching the
+ * bracket-hex convention already used everywhere in this codebase. Choosing
+ * this over @theme's auto-generated utilities (bg-primary, etc.) keeps every
+ * future call site looking exactly like the ones around it -- no second
+ * className vocabulary to learn, just a var() where a hex used to be.
+ *
+ * The @theme block above this predates these tokens, is a Material-Design-3
+ * palette (--color-primary etc.), and is NOT wired to anything -- confirmed
+ * zero components reference the utility classes it would generate. Left
+ * in place for now rather than deleted; superseding it fully is the
+ * "theme wiring" unit, not this one, which is scoped to the tokens and
+ * primitives new components need to exist at all.
+ *
+ * Not yet live anywhere: nothing in the app renders against these tokens
+ * until a component is deliberately built or migrated onto them (starting
+ * with the primitives in src/components/ui/). useTheme.ts's default and the
+ * app's actual rendered colors are untouched by this unit.
+ */
+:root {
+  /* Neutrals -- cool-biased, not a flat grey (DESIGN_SYSTEM.md §2.1) */
+  --ib-white:     #FFFFFF;
+  --ib-gray-50:   #F7F8FA;
+  --ib-gray-100:  #EEF1F5;
+  --ib-gray-200:  #DEE3EA;
+  --ib-gray-400:  #9AA5B1;
+  --ib-gray-600:  #5B6572;
+  --ib-gray-800:  #202733;
+  --ib-gray-900:  #12161D;
+
+  /* Primary -- anchored on the established brand blue, #0066FF (§2.2) */
+  --ib-blue-50:   #EAF1FF;
+  --ib-blue-100:  #D2E3FF;
+  --ib-blue-300:  #6FA3FF;
+  --ib-blue-500:  #0066FF;
+  --ib-blue-600:  #0052CC;
+  --ib-blue-800:  #003D99;
+
+  /* Status -- dot / fill / text per state (§2.3) */
+  --ib-good-dot:  #1FAE6B;
+  --ib-good-fill: #E5F8EF;
+  --ib-good-text: #0F7A49;
+  --ib-warn-dot:  #E8A317;
+  --ib-warn-fill: #FDF3DE;
+  --ib-warn-text: #8A5A06;
+  --ib-bad-dot:   #E5484D;
+  --ib-bad-fill:  #FCE8E8;
+  --ib-bad-text:  #A32F27;
+  --ib-violet-dot:  #8B5CF6;
+  --ib-violet-fill: #F1EBFE;
+  --ib-violet-text: #6D28D9;
+
+  /* Type (§3) */
+  --ib-font-display: 'Sora', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  --ib-font-body: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+
+  /* Radius (§5) */
+  --ib-radius-sm:   8px;
+  --ib-radius-md:   12px;
+  --ib-radius-lg:   16px;
+  --ib-radius-xl:   20px;
+  --ib-radius-pill: 9999px;
+
+  /* Shadow (§6) -- two layers stacked, not one blurred drop shadow */
+  --ib-shadow-sm: 0 1px 2px rgba(18,22,29,0.06);
+  --ib-shadow-md: 0 1px 2px rgba(18,22,29,0.04), 0 4px 12px rgba(18,22,29,0.08);
+  --ib-shadow-lg: 0 2px 4px rgba(18,22,29,0.04), 0 12px 32px rgba(18,22,29,0.10);
+  --ib-shadow-focus: 0 0 0 3px var(--ib-blue-100);
+
+  /* Semantic aliases (Phase 3, sub-unit 1) -- new code should reach for these
+   * instead of the numbered gray scale directly, so retheming a surface for
+   * dark mode (sub-unit 9) means changing the alias's value once here rather
+   * than hunting every --ib-gray-* call site that meant "page background" vs
+   * "card background" vs "border" by convention only. Light values only for
+   * now; dark counterparts land in sub-unit 9's :root[data-theme="dark"]
+   * block once that work is real. */
+  --ib-surface:        var(--ib-gray-50);
+  --ib-surface-raised: var(--ib-white);
+  --ib-border:         var(--ib-gray-200);
+  --ib-text:           var(--ib-gray-900);
+  --ib-text-muted:     var(--ib-gray-600);
+  --ib-focus:          var(--ib-blue-500);
+}
+
+/* ── Dark palette (Phase 3, sub-unit 9) ──────────────────────────────────
+ * Overrides the TOKEN VALUES, not component classes -- every screen already
+ * retoned onto --ib-* (light or the numbered gray/blue scale it's built
+ * from) gets a working dark mode for free from this block alone, with zero
+ * per-component changes. Gated behind DARK_MODE_READY in useTheme.ts; while
+ * that's false, data-theme never becomes "dark" so none of this applies.
+ *
+ * Design choices (per the redesign brief):
+ * - Layered surfaces, not one flat black -- --ib-gray-50 (page) is darkest,
+ *   --ib-gray-100 (cards/hover) one step lighter, so a card still reads as
+ *   "raised" the way it does in light mode. No pure #000 anywhere.
+ * - Depth comes from --ib-gray-200 borders, not shadows -- the existing
+ *   --ib-shadow-* tokens barely register on a dark ground, so surfaces that
+ *   lean on "border vs shadow" for separation now have a real border to
+ *   show for it (unchanged shadow tokens are left as pure extra polish).
+ * - Brand fill (--ib-blue-500) is fixed at #0066FF in both themes -- it's
+ *   the one color the brand doesn't get to reinterpret per theme.
+ * - --ib-blue-600/800 are TEXT colors in light mode (dark navy on a light
+ *   blue chip) -- kept as literal navy there they'd fail contrast on a dark
+ *   surface, so dark mode lightens them to an AA-safe blue tint instead.
+ * - Status fills (good/warn/bad/violet) go translucent (low-alpha over the
+ *   dark surface) instead of the light theme's flat pastel chip, and their
+ *   text tints lighten to stay AA-readable on that dark fill.
+ */
+:root[data-theme="dark"] {
+  --ib-white:     #FFFFFF;
+  --ib-gray-50:   #0C111B;
+  --ib-gray-100:  #151B28;
+  --ib-gray-200:  #2A3242;
+  --ib-gray-400:  #4A5568;
+  --ib-gray-600:  #9AA5B8;
+  --ib-gray-800:  #E2E6ED;
+  --ib-gray-900:  #F3F6FF;
+
+  --ib-blue-50:   #12203A;
+  --ib-blue-100:  #1C3358;
+  --ib-blue-300:  #5B8FEF;
+  --ib-blue-500:  #0066FF;
+  --ib-blue-600:  #8AB4FF;
+  --ib-blue-800:  #A9C6FF;
+
+  --ib-good-dot:  #1FAE6B;
+  --ib-good-fill: rgba(31, 174, 107, 0.16);
+  --ib-good-text: #5EEAA0;
+  --ib-warn-dot:  #E8A317;
+  --ib-warn-fill: rgba(232, 163, 23, 0.16);
+  --ib-warn-text: #FBBF24;
+  --ib-bad-dot:   #E5484D;
+  --ib-bad-fill:  rgba(229, 72, 77, 0.16);
+  --ib-bad-text:  #FF8A8F;
+  --ib-violet-dot:  #8B5CF6;
+  --ib-violet-fill: rgba(139, 92, 246, 0.16);
+  --ib-violet-text: #C4B5FD;
+
+  --ib-surface:        var(--ib-gray-50);
+  --ib-surface-raised: var(--ib-gray-100);
+  --ib-border:         var(--ib-gray-200);
+  --ib-text:           var(--ib-gray-900);
+  --ib-text-muted:     var(--ib-gray-600);
+  --ib-focus:          var(--ib-blue-500);
 }
 
 @layer utilities {
@@ -51,13 +184,21 @@
     -ms-overflow-style: none;
     scrollbar-width: none;
   }
-}
 
-.material-symbols-outlined {
-  font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 24;
-}
-.material-symbols-outlined.fill {
-  font-variation-settings: 'FILL' 1, 'wght' 400, 'GRAD' 0, 'opsz' 24;
+  /* Bug-batch 2026-09-19, section 6 -- unlike scrollbar-hide above, this
+     content genuinely needs a discoverable scrollbar (the Sidebar rail at
+     short viewport heights), just a slim one instead of the OS default. */
+  .scrollbar-thin::-webkit-scrollbar {
+    width: 4px;
+  }
+  .scrollbar-thin::-webkit-scrollbar-thumb {
+    background: var(--ib-gray-200);
+    border-radius: 9999px;
+  }
+  .scrollbar-thin {
+    scrollbar-width: thin;
+    scrollbar-color: var(--ib-gray-200) transparent;
+  }
 }
 
 /* Glass panel background representing the bento cards */
@@ -69,25 +210,54 @@
   border-radius: 24px !important;
 }
 
-/* Base body styles */
+/* Base body styles -- light by default (2026-09-18 redesign). The old
+ * #080b12/#f3f6ff pair was already dead in practice: the unconditional
+ * "Bento Grid" !important override a few dozen lines down was the value
+ * actually rendering (#0c111b), every time, regardless of theme -- traced
+ * through the real cascade, not assumed from this rule alone. Preserved
+ * exactly as :root[data-theme="dark"] below, so an existing user who has
+ * explicitly saved "dark" sees zero change. */
 body {
-  background-color: #080b12;
-  color: #f3f6ff;
+  background-color: var(--ib-gray-50);
+  color: var(--ib-gray-900);
   font-family: var(--font-sans);
   -webkit-font-smoothing: antialiased;
   text-rendering: optimizeLegibility;
 }
 
+:root[data-theme="dark"] body {
+  background-color: var(--ib-surface);
+  color: var(--ib-text);
+}
+
 button, input, textarea, select { font: inherit; }
 button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-visible {
-  outline: 2px solid rgba(126, 148, 255, 0.85);
+  outline: 2px solid var(--ib-focus);
   outline-offset: 2px;
 }
 
 ::selection { background: rgba(113, 140, 255, 0.32); color: #fff; }
 
+/* Phase 3, sub-unit 1 (foundations). Removes the persistent grey tap flash
+ * on touch browsers that still show one (Modal/Button/CtrlBtn already use
+ * active:scale-* for their own tap feedback, so the native flash is pure
+ * noise on top of that, not a lost affordance). */
+*, *::before, *::after { -webkit-tap-highlight-color: transparent; }
+
+/* Real screens (Dashboard/Security/Support/Debrief), light by default
+ * (2026-09-18). Had NO light-mode override of any kind before this --
+ * confirmed by grep -- so today's manual dark<->light toggle already
+ * silently fails to lighten these four screens; this fixes that as a side
+ * effect of flipping the default, not a separately-scoped bug fix. The
+ * radial-gradient glows were tuned for a dark ground and would read as
+ * muddy smudges on white, so light gets a flat token instead of a
+ * lightened version of the same gradients. */
 .dashboard-surface {
   position: relative;
+  background: var(--ib-gray-50);
+}
+
+:root[data-theme="dark"] .dashboard-surface {
   background:
     radial-gradient(circle at 78% -10%, rgba(92, 111, 221, 0.12), transparent 32rem),
     radial-gradient(circle at 15% 35%, rgba(99, 65, 170, 0.055), transparent 30rem),
@@ -118,7 +288,11 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
 /* Bento Grid System-Wide Color Mapping Strategy */
 
 /* 1. Global background overrides */
-body,
+/* body removed 2026-09-18 -- it now has its own rule (above, with an
+ * explicit :root[data-theme="dark"] override) rather than being caught by
+ * this unconditional sweep. .bg-[#131313]/.bg-background are per-screen
+ * Tailwind classes, out of scope for this unit -- they migrate onto tokens
+ * when their own screens do, per UI_REDESIGN_PLAN.md's phase ordering. */
 .bg-\[\#131313\],
 .bg-background {
   background-color: #0c111b !important;
@@ -250,9 +424,11 @@ body,
  * The live call screen (ActiveMeetingView's #202124/#3c4043/#8ab4f8 palette)
  * intentionally stays dark in both themes, matching Zoom/Meet/Teams convention.
  */
-:root[data-theme="light"] body { background-color: #f4f5f7; color: #14151a; }
+/* :root[data-theme="light"] body removed 2026-09-18 -- redundant now that
+ * body's own unscoped rule (above) IS the light values; light stopped being
+ * a toggled-in special case and became the default. */
 
-:root[data-theme="light"] .bg-\[\#0e0e0e\] { background-color: #f4f5f7 !important; }
+:root[data-theme="light"] .bg-\[\#0e0e0e\] { background-color: var(--ib-gray-50) !important; }
 :root[data-theme="light"] .bg-\[\#131313\] { background-color: #ffffff !important; }
 :root[data-theme="light"] .bg-\[\#1c1b1b\] { background-color: #ffffff !important; }
 :root[data-theme="light"] .bg-\[\#201f1f\] { background-color: #eef0f3 !important; }
@@ -310,7 +486,7 @@ body,
 :root[data-theme="light"] .border-\[\#424655\]\/50 { border-color: rgba(15, 23, 42, 0.14) !important; }
 :root[data-theme="light"] .border-\[\#424655\]\/60 { border-color: rgba(15, 23, 42, 0.16) !important; }
 
-:root[data-theme="light"] .text-\[\#e5e2e1\] { color: #14151a !important; }
+:root[data-theme="light"] .text-\[\#e5e2e1\] { color: var(--ib-gray-900) !important; }
 :root[data-theme="light"] .text-\[\#c2c6d8\] { color: #3f4657 !important; }
 :root[data-theme="light"] .text-\[\#8c90a1\] { color: #64687a !important; }
 :root[data-theme="light"] .text-\[\#424655\] { color: #9aa1b0 !important; }
@@ -372,4 +548,26 @@ body,
     transform: translateY(-90px);
     opacity: 1;
   }
+}
+
+/* The three-dot brand mark's loading cycle — DESIGN_SYSTEM.md §7. One dot
+ * "lit" (full opacity + slight scale) at a time, in sequence; three copies
+ * of the same keyframe on the three dots, staggered by animation-delay so
+ * only one is ever at its peak. Informational (it IS the loading indicator),
+ * so unlike ib-reaction-rise this keeps moving under reduced-motion — the
+ * concession there is dropping the scale, not the motion itself, since a
+ * loading state needs to visibly still be loading. */
+@keyframes ib-dot-pulse {
+  0%, 100% { opacity: 0.35; transform: scale(1); }
+  50%      { opacity: 1;    transform: scale(1.15); }
+}
+
+.ib-brand-dot { animation: ib-dot-pulse 1.2s ease-in-out infinite; }
+.ib-brand-dot:nth-child(1) { animation-delay: 0s; }
+.ib-brand-dot:nth-child(2) { animation-delay: 0.2s; }
+.ib-brand-dot:nth-child(3) { animation-delay: 0.4s; }
+
+@media (prefers-reduced-motion: reduce) {
+  .ib-brand-dot { animation-duration: 1.2s; }
+  .ib-brand-dot { transform: none !important; }
 }

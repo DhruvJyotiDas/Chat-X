@@ -1,21 +1,55 @@
 <!doctype html>
-<html lang="en" class="dark">
+<html lang="en">
   <head>
+    <!-- class="dark" removed 2026-09-18: confirmed inert -- zero Tailwind
+         dark: variant classes exist anywhere in src/, so it never did
+         anything. Left in place it would misleadingly suggest this
+         now-light-default app is still dark-rooted. Theming is entirely
+         via [data-theme] (useTheme.ts), unaffected by this. -->
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <!-- viewport-fit=cover added 2026-09-18: without it, any
+         safe-area-inset-* CSS (none exists yet, but the redesign plan
+         flags this as needed for the in-meeting control bar) computes to
+         zero on iOS regardless of what's written -- this is the
+         prerequisite, not the fix itself. -->
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
     <title>IB Connect - Intelligent Enterprise Dashboard</title>
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <link rel="icon" type="image/png" sizes="32x32" href="/favicon-32x32.png" />
     <link rel="icon" type="image/png" sizes="16x16" href="/favicon-16x16.png" />
     <link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png" />
     <meta name="theme-color" content="#0066FF" />
-    <!-- Fonts and Material Symbols -->
-    <link rel="preconnect" href="https://fonts.googleapis.com" />
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-    <link href="https://fonts.googleapis.com/css2?family=Geist:wght@300;400;500;600;700;800;900&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet" />
-    <link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&display=swap" rel="stylesheet" />
+    <!-- Geist + JetBrains Mono link removed 2026-09-18: loaded on every page
+         load, never referenced by name anywhere in src/ or index.css -- two
+         Google Fonts requests rendering nothing. Confirmed dead, not assumed.
+         Material Symbols Outlined link + preconnects removed 2026-09-19:
+         confirmed via grep that .material-symbols-outlined (index.css) is
+         never applied anywhere in src/ -- same dead-font-request problem. -->
+    <!-- Pre-paint theme script (Phase 3, sub-unit 9): sets data-theme/
+         color-scheme/theme-color before first paint, mirroring useTheme.ts's
+         resolve()/apply() exactly -- without this, a saved 'dark' preference
+         would flash light until React mounts and useTheme's effect runs.
+         DARK_MODE_READY here is a literal, not an import -- this runs before
+         any module loads -- keep it in sync by hand with
+         src/hooks/useTheme.ts's export whenever that gate changes. -->
+    <script>
+      (function () {
+        var DARK_MODE_READY = true;
+        if (!DARK_MODE_READY) return;
+        try {
+          var pref = localStorage.getItem('ibconnect_theme') || 'light';
+          var resolved = pref === 'system'
+            ? (window.matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark')
+            : pref;
+          document.documentElement.setAttribute('data-theme', resolved);
+          document.documentElement.style.colorScheme = resolved;
+          var meta = document.querySelector('meta[name="theme-color"]');
+          if (meta) meta.setAttribute('content', resolved === 'dark' ? '#0C111B' : '#0066FF');
+        } catch (e) {}
+      })();
+    </script>
   </head>
-  <body class="bg-[#131313] text-[#e5e2e1] antialiased">
+  <body class="bg-[var(--ib-surface)] text-[var(--ib-text)] antialiased">
     <div id="root"></div>
     <script type="module" src="/src/main.tsx"></script>
   </body>

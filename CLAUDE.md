@@ -131,6 +131,39 @@ directly with no light-mode mapping, rendering near-invisible on white backgroun
 those four mappings). The live-call screen (`ActiveMeetingView`, Meet/Zoom-style `#202124`/`#8ab4f8`
 palette) is intentionally excluded from the retrofit and stays dark in both themes.
 
+**Correction, 2026-09-19 (light-theme redesign, step 7):** the paragraph above describes
+`ActiveMeetingView`'s state before this redesign reached it. As of commits `ae1be11`..`da9e7ae`
+on `feat/light-theme-redesign`, only the **video** stays dark — the tile frame (`#202124` family),
+camera-off/connecting states, and name-chip/mute-icon overlays on top of video are deliberately
+untouched. Everything that is chrome rather than video content (the floating control bar, tile
+borders/pin buttons/quality badges, screen-share chrome, the chat/participants/captions side
+panel, and the evicted/media/silent-mic toasts and host admit/deny prompt) now uses the same
+`--ib-*` tokens as the rest of the app and renders light, per `DESIGN_SYSTEM.md`'s "light chrome,
+dark video" brief. See `ibconnect-planning/CHANGELOG.md`'s six step-7 sub-unit entries for exactly
+what changed in each area. `UI_REDESIGN_PLAN.md`'s equivalent note (§3, "explicitly excluded from
+the existing light-mode retrofit") is stale in the same way — read this correction, not that line,
+for the current state.
+
+**Correction, 2026-09-19 (Phase 3, sub-units 0/9): everything above this point in the section is now
+the OLD mechanism, inverted.** Light is the real default (not a retrofit onto a dark-first app), `src/index.css`'s
+`:root` block defines `--ib-*` design tokens (`DESIGN_SYSTEM.md` §2-6), and every screen retoned in
+Phase 3 (`git log --oneline` on `feat/light-theme-redesign`, commits `ff3809a` onward) uses those
+tokens directly (`bg-[var(--ib-blue-500)]`, etc.) instead of hardcoded hex. The
+`:root[data-theme="light"] .bg-\[\#hex\]` block described above still exists and still matters — it's
+what keeps the not-yet-migrated "Bento Grid" screens light — but it's the legacy half of a two-layer
+cascade now, not the whole mechanism. Dark mode is real: `:root[data-theme="dark"]` (added in sub-unit
+9) overrides the `--ib-*` TOKEN VALUES themselves (inverted gray/blue ramps, translucent status
+fills, brand blue fixed at `#0066FF` in both themes) so every token-based screen gets dark mode with
+zero per-component changes — `DARK_MODE_READY` in `useTheme.ts` is `true`. `ActiveMeetingView`'s video
+chrome, `InterviewView.tsx`, and dialogs opened only from inside a live call (`MeetingInviteDialog`,
+`FloatingCallWindow`) are the deliberate exceptions, staying on their own fixed dark call-chrome in
+both themes — see `CHANGELOG.md`'s sub-unit 9 entry. When adding a new hardcoded color to any
+already-token-based screen: don't — reach for an existing `--ib-*` token, or add one to both the light
+`:root` block and its `:root[data-theme="dark"]` counterpart in `src/index.css` if none fits. Also
+watch for literal Tailwind color names (`bg-white`, `text-black`), not just hex — `bg-white` used as a
+surface color (not a hex literal) was the actual sub-unit 9 bug that left every `Button`/`Card`/`Modal`
+and the sidebar itself stuck white in dark mode; grep for hex alone won't catch that class of bug.
+
 ## WebRTC / video calls
 
 Mesh topology, one `RTCPeerConnection` per remote peer (`src/hooks/useWebRTC.ts`), signaled over the
