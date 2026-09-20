@@ -44,13 +44,13 @@ function EmojiPicker({ onSelect, onClose }: { onSelect: (e: string) => void; onC
   }, [onClose]);
   
   return (
-    <div ref={ref} className="absolute bottom-full mb-2 left-0 z-50 bg-[#1a1a1a] border border-[#424655] rounded-2xl shadow-2xl overflow-hidden w-72" style={{ maxHeight: '320px' }}>
-      <div className="flex gap-1 p-2 border-b border-[#424655] overflow-x-auto scrollbar-none">
+    <div ref={ref} className="absolute bottom-full mb-2 left-0 z-50 bg-[var(--ib-surface-raised)] border border-[var(--ib-border)] rounded-2xl shadow-2xl overflow-hidden w-72" style={{ maxHeight: '320px' }}>
+      <div className="flex gap-1 p-2 border-b border-[var(--ib-border)] overflow-x-auto scrollbar-none">
         {EMOJI_GROUPS.map((g, i) => (
           <button 
             key={i} 
             onMouseDown={(e) => { e.preventDefault(); e.stopPropagation(); setTab(i); }} 
-            className={`px-2.5 py-1 rounded-lg text-[10px] font-bold whitespace-nowrap transition-colors ${tab === i ? 'bg-[#568dff] text-white' : 'text-[#8c90a1] hover:text-[#e5e2e1] hover:bg-[#201f1f]'}`}
+            className={`px-2.5 py-1 rounded-lg text-[10px] font-bold whitespace-nowrap transition-colors ${tab === i ? 'bg-[var(--ib-blue-500)] text-white' : 'text-[var(--ib-text-muted)] hover:text-[var(--ib-text)] hover:bg-[var(--ib-gray-100)]'}`}
           >
             {g.label}
           </button>
@@ -62,7 +62,7 @@ function EmojiPicker({ onSelect, onClose }: { onSelect: (e: string) => void; onC
             <button 
               key={i} 
               onMouseDown={(e) => { e.preventDefault(); onSelect(em); onClose(); }} 
-              className="w-8 h-8 flex items-center justify-center rounded-lg hover:bg-[#201f1f] text-base transition-colors" 
+              className="w-8 h-8 flex items-center justify-center rounded-lg hover:bg-[var(--ib-gray-100)] text-base transition-colors" 
               style={{ fontSize: '18px', lineHeight: 1 }}
             >
               {em}
@@ -86,13 +86,13 @@ function RewriteMenu({ onPick, onClose, busy }: { onPick: (mode: string) => void
   }, [onClose]);
 
   return (
-    <div ref={ref} className="absolute bottom-full mb-2 left-0 z-50 bg-[#1a1a1a] border border-[#424655] rounded-2xl shadow-2xl overflow-hidden w-48 py-1">
+    <div ref={ref} className="absolute bottom-full mb-2 left-0 z-50 bg-[var(--ib-surface-raised)] border border-[var(--ib-border)] rounded-2xl shadow-[var(--ib-shadow-lg)] overflow-hidden w-48 py-1">
       {REWRITE_MODES.map((m) => (
         <button
           key={m.key}
           onMouseDown={(e) => { e.preventDefault(); onPick(m.key); }}
           disabled={busy}
-          className="w-full text-left px-3 py-2 text-xs text-[#e5e2e1] hover:bg-[#201f1f] transition-colors disabled:opacity-40"
+          className="w-full text-left px-3 py-2 text-xs text-[var(--ib-text)] hover:bg-[var(--ib-gray-100)] transition-colors disabled:opacity-40"
         >
           {m.label}
         </button>
@@ -142,10 +142,10 @@ function TranslateMessage({ text, isMe }: { text: string; isMe: boolean }) {
   return (
     <div className={`mt-0.5 ${isMe ? 'text-right' : 'text-left'}`}>
       {translated ? (
-        <p className={`text-[10px] sm:text-[9px] italic ${isMe ? 'text-[#dbe6ff]' : 'text-[#8c90a1]'}`}>{translated} <button onClick={() => setTranslated(null)} className="underline ml-1">hide</button></p>
+        <p className="text-[10px] sm:text-[9px] italic text-[var(--ib-text-muted)]">{translated} <button onClick={() => setTranslated(null)} className="underline ml-1">hide</button></p>
       ) : (
         <div ref={ref} className="relative inline-block">
-          <button onClick={() => setOpen((v) => !v)} disabled={isTranslating} className={`text-[9px] underline ${isMe ? 'text-[#dbe6ff]/70' : 'text-[#8c90a1]'} disabled:opacity-50`}>
+          <button onClick={() => setOpen((v) => !v)} disabled={isTranslating} className="text-[9px] underline text-[var(--ib-text-muted)] disabled:opacity-50">
             {isTranslating ? 'Translating…' : 'Translate'}
           </button>
           {open && (
@@ -160,9 +160,9 @@ function TranslateMessage({ text, isMe }: { text: string; isMe: boolean }) {
             // exact problem the same way (bottom-full) since they live in the
             // composer at the very bottom of the screen; this dropdown just
             // hadn't followed that same convention.
-            <div className={`absolute z-50 bottom-full mb-1 ${isMe ? 'right-0' : 'left-0'} bg-[#1a1a1a] border border-[#424655] rounded-lg shadow-2xl py-1 w-32 max-h-48 overflow-y-auto`}>
+            <div className={`absolute z-50 bottom-full mb-1 ${isMe ? 'right-0' : 'left-0'} bg-[var(--ib-surface-raised)] border border-[var(--ib-border)] rounded-lg shadow-2xl py-1 w-32 max-h-48 overflow-y-auto`}>
               {CAPTION_LANGUAGES.map((l) => (
-                <button key={l.code} onMouseDown={(e) => { e.preventDefault(); handlePick(l.code); }} className="w-full text-left px-2.5 py-1.5 text-[10px] text-[#e5e2e1] hover:bg-[#201f1f] transition-colors">
+                <button key={l.code} onMouseDown={(e) => { e.preventDefault(); handlePick(l.code); }} className="w-full text-left px-2.5 py-1.5 text-[10px] text-[var(--ib-text)] hover:bg-[var(--ib-gray-100)] transition-colors">
                   {l.label}
                 </button>
               ))}
@@ -170,7 +170,7 @@ function TranslateMessage({ text, isMe }: { text: string; isMe: boolean }) {
           )}
         </div>
       )}
-      {error && <p className="text-[9px] text-[#ffb4ab]">{error}</p>}
+      {error && <p className="text-[9px] text-[var(--ib-bad-dot)]">{error}</p>}
     </div>
   );
 }
@@ -188,15 +188,15 @@ function MeetingCardBubble({ card }: { card: MeetingCardPayload }) {
     : '';
   return (
     <div className="flex justify-center my-1">
-      <div className={`flex items-center gap-2.5 rounded-2xl border px-4 py-2.5 max-w-[92%] ${cancelled ? 'bg-[#ffb4ab]/10 border-[#ffb4ab]/30' : 'bg-[#568dff]/10 border-[#568dff]/30'}`}>
-        {cancelled ? <CalendarX2 className="w-4 h-4 text-[#ffb4ab] flex-shrink-0" /> : <CalendarClock className="w-4 h-4 text-[#b0c6ff] flex-shrink-0" />}
+      <div className={`flex items-center gap-2.5 rounded-2xl border px-4 py-2.5 max-w-[92%] ${cancelled ? 'bg-[var(--ib-bad-dot)]/10 border-[var(--ib-bad-dot)]/30' : 'bg-[var(--ib-blue-500)]/10 border-[var(--ib-blue-500)]/30'}`}>
+        {cancelled ? <CalendarX2 className="w-4 h-4 text-[var(--ib-bad-dot)] flex-shrink-0" /> : <CalendarClock className="w-4 h-4 text-[var(--ib-blue-500)] flex-shrink-0" />}
         <div className="text-xs">
           {cancelled ? (
-            <span className="text-[#ffb4ab]">Meeting cancelled: <strong>{card.title}</strong></span>
+            <span className="text-[var(--ib-bad-dot)]">Meeting cancelled: <strong>{card.title}</strong></span>
           ) : (
-            <span className="text-[#e5e2e1]">
+            <span className="text-[var(--ib-text)]">
               <strong>{card.action === 'updated' ? 'Meeting updated' : 'Meeting scheduled'}:</strong> {card.title} — {dateLabel}
-              <span className="text-[#8c90a1]"> · added to your calendar automatically</span>
+              <span className="text-[var(--ib-text-muted)]"> · added to your calendar automatically</span>
             </span>
           )}
         </div>
@@ -256,9 +256,9 @@ function PersonalizeMenu({ value, onChange, onClose }: { value: ChatPersonalizat
   // containment check (and its render-timing hazard) entirely rather than
   // trying to make the check itself race-proof.
   return (
-    <div ref={ref} className="absolute top-full right-0 mt-2 z-50 bg-[#1a1a1a] border border-[#424655] rounded-2xl shadow-2xl p-3.5 w-64">
+    <div ref={ref} className="absolute top-full right-0 mt-2 z-50 bg-[var(--ib-surface-raised)] border border-[var(--ib-border)] rounded-2xl shadow-2xl p-3.5 w-64">
       <div className="mb-3">
-        <span className="text-[9px] font-bold uppercase tracking-wider text-[#8c90a1] block mb-2">Wallpaper</span>
+        <span className="text-[9px] font-bold uppercase tracking-wider text-[var(--ib-text-muted)] block mb-2">Wallpaper</span>
         <div className="flex flex-wrap gap-2">
           {WALLPAPERS.map((w) => (
             <button
@@ -266,14 +266,14 @@ function PersonalizeMenu({ value, onChange, onClose }: { value: ChatPersonalizat
               onMouseDown={(e) => { e.preventDefault(); e.stopPropagation(); onChange({ ...value, wallpaper: w.key }); }}
               title={w.label}
               aria-label={`Wallpaper: ${w.label}`}
-              className={`w-9 h-9 rounded-lg border-2 flex-shrink-0 ${value.wallpaper === w.key ? 'border-[#e5e2e1]' : 'border-[#424655]/50'}`}
-              style={{ background: w.css || '#0e0e0e' }}
+              className={`w-9 h-9 rounded-lg border-2 flex-shrink-0 ${value.wallpaper === w.key ? 'border-[var(--ib-text)]' : 'border-[var(--ib-border)]/50'}`}
+              style={{ background: w.css || 'var(--ib-gray-50)' }}
             />
           ))}
         </div>
       </div>
       <div className="mb-3">
-        <span className="text-[9px] font-bold uppercase tracking-wider text-[#8c90a1] block mb-2">Accent color</span>
+        <span className="text-[9px] font-bold uppercase tracking-wider text-[var(--ib-text-muted)] block mb-2">Accent color</span>
         <div className="flex flex-wrap gap-2">
           {ACCENTS.map((a) => (
             <button
@@ -281,20 +281,20 @@ function PersonalizeMenu({ value, onChange, onClose }: { value: ChatPersonalizat
               onMouseDown={(e) => { e.preventDefault(); e.stopPropagation(); onChange({ ...value, accent: a.key }); }}
               title={a.label}
               aria-label={`Accent: ${a.label}`}
-              className={`w-7 h-7 rounded-full border-2 flex-shrink-0 ${value.accent === a.key ? 'border-[#e5e2e1]' : 'border-transparent'}`}
+              className={`w-7 h-7 rounded-full border-2 flex-shrink-0 ${value.accent === a.key ? 'border-[var(--ib-text)]' : 'border-transparent'}`}
               style={{ background: a.hex }}
             />
           ))}
         </div>
       </div>
       <div>
-        <span className="text-[9px] font-bold uppercase tracking-wider text-[#8c90a1] block mb-2">Font</span>
+        <span className="text-[9px] font-bold uppercase tracking-wider text-[var(--ib-text-muted)] block mb-2">Font</span>
         <div className="flex flex-col gap-1">
           {FONTS.map((f) => (
             <button
               key={f.key}
               onMouseDown={(e) => { e.preventDefault(); e.stopPropagation(); onChange({ ...value, font: f.key }); }}
-              className={`text-left px-2.5 py-1.5 rounded-lg text-xs transition-colors ${value.font === f.key ? 'bg-[#568dff]/15 text-[#b0c6ff]' : 'text-[#e5e2e1] hover:bg-[#201f1f]'}`}
+              className={`text-left px-2.5 py-1.5 rounded-lg text-xs transition-colors ${value.font === f.key ? 'bg-[var(--ib-blue-500)]/15 text-[var(--ib-blue-500)]' : 'text-[var(--ib-text)] hover:bg-[var(--ib-gray-100)]'}`}
               style={{ fontFamily: f.css }}
             >
               {f.label}
@@ -452,10 +452,10 @@ function VoicePlayer({ src, isMe }: { src: string; isMe: boolean }) {
   const shownBars = bars ?? new Array(VOICE_BARS).fill(0.3); // flat fallback if decoding failed/hasn't finished yet
 
   return (
-    <div className={`flex items-center gap-2.5 p-2.5 rounded-2xl border ${isMe ? 'bg-[#568dff]/10 border-[#568dff]/30 rounded-tr-sm' : 'bg-[#201f1f] border-[#424655]/40 rounded-tl-sm'}`} style={{ minWidth: '220px', maxWidth: '260px' }}>
+    <div className={`flex items-center gap-2.5 p-2.5 rounded-2xl border ${isMe ? 'bg-[var(--ib-blue-500)]/10 border-[var(--ib-blue-500)]/30 rounded-tr-sm' : 'bg-[var(--ib-gray-100)] border-[var(--ib-border)]/40 rounded-tl-sm'}`} style={{ minWidth: '220px', maxWidth: '260px' }}>
       {/* eslint-disable-next-line jsx-a11y/media-has-caption */}
       <audio ref={audioRef} src={src} preload="metadata" style={{ display: 'none' }} />
-      <button onClick={togglePlay} aria-label={isPlaying ? 'Pause voice message' : 'Play voice message'} className={`w-8 h-8 rounded-full flex items-center justify-center flex-shrink-0 transition-colors ${isMe ? 'bg-[#568dff] text-[#002661]' : 'bg-[#568dff]/20 text-[#b0c6ff]'}`}>
+      <button onClick={togglePlay} aria-label={isPlaying ? 'Pause voice message' : 'Play voice message'} className={`w-8 h-8 rounded-full flex items-center justify-center flex-shrink-0 transition-colors ${isMe ? 'bg-[var(--ib-blue-500)] text-[#002661]' : 'bg-[var(--ib-blue-500)]/20 text-[var(--ib-blue-500)]'}`}>
         {isPlaying ? <Pause className="w-3.5 h-3.5" /> : <Play className="w-3.5 h-3.5 ml-0.5" />}
       </button>
       <div className="flex-1 min-w-0">
@@ -469,12 +469,12 @@ function VoicePlayer({ src, isMe }: { src: string; isMe: boolean }) {
           {shownBars.map((h, i) => (
             <span
               key={i}
-              className={`flex-1 min-w-[2px] rounded-full transition-colors ${i / VOICE_BARS < progress ? (isMe ? 'bg-[#dbe6ff]' : 'bg-[#b0c6ff]') : (isMe ? 'bg-[#568dff]/30' : 'bg-[#8c90a1]/40')}`}
+              className={`flex-1 min-w-[2px] rounded-full transition-colors ${i / VOICE_BARS < progress ? 'bg-[var(--ib-blue-500)]' : (isMe ? 'bg-[var(--ib-blue-500)]/30' : 'bg-[var(--ib-text-muted)]/40')}`}
               style={{ height: `${Math.max(12, h * 100)}%` }}
             />
           ))}
         </div>
-        <span className={`text-[9px] tabular-nums ${isMe ? 'text-[#dbe6ff]/80' : 'text-[#8c90a1]'}`}>{fmt(displaySeconds || 0)}</span>
+        <span className="text-[9px] tabular-nums text-[var(--ib-text-muted)]">{fmt(displaySeconds || 0)}</span>
       </div>
     </div>
   );
@@ -546,8 +546,8 @@ function PdfPreviewBody({ file }: { file: Attachment }) {
 
   if (!supported) return <PreviewUnavailableBody reason="This browser can't display PDFs inline — download it to open." />;
   if (failed) return <PreviewUnavailableBody reason="This PDF could not be opened." />;
-  if (!url) return <div className="h-[70vh] flex items-center justify-center text-[10px] text-[#8c90a1]">Loading preview…</div>;
-  return <iframe src={url} title={`Preview of ${file.name}`} className="w-full h-[70vh] bg-[#0e0e0e]" />;
+  if (!url) return <div className="h-[70vh] flex items-center justify-center text-[10px] text-[var(--ib-text-muted)]">Loading preview…</div>;
+  return <iframe src={url} title={`Preview of ${file.name}`} className="w-full h-[70vh] bg-[var(--ib-gray-50)]" />;
 }
 
 function TextPreviewBody({ file }: { file: Attachment }) {
@@ -565,9 +565,9 @@ function TextPreviewBody({ file }: { file: Attachment }) {
   }, [file.dataUrl]);
 
   if (failed) return <PreviewUnavailableBody reason="This file could not be read." />;
-  if (text === null) return <div className="h-40 flex items-center justify-center text-[10px] text-[#8c90a1]">Loading preview…</div>;
+  if (text === null) return <div className="h-40 flex items-center justify-center text-[10px] text-[var(--ib-text-muted)]">Loading preview…</div>;
   return (
-    <pre className="max-h-[60vh] overflow-auto p-3 text-[11px] leading-relaxed text-[#e5e2e1] whitespace-pre-wrap break-words font-mono">
+    <pre className="max-h-[60vh] overflow-auto p-3 text-[11px] leading-relaxed text-[var(--ib-text)] whitespace-pre-wrap break-words font-mono">
       {text}
     </pre>
   );
@@ -576,8 +576,8 @@ function TextPreviewBody({ file }: { file: Attachment }) {
 function PreviewUnavailableBody({ reason }: { reason: string }) {
   return (
     <div className="flex flex-col items-center justify-center gap-2 py-10 px-4 text-center">
-      <div className="w-10 h-10 rounded-xl bg-[#8083ff]/20 flex items-center justify-center"><FileText className="w-5 h-5 text-[#c0c1ff]" /></div>
-      <p className="text-xs text-[#8c90a1]">{reason}</p>
+      <div className="w-10 h-10 rounded-xl bg-[var(--ib-violet-fill)] flex items-center justify-center"><FileText className="w-5 h-5 text-[var(--ib-violet-text)]" /></div>
+      <p className="text-xs text-[var(--ib-text-muted)]">{reason}</p>
     </div>
   );
 }
@@ -628,22 +628,22 @@ function AttachmentPreviewModal({ file, onClose }: { file: Attachment; onClose: 
       onClick={onClose} role="dialog" aria-modal="true" aria-label={`Preview of ${file.name}`}
     >
       <div
-        className={`bg-[#131313] border border-[#424655] rounded-2xl shadow-2xl w-full overflow-hidden flex flex-col ${
+        className={`bg-[var(--ib-surface-raised)] border border-[var(--ib-border)] rounded-2xl shadow-2xl w-full overflow-hidden flex flex-col ${
           kind === 'pdf' ? 'max-w-3xl' : kind === 'text' ? 'max-w-2xl' : 'max-w-lg'
         }`}
         onClick={e => e.stopPropagation()}
       >
-        <div className="flex items-center justify-between gap-3 p-3 border-b border-[#424655]">
+        <div className="flex items-center justify-between gap-3 p-3 border-b border-[var(--ib-border)]">
           <div className="min-w-0">
-            <p className="text-xs font-semibold text-[#e5e2e1] truncate">{file.name}</p>
-            <p className="text-[10px] text-[#8c90a1]">{(file.size / 1024).toFixed(1)} KB</p>
+            <p className="text-xs font-semibold text-[var(--ib-text)] truncate">{file.name}</p>
+            <p className="text-[10px] text-[var(--ib-text-muted)]">{(file.size / 1024).toFixed(1)} KB</p>
           </div>
-          <button onClick={onClose} aria-label="Close preview" className="w-7 h-7 flex items-center justify-center rounded-lg text-[#8c90a1] hover:bg-[#201f1f] hover:text-[#e5e2e1] transition-colors flex-shrink-0">
+          <button onClick={onClose} aria-label="Close preview" className="w-7 h-7 flex items-center justify-center rounded-lg text-[var(--ib-text-muted)] hover:bg-[var(--ib-gray-100)] hover:text-[var(--ib-text)] transition-colors flex-shrink-0">
             <X className="w-4 h-4" />
           </button>
         </div>
 
-        <div className="bg-[#0e0e0e] flex flex-col justify-center min-h-0">
+        <div className="bg-[var(--ib-gray-50)] flex flex-col justify-center min-h-0">
           {kind === 'image' && (
             <div className="flex items-center justify-center p-2">
               <img src={file.dataUrl} alt={file.name} className="max-w-full max-h-[60vh] object-contain" />
@@ -654,16 +654,16 @@ function AttachmentPreviewModal({ file, onClose }: { file: Attachment; onClose: 
           {kind === 'none' && <PreviewUnavailableBody reason="No inline preview for this file type — download it to open." />}
         </div>
 
-        <div className="flex items-center justify-end gap-2 p-3 border-t border-[#424655]">
+        <div className="flex items-center justify-end gap-2 p-3 border-t border-[var(--ib-border)]">
           <button
             onClick={handleShare} aria-label={`Share ${file.name}`}
-            className="flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-bold bg-[#201f1f] text-[#e5e2e1] hover:bg-[#2a2929] transition-colors"
+            className="flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-bold bg-[var(--ib-gray-100)] text-[var(--ib-text)] hover:bg-[var(--ib-gray-200)] transition-colors"
           >
             <Share2 className="w-3.5 h-3.5" /> {shareLabel ?? 'Share'}
           </button>
           <a
             href={file.dataUrl} download={file.name} aria-label={`Download ${file.name}`}
-            className="flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-bold bg-[#568dff] text-[#002661] hover:bg-[#568dff]/90 transition-colors"
+            className="flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-bold bg-[var(--ib-blue-500)] text-[#002661] hover:bg-[var(--ib-blue-500)]/90 transition-colors"
           >
             <Download className="w-3.5 h-3.5" /> Download
           </a>
@@ -723,10 +723,10 @@ function DocumentQA({ messageId, fileName }: { messageId: string; fileName: stri
   };
 
   return (
-    <div className="mt-1.5 pt-1.5 border-t border-[#424655]/30">
+    <div className="mt-1.5 pt-1.5 border-t border-[var(--ib-border)]/30">
       {summary ? (
         <>
-          <p className="text-[10px] text-[#e5e2e1] leading-relaxed mb-1.5">{summary}</p>
+          <p className="text-[10px] text-[var(--ib-text)] leading-relaxed mb-1.5">{summary}</p>
           <div className="flex items-center gap-1.5">
             <input
               type="text"
@@ -734,21 +734,21 @@ function DocumentQA({ messageId, fileName }: { messageId: string; fileName: stri
               onChange={(e) => setQuestion(e.target.value)}
               onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); handleAsk(); } }}
               placeholder={`Ask about ${fileName}…`}
-              className="flex-1 min-w-0 bg-[#0e0e0e] border border-[#424655]/60 rounded-lg px-2 py-1 text-base md:text-[10px] text-[#e5e2e1] placeholder-[#8c90a1]/60 focus:border-[#568dff] outline-none touch-manipulation"
+              className="flex-1 min-w-0 bg-[var(--ib-gray-50)] border border-[var(--ib-border)]/60 rounded-lg px-2 py-1 text-base md:text-[10px] text-[var(--ib-text)] placeholder-[var(--ib-text-muted)]/60 focus:border-[var(--ib-blue-500)] outline-none touch-manipulation"
             />
-            <button onClick={handleAsk} disabled={!question.trim() || isAsking} className="text-[9px] font-bold text-[#c0c1ff] hover:text-[#e5e2e1] disabled:opacity-40 whitespace-nowrap flex-shrink-0">
+            <button onClick={handleAsk} disabled={!question.trim() || isAsking} className="text-[9px] font-bold text-[var(--ib-violet-text)] hover:text-[var(--ib-text)] disabled:opacity-40 whitespace-nowrap flex-shrink-0">
               {isAsking ? <Loader2 className="w-3 h-3 animate-spin" /> : 'Ask'}
             </button>
           </div>
-          {answer && <p className="text-[10px] text-[#8c90a1] leading-relaxed mt-1.5 italic">{answer}</p>}
+          {answer && <p className="text-[10px] text-[var(--ib-text-muted)] leading-relaxed mt-1.5 italic">{answer}</p>}
         </>
       ) : (
-        <button onClick={handleSummarize} disabled={isSummarizing} className="flex items-center gap-1.5 text-[10px] text-[#b0c6ff] hover:text-[#c0c1ff] disabled:opacity-50">
+        <button onClick={handleSummarize} disabled={isSummarizing} className="flex items-center gap-1.5 text-[10px] text-[var(--ib-blue-500)] hover:text-[var(--ib-violet-text)] disabled:opacity-50">
           {isSummarizing ? <Loader2 className="w-3 h-3 animate-spin" /> : <Sparkles className="w-3 h-3" />}
           {isSummarizing ? 'Reading document… this can take a minute or two' : 'Summarize & ask questions'}
         </button>
       )}
-      {error && <p className="text-[9px] text-[#ffb4ab] mt-1">{error}</p>}
+      {error && <p className="text-[9px] text-[var(--ib-bad-dot)] mt-1">{error}</p>}
     </div>
   );
 }
@@ -762,12 +762,12 @@ function MessageAttachment({ file, isMe, onPreview, messageId }: { file: Attachm
         type="button"
         onClick={e => { e.stopPropagation(); onPreview(file); }}
         title={`Preview ${file.name}`} aria-label={`Preview image ${file.name}`}
-        className={`block overflow-hidden rounded-2xl border cursor-zoom-in ${isMe ? 'border-[#568dff]/30 rounded-tr-sm' : 'border-[#424655]/40 rounded-tl-sm'}`}
+        className={`block overflow-hidden rounded-2xl border cursor-zoom-in ${isMe ? 'border-[var(--ib-blue-500)]/30 rounded-tr-sm' : 'border-[var(--ib-border)]/40 rounded-tl-sm'}`}
       >
         <img
           src={file.dataUrl} alt={file.name} loading="lazy"
           onError={() => setImageFailed(true)}
-          className="block w-auto max-w-full max-h-[320px] object-contain bg-[#0e0e0e]"
+          className="block w-auto max-w-full max-h-[320px] object-contain bg-[var(--ib-gray-50)]"
         />
       </button>
     );
@@ -785,7 +785,7 @@ function MessageAttachment({ file, isMe, onPreview, messageId }: { file: Attachm
   // The card body opens the preview; the download button stays where it has always been so
   // "just save it" is still one click and doesn't route through the modal.
   return (
-    <div className={`p-3 rounded-2xl border ${isMe ? 'bg-[#568dff]/10 border-[#568dff]/30 rounded-tr-sm' : 'bg-[#201f1f] border-[#424655]/40 rounded-tl-sm'}`}>
+    <div className={`p-3 rounded-2xl border ${isMe ? 'bg-[var(--ib-blue-500)]/10 border-[var(--ib-blue-500)]/30 rounded-tr-sm' : 'bg-[var(--ib-gray-100)] border-[var(--ib-border)]/40 rounded-tl-sm'}`}>
       <div className="flex items-center gap-2.5">
         <button
           type="button"
@@ -794,14 +794,14 @@ function MessageAttachment({ file, isMe, onPreview, messageId }: { file: Attachm
           title={`Preview ${file.name}`} aria-label={`Preview file ${file.name}`}
           className="flex items-center gap-2.5 flex-1 min-w-0 text-left cursor-pointer disabled:cursor-default"
         >
-          <div className="w-9 h-9 rounded-lg bg-[#8083ff]/20 flex items-center justify-center flex-shrink-0"><FileText className="w-4 h-4 text-[#c0c1ff]" /></div>
+          <div className="w-9 h-9 rounded-lg bg-[var(--ib-violet-fill)] flex items-center justify-center flex-shrink-0"><FileText className="w-4 h-4 text-[var(--ib-violet-text)]" /></div>
           <div className="flex-1 min-w-0">
-            <p className="text-xs font-semibold text-[#e5e2e1] truncate">{file.name}</p>
-            <p className="text-[10px] text-[#8c90a1]">{(file.size / 1024).toFixed(1)} KB</p>
+            <p className="text-xs font-semibold text-[var(--ib-text)] truncate">{file.name}</p>
+            <p className="text-[10px] text-[var(--ib-text-muted)]">{(file.size / 1024).toFixed(1)} KB</p>
           </div>
         </button>
         {file.dataUrl && (
-          <a href={file.dataUrl} download={file.name} onClick={e => e.stopPropagation()} aria-label={`Download ${file.name}`} className="w-7 h-7 flex items-center justify-center rounded-lg bg-[#568dff]/10 text-[#b0c6ff] hover:bg-[#568dff]/20 transition-colors flex-shrink-0"><Download className="w-3.5 h-3.5" /></a>
+          <a href={file.dataUrl} download={file.name} onClick={e => e.stopPropagation()} aria-label={`Download ${file.name}`} className="w-7 h-7 flex items-center justify-center rounded-lg bg-[var(--ib-blue-500)]/10 text-[var(--ib-blue-500)] hover:bg-[var(--ib-blue-500)]/20 transition-colors flex-shrink-0"><Download className="w-3.5 h-3.5" /></a>
         )}
       </div>
       {isDocumentAttachment(file) && <DocumentQA messageId={messageId} fileName={file.name} />}
@@ -811,20 +811,20 @@ function MessageAttachment({ file, isMe, onPreview, messageId }: { file: Attachm
 
 function renderUser(u: IBUser, onClick: () => void, selected?: boolean) {
   return (
-    <button key={u.id} onClick={onClick} className={`w-full flex items-center gap-3 p-2.5 rounded-xl transition-colors text-left ${selected ? 'bg-[#568dff]/20 border border-[#568dff]/40' : 'hover:bg-[#201f1f] border border-transparent'}`}>
+    <button key={u.id} onClick={onClick} className={`w-full flex items-center gap-3 p-2.5 rounded-xl transition-colors text-left ${selected ? 'bg-[var(--ib-blue-500)]/20 border border-[var(--ib-blue-500)]/40' : 'hover:bg-[var(--ib-gray-100)] border border-transparent'}`}>
       {u.avatar ? (
         <img src={u.avatar} alt={u.displayName} className="w-9 h-9 rounded-full object-cover flex-shrink-0" />
       ) : (
-        <div className="w-9 h-9 rounded-full bg-[#568dff]/10 flex items-center justify-center flex-shrink-0">
-          <span className="text-sm font-bold text-[#b0c6ff]">{u.displayName.charAt(0).toUpperCase()}</span>
+        <div className="w-9 h-9 rounded-full bg-[var(--ib-blue-500)]/10 flex items-center justify-center flex-shrink-0">
+          <span className="text-sm font-bold text-[var(--ib-blue-500)]">{u.displayName.charAt(0).toUpperCase()}</span>
         </div>
       )}
       <div className="min-w-0 flex-1">
-        <p className="text-xs font-semibold text-[#e5e2e1] truncate">{u.displayName}</p>
-        <p className="text-[10px] text-[#8c90a1]">@{u.username}</p>
+        <p className="text-xs font-semibold text-[var(--ib-text)] truncate">{u.displayName}</p>
+        <p className="text-[10px] text-[var(--ib-text-muted)]">@{u.username}</p>
       </div>
-      <div className={`w-2 h-2 rounded-full flex-shrink-0 ${u.status === 'online' ? 'bg-[#4dffb1]' : 'bg-[#8c90a1]'}`} />
-      {selected && <Check className="w-3.5 h-3.5 text-[#568dff] flex-shrink-0" />}
+      <div className={`w-2 h-2 rounded-full flex-shrink-0 ${u.status === 'online' ? 'bg-[var(--ib-good-dot)]' : 'bg-[var(--ib-text-muted)]'}`} />
+      {selected && <Check className="w-3.5 h-3.5 text-[var(--ib-blue-500)] flex-shrink-0" />}
     </button>
   );
 }
@@ -845,28 +845,28 @@ function NewDMModal({ currentUserId, onClose, onSelect }: { currentUserId: strin
   const filtered = others.filter(u => !search || u.displayName.toLowerCase().includes(search.toLowerCase()) || u.username.toLowerCase().includes(search.toLowerCase()));
   return (
     <div className="fixed inset-0 z-[90] flex items-center justify-center bg-black/70 backdrop-blur-sm p-4" onClick={onClose}>
-      <div className="bg-[#131313] border border-[#424655] rounded-2xl shadow-2xl w-full max-w-sm overflow-hidden" onClick={e => e.stopPropagation()}>
-        <div className="flex items-center justify-between p-4 border-b border-[#424655]">
-          <span className="font-bold text-sm text-[#e5e2e1]">New Direct Message</span>
-          <button onClick={onClose}><X className="w-4 h-4 text-[#8c90a1]" /></button>
+      <div className="bg-[var(--ib-surface-raised)] border border-[var(--ib-border)] rounded-2xl shadow-2xl w-full max-w-sm overflow-hidden" onClick={e => e.stopPropagation()}>
+        <div className="flex items-center justify-between p-4 border-b border-[var(--ib-border)]">
+          <span className="font-bold text-sm text-[var(--ib-text)]">New Direct Message</span>
+          <button onClick={onClose}><X className="w-4 h-4 text-[var(--ib-text-muted)]" /></button>
         </div>
-        <div className="px-4 py-2 bg-[#0e0e0e]/60 border-b border-[#424655]/40 flex items-center justify-between">
-          <span className="text-[10px] text-[#8c90a1]">{allRaw.length === 0 ? '⚠️ No accounts in storage' : `${allRaw.length} account${allRaw.length !== 1 ? 's' : ''} registered`}</span>
-          <button onClick={refreshAll} className="text-[10px] text-[#b0c6ff] hover:text-[#568dff] font-bold cursor-pointer">↻ Refresh</button>
+        <div className="px-4 py-2 bg-[var(--ib-gray-50)]/60 border-b border-[var(--ib-border)]/40 flex items-center justify-between">
+          <span className="text-[10px] text-[var(--ib-text-muted)]">{allRaw.length === 0 ? '⚠️ No accounts in storage' : `${allRaw.length} account${allRaw.length !== 1 ? 's' : ''} registered`}</span>
+          <button onClick={refreshAll} className="text-[10px] text-[var(--ib-blue-500)] hover:text-[var(--ib-blue-500)] font-bold cursor-pointer">↻ Refresh</button>
         </div>
         <div className="p-3">
           <div className="relative mb-3">
-            <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-[#8c90a1]" />
-            <input autoFocus type="text" value={search} onChange={e => setSearch(e.target.value)} placeholder="Search by name or username…" className="w-full bg-[#0e0e0e] border border-[#424655] rounded-xl pl-9 pr-3 py-2.5 text-base md:text-xs text-[#e5e2e1] placeholder-[#8c90a1]/60 focus:border-[#568dff] outline-none touch-manipulation" />
+            <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-[var(--ib-text-muted)]" />
+            <input autoFocus type="text" value={search} onChange={e => setSearch(e.target.value)} placeholder="Search by name or username…" className="w-full bg-[var(--ib-gray-50)] border border-[var(--ib-border)] rounded-xl pl-9 pr-3 py-2.5 text-base md:text-xs text-[var(--ib-text)] placeholder-[var(--ib-text-muted)]/60 focus:border-[var(--ib-blue-500)] outline-none touch-manipulation" />
           </div>
           <div className="flex flex-col gap-1 max-h-64 overflow-y-auto">
             {others.length === 0 ? (
               <div className="py-5 text-center px-3">
-                <p className="text-xs font-semibold text-[#e5e2e1] mb-1">Only 1 account in this browser</p>
-                <p className="text-[10px] text-[#8c90a1] leading-relaxed">Another person must create their account in this app first.</p>
+                <p className="text-xs font-semibold text-[var(--ib-text)] mb-1">Only 1 account in this browser</p>
+                <p className="text-[10px] text-[var(--ib-text-muted)] leading-relaxed">Another person must create their account in this app first.</p>
               </div>
             ) : filtered.length === 0 ? (
-              <p className="text-xs text-[#8c90a1] text-center py-4">No match for "{search}"</p>
+              <p className="text-xs text-[var(--ib-text-muted)] text-center py-4">No match for "{search}"</p>
             ) : filtered.map(u => renderUser(u, () => onSelect(u.id)))}
           </div>
         </div>
@@ -890,32 +890,32 @@ function NewGroupModal({ currentUserId, onClose, onCreate }: { currentUserId: st
   const canCreate = name.trim().length > 0 && selected.length >= 1;
   return (
     <div className="fixed inset-0 z-[90] flex items-center justify-center bg-black/70 backdrop-blur-sm p-4" onClick={onClose}>
-      <div className="bg-[#131313] border border-[#424655] rounded-2xl shadow-2xl w-full max-w-sm overflow-hidden" onClick={e => e.stopPropagation()}>
-        <div className="flex items-center justify-between p-4 border-b border-[#424655]">
-          <span className="font-bold text-sm text-[#e5e2e1]">New Group Chat</span>
-          <button onClick={onClose}><X className="w-4 h-4 text-[#8c90a1]" /></button>
+      <div className="bg-[var(--ib-surface-raised)] border border-[var(--ib-border)] rounded-2xl shadow-2xl w-full max-w-sm overflow-hidden" onClick={e => e.stopPropagation()}>
+        <div className="flex items-center justify-between p-4 border-b border-[var(--ib-border)]">
+          <span className="font-bold text-sm text-[var(--ib-text)]">New Group Chat</span>
+          <button onClick={onClose}><X className="w-4 h-4 text-[var(--ib-text-muted)]" /></button>
         </div>
         <div className="p-4 flex flex-col gap-3">
           <div className="flex flex-col gap-1">
-            <label className="text-[10px] font-bold uppercase tracking-wider text-[#8c90a1]">Group Name</label>
-            <input autoFocus type="text" value={name} onChange={e => setName(e.target.value)} placeholder="e.g. Team Alpha…" className="bg-[#0e0e0e] border border-[#424655] rounded-xl px-3 py-2.5 text-base md:text-xs text-[#e5e2e1] placeholder-[#8c90a1]/60 focus:border-[#568dff] outline-none touch-manipulation" />
+            <label className="text-[10px] font-bold uppercase tracking-wider text-[var(--ib-text-muted)]">Group Name</label>
+            <input autoFocus type="text" value={name} onChange={e => setName(e.target.value)} placeholder="e.g. Team Alpha…" className="bg-[var(--ib-gray-50)] border border-[var(--ib-border)] rounded-xl px-3 py-2.5 text-base md:text-xs text-[var(--ib-text)] placeholder-[var(--ib-text-muted)]/60 focus:border-[var(--ib-blue-500)] outline-none touch-manipulation" />
           </div>
           <div className="flex flex-col gap-1">
-            <label className="text-[10px] font-bold uppercase tracking-wider text-[#8c90a1]">Add Members {selected.length > 0 && <span className="text-[#568dff]">({selected.length} selected)</span>}</label>
+            <label className="text-[10px] font-bold uppercase tracking-wider text-[var(--ib-text-muted)]">Add Members {selected.length > 0 && <span className="text-[var(--ib-blue-500)]">({selected.length} selected)</span>}</label>
             <div className="relative">
-              <Search className="w-3.5 h-3.5 absolute left-3 top-1/2 -translate-y-1/2 text-[#8c90a1]" />
-              <input type="text" value={search} onChange={e => setSearch(e.target.value)} placeholder="Search users…" className="w-full bg-[#0e0e0e] border border-[#424655] rounded-xl pl-8 pr-3 py-2 text-base md:text-xs text-[#e5e2e1] placeholder-[#8c90a1]/60 focus:border-[#568dff] outline-none touch-manipulation" />
+              <Search className="w-3.5 h-3.5 absolute left-3 top-1/2 -translate-y-1/2 text-[var(--ib-text-muted)]" />
+              <input type="text" value={search} onChange={e => setSearch(e.target.value)} placeholder="Search users…" className="w-full bg-[var(--ib-gray-50)] border border-[var(--ib-border)] rounded-xl pl-8 pr-3 py-2 text-base md:text-xs text-[var(--ib-text)] placeholder-[var(--ib-text-muted)]/60 focus:border-[var(--ib-blue-500)] outline-none touch-manipulation" />
             </div>
           </div>
           <div className="flex flex-col gap-1 max-h-48 overflow-y-auto">
-            {users.length === 0 ? <p className="text-xs text-[#8c90a1] text-center py-4">No other accounts on this device yet.</p> : filtered.map(u => renderUser(u, () => toggle(u.id), selected.includes(u.id)))}
+            {users.length === 0 ? <p className="text-xs text-[var(--ib-text-muted)] text-center py-4">No other accounts on this device yet.</p> : filtered.map(u => renderUser(u, () => toggle(u.id), selected.includes(u.id)))}
           </div>
           {selected.length > 0 && (
             <div className="flex flex-wrap gap-1.5">
-              {selected.map(id => { const u = users.find(x => x.id === id); if (!u) return null; return <span key={id} className="flex items-center gap-1 bg-[#568dff]/10 text-[#b0c6ff] border border-[#568dff]/30 rounded-full text-[10px] font-semibold px-2 py-0.5">{u.displayName}<button onClick={() => toggle(id)} className="hover:text-[#ffb4ab]"><X className="w-2.5 h-2.5" /></button></span>; })}
+              {selected.map(id => { const u = users.find(x => x.id === id); if (!u) return null; return <span key={id} className="flex items-center gap-1 bg-[var(--ib-blue-500)]/10 text-[var(--ib-blue-500)] border border-[var(--ib-blue-500)]/30 rounded-full text-[10px] font-semibold px-2 py-0.5">{u.displayName}<button onClick={() => toggle(id)} className="hover:text-[var(--ib-bad-dot)]"><X className="w-2.5 h-2.5" /></button></span>; })}
             </div>
           )}
-          <button onClick={() => canCreate && onCreate(name.trim(), selected)} disabled={!canCreate} className="w-full py-2.5 bg-[#568dff] text-[#002661] font-bold text-xs rounded-xl hover:bg-[#568dff]/90 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer transition-colors mt-1">Create Group</button>
+          <button onClick={() => canCreate && onCreate(name.trim(), selected)} disabled={!canCreate} className="w-full py-2.5 bg-[var(--ib-blue-500)] text-[#002661] font-bold text-xs rounded-xl hover:bg-[var(--ib-blue-500)]/90 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer transition-colors mt-1">Create Group</button>
         </div>
       </div>
     </div>
@@ -1061,11 +1061,11 @@ function IntelligenceSidebar({ intelligence, messages, activeThread, currentUser
   };
 
   return (
-    <aside className="hidden xl:flex w-72 flex-shrink-0 flex-col border-l border-[#424655] bg-[#131313] overflow-y-auto select-none">
-      <div className="p-4 border-b border-[#424655] sticky top-0 bg-[#131313]/95 backdrop-blur-md z-10 flex items-center gap-2">
-        <Sparkles className="w-4 h-4 text-[#c0c1ff]" />
-        <h3 className="font-bold text-sm text-[#e5e2e1] flex-1">Intelligence Agent</h3>
-        <button onClick={onClose} title="Collapse panel" className="w-6 h-6 flex items-center justify-center rounded-lg text-[#8c90a1] hover:bg-[#201f1f] hover:text-[#e5e2e1] transition-colors cursor-pointer">
+    <aside className="hidden xl:flex w-72 flex-shrink-0 flex-col border-l border-[var(--ib-border)] bg-[var(--ib-surface-raised)] overflow-y-auto select-none">
+      <div className="p-4 border-b border-[var(--ib-border)] sticky top-0 bg-[var(--ib-surface-raised)]/95 backdrop-blur-md z-10 flex items-center gap-2">
+        <Sparkles className="w-4 h-4 text-[var(--ib-violet-text)]" />
+        <h3 className="font-bold text-sm text-[var(--ib-text)] flex-1">Intelligence Agent</h3>
+        <button onClick={onClose} title="Collapse panel" className="w-6 h-6 flex items-center justify-center rounded-lg text-[var(--ib-text-muted)] hover:bg-[var(--ib-gray-100)] hover:text-[var(--ib-text)] transition-colors cursor-pointer">
           <ChevronsRight className="w-3.5 h-3.5" />
         </button>
       </div>
@@ -1073,7 +1073,7 @@ function IntelligenceSidebar({ intelligence, messages, activeThread, currentUser
         {activeThread && (
           <div>
             <div className="relative">
-              <Sparkles className="w-3.5 h-3.5 absolute left-3 top-1/2 -translate-y-1/2 text-[#c0c1ff] pointer-events-none" />
+              <Sparkles className="w-3.5 h-3.5 absolute left-3 top-1/2 -translate-y-1/2 text-[var(--ib-violet-text)] pointer-events-none" />
               <input
                 type="text"
                 value={askQuestion}
@@ -1082,37 +1082,37 @@ function IntelligenceSidebar({ intelligence, messages, activeThread, currentUser
                 placeholder="Ask AIPA…"
                 aria-label="Ask AIPA a question about this conversation"
                 disabled={isAsking}
-                className="w-full bg-[#0e0e0e] border border-[#424655] rounded-xl pl-9 pr-9 py-2.5 text-xs text-[#e5e2e1] placeholder-[#8c90a1] focus:border-[#c0c1ff]/60 outline-none disabled:opacity-60"
+                className="w-full bg-[var(--ib-gray-50)] border border-[var(--ib-border)] rounded-xl pl-9 pr-9 py-2.5 text-xs text-[var(--ib-text)] placeholder-[var(--ib-text-muted)] focus:border-[var(--ib-violet-text)]/60 outline-none disabled:opacity-60"
               />
               <button
                 onClick={handleAsk}
                 disabled={isAsking || !askQuestion.trim()}
                 title="Ask"
                 aria-label="Ask AIPA"
-                className="absolute right-1.5 top-1/2 -translate-y-1/2 w-6 h-6 flex items-center justify-center rounded-lg text-[#8c90a1] hover:text-[#c0c1ff] hover:bg-[#201f1f] disabled:opacity-30 transition-colors"
+                className="absolute right-1.5 top-1/2 -translate-y-1/2 w-6 h-6 flex items-center justify-center rounded-lg text-[var(--ib-text-muted)] hover:text-[var(--ib-violet-text)] hover:bg-[var(--ib-gray-100)] disabled:opacity-30 transition-colors"
               >
                 {isAsking ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Send className="w-3 h-3" />}
               </button>
             </div>
-            {isAsking && <p className="text-[10px] text-[#8c90a1] mt-2">AIPA is thinking… usually under a minute</p>}
-            {askError && <p className="text-[10px] text-[#ffb4ab] mt-2">{askError}</p>}
+            {isAsking && <p className="text-[10px] text-[var(--ib-text-muted)] mt-2">AIPA is thinking… usually under a minute</p>}
+            {askError && <p className="text-[10px] text-[var(--ib-bad-dot)] mt-2">{askError}</p>}
             {askAnswer && !isAsking && (
-              <div className="mt-2 bg-[#0e0e0e] border border-[#c0c1ff]/20 rounded-xl p-3 flex flex-col gap-2">
-                <p className="text-[10px] text-[#e5e2e1] leading-relaxed whitespace-pre-wrap">{askAnswer}</p>
-                <button onClick={() => { setAskAnswer(null); setAskQuestion(''); }} className="self-start text-[9px] font-bold uppercase tracking-wider text-[#8c90a1] hover:text-[#e5e2e1] transition-colors">Clear</button>
+              <div className="mt-2 bg-[var(--ib-gray-50)] border border-[var(--ib-violet-text)]/20 rounded-xl p-3 flex flex-col gap-2">
+                <p className="text-[10px] text-[var(--ib-text)] leading-relaxed whitespace-pre-wrap">{askAnswer}</p>
+                <button onClick={() => { setAskAnswer(null); setAskQuestion(''); }} className="self-start text-[9px] font-bold uppercase tracking-wider text-[var(--ib-text-muted)] hover:text-[var(--ib-text)] transition-colors">Clear</button>
               </div>
             )}
           </div>
         )}
         <div>
-          <h4 className="text-[9px] font-bold tracking-widest text-[#8c90a1] uppercase mb-3">Active Meetings</h4>
-          <div className="bg-[#568dff]/10 border border-[#b0c6ff]/20 p-3.5 rounded-xl relative overflow-hidden">
-            <div className="absolute top-0 right-0 w-20 h-20 bg-gradient-to-bl from-[#568dff]/10 to-transparent rounded-bl-full pointer-events-none" />
+          <h4 className="text-[9px] font-bold tracking-widest text-[var(--ib-text-muted)] uppercase mb-3">Active Meetings</h4>
+          <div className="bg-[var(--ib-blue-500)]/10 border border-[var(--ib-blue-500)]/20 p-3.5 rounded-xl relative overflow-hidden">
+            <div className="absolute top-0 right-0 w-20 h-20 bg-gradient-to-bl from-[var(--ib-blue-500)]/10 to-transparent rounded-bl-full pointer-events-none" />
             <div className="flex items-center justify-between mb-2">
-              <span className="font-semibold text-xs text-[#e5e2e1]">Instant Room</span>
-              <span className="bg-[#568dff]/20 text-[#b0c6ff] px-1.5 py-0.5 rounded text-[8px] uppercase font-black tracking-wider border border-[#568dff]/30">Ready</span>
+              <span className="font-semibold text-xs text-[var(--ib-text)]">Instant Room</span>
+              <span className="bg-[var(--ib-blue-500)]/20 text-[var(--ib-blue-500)] px-1.5 py-0.5 rounded text-[8px] uppercase font-black tracking-wider border border-[var(--ib-blue-500)]/30">Ready</span>
             </div>
-            <button onClick={handleQuickJoin} disabled={isJoining} className="w-full bg-[#568dff] text-[#002661] font-bold py-2 rounded-lg text-xs hover:bg-[#568dff]/90 transition-colors flex items-center justify-center gap-1.5 disabled:opacity-50">
+            <button onClick={handleQuickJoin} disabled={isJoining} className="w-full bg-[var(--ib-blue-500)] text-[#002661] font-bold py-2 rounded-lg text-xs hover:bg-[var(--ib-blue-500)]/90 transition-colors flex items-center justify-center gap-1.5 disabled:opacity-50">
               <Video className="w-3.5 h-3.5" />{isJoining ? 'Starting...' : 'Quick Join'}
             </button>
           </div>
@@ -1120,20 +1120,20 @@ function IntelligenceSidebar({ intelligence, messages, activeThread, currentUser
         {(tasks && (tasks.owedByMe.length > 0 || tasks.owedToMe.length > 0)) && (
           <div>
             <div className="flex items-center gap-1.5 mb-3">
-              <ListChecks className="w-3.5 h-3.5 text-[#c0c1ff]" />
-              <h4 className="text-[9px] font-bold tracking-widest text-[#8c90a1] uppercase">My Tasks</h4>
+              <ListChecks className="w-3.5 h-3.5 text-[var(--ib-violet-text)]" />
+              <h4 className="text-[9px] font-bold tracking-widest text-[var(--ib-text-muted)] uppercase">My Tasks</h4>
             </div>
             <div className="flex flex-col gap-2">
               {tasks.owedByMe.map((t) => (
-                <div key={t.id} className="flex items-start gap-2 bg-[#0e0e0e] border border-[#424655]/40 rounded-xl p-2.5 text-[10px] leading-relaxed">
-                  <button onClick={() => handleCompleteTask(t.id)} title="Mark done" className="mt-0.5 w-4 h-4 rounded border border-[#424655] hover:border-[#4dffb1] hover:bg-[#4dffb1]/10 flex-shrink-0 transition-colors" />
-                  <div className="flex-1 min-w-0"><span className="text-[8px] font-bold uppercase tracking-wider text-[#8c90a1] block mb-0.5">You owe</span><span className="text-[#e5e2e1]">{t.description}</span></div>
+                <div key={t.id} className="flex items-start gap-2 bg-[var(--ib-gray-50)] border border-[var(--ib-border)]/40 rounded-xl p-2.5 text-[10px] leading-relaxed">
+                  <button onClick={() => handleCompleteTask(t.id)} title="Mark done" className="mt-0.5 w-4 h-4 rounded border border-[var(--ib-border)] hover:border-[var(--ib-good-dot)] hover:bg-[var(--ib-good-dot)]/10 flex-shrink-0 transition-colors" />
+                  <div className="flex-1 min-w-0"><span className="text-[8px] font-bold uppercase tracking-wider text-[var(--ib-text-muted)] block mb-0.5">You owe</span><span className="text-[var(--ib-text)]">{t.description}</span></div>
                 </div>
               ))}
               {tasks.owedToMe.map((t) => (
-                <div key={t.id} className="flex items-start gap-2 bg-[#0e0e0e] border border-[#424655]/40 rounded-xl p-2.5 text-[10px] leading-relaxed">
-                  <button onClick={() => handleCompleteTask(t.id)} title="Mark done" className="mt-0.5 w-4 h-4 rounded border border-[#424655] hover:border-[#4dffb1] hover:bg-[#4dffb1]/10 flex-shrink-0 transition-colors" />
-                  <div className="flex-1 min-w-0"><span className="text-[8px] font-bold uppercase tracking-wider text-[#8c90a1] block mb-0.5">Owed to you</span><span className="text-[#e5e2e1]">{t.description}</span></div>
+                <div key={t.id} className="flex items-start gap-2 bg-[var(--ib-gray-50)] border border-[var(--ib-border)]/40 rounded-xl p-2.5 text-[10px] leading-relaxed">
+                  <button onClick={() => handleCompleteTask(t.id)} title="Mark done" className="mt-0.5 w-4 h-4 rounded border border-[var(--ib-border)] hover:border-[var(--ib-good-dot)] hover:bg-[var(--ib-good-dot)]/10 flex-shrink-0 transition-colors" />
+                  <div className="flex-1 min-w-0"><span className="text-[8px] font-bold uppercase tracking-wider text-[var(--ib-text-muted)] block mb-0.5">Owed to you</span><span className="text-[var(--ib-text)]">{t.description}</span></div>
                 </div>
               ))}
             </div>
@@ -1141,12 +1141,12 @@ function IntelligenceSidebar({ intelligence, messages, activeThread, currentUser
         )}
         {reminders && reminders.length > 0 && (
           <div>
-            <h4 className="text-[9px] font-bold tracking-widest text-[#8c90a1] uppercase mb-3">Reminders</h4>
+            <h4 className="text-[9px] font-bold tracking-widest text-[var(--ib-text-muted)] uppercase mb-3">Reminders</h4>
             <div className="flex flex-col gap-2">
               {reminders.map((r) => (
-                <div key={r.id} className="flex items-start gap-2 bg-[#0e0e0e] border border-[#424655]/40 rounded-xl p-2.5 text-[10px] leading-relaxed">
-                  <button onClick={() => handleCompleteReminder(r.id)} title="Mark done" className="mt-0.5 w-4 h-4 rounded border border-[#424655] hover:border-[#4dffb1] hover:bg-[#4dffb1]/10 flex-shrink-0 transition-colors" />
-                  <span className="flex-1 text-[#e5e2e1]">{r.text}</span>
+                <div key={r.id} className="flex items-start gap-2 bg-[var(--ib-gray-50)] border border-[var(--ib-border)]/40 rounded-xl p-2.5 text-[10px] leading-relaxed">
+                  <button onClick={() => handleCompleteReminder(r.id)} title="Mark done" className="mt-0.5 w-4 h-4 rounded border border-[var(--ib-border)] hover:border-[var(--ib-good-dot)] hover:bg-[var(--ib-good-dot)]/10 flex-shrink-0 transition-colors" />
+                  <span className="flex-1 text-[var(--ib-text)]">{r.text}</span>
                 </div>
               ))}
             </div>
@@ -1154,13 +1154,13 @@ function IntelligenceSidebar({ intelligence, messages, activeThread, currentUser
         )}
         <div>
           <div className="flex items-center gap-2 mb-3">
-            <h4 className="text-[9px] font-bold tracking-widest text-[#8c90a1] uppercase">AI Extracted Items</h4>
-            <span className="text-[8px] bg-[#c0c1ff]/10 text-[#c0c1ff] px-1.5 py-0.5 rounded font-bold border border-[#c0c1ff]/20">LIVE</span>
+            <h4 className="text-[9px] font-bold tracking-widest text-[var(--ib-text-muted)] uppercase">AI Extracted Items</h4>
+            <span className="text-[8px] bg-[var(--ib-violet-text)]/10 text-[var(--ib-violet-text)] px-1.5 py-0.5 rounded font-bold border border-[var(--ib-violet-text)]/20">LIVE</span>
           </div>
           {intelligence.length === 0 ? (
-            <div className="bg-[#0e0e0e] border border-[#424655]/40 rounded-xl p-4 text-center">
-              <Sparkles className="w-5 h-5 text-[#424655] mx-auto mb-2" />
-              <p className="text-[10px] text-[#8c90a1]">{messages.length === 0 ? 'Start chatting — the AI will extract meetings, deadlines & action items here.' : 'No key items detected yet. Mention times, deadlines, or action items.'}</p>
+            <div className="bg-[var(--ib-gray-50)] border border-[var(--ib-border)]/40 rounded-xl p-4 text-center">
+              <Sparkles className="w-5 h-5 text-[var(--ib-border)] mx-auto mb-2" />
+              <p className="text-[10px] text-[var(--ib-text-muted)]">{messages.length === 0 ? 'Start chatting — the AI will extract meetings, deadlines & action items here.' : 'No key items detected yet. Mention times, deadlines, or action items.'}</p>
             </div>
           ) : (
             <div className="flex flex-col gap-2">
@@ -1178,60 +1178,60 @@ function IntelligenceSidebar({ intelligence, messages, activeThread, currentUser
         {activeThread && (
           <div>
             <div className="flex items-center gap-1.5 mb-3">
-              <Brain className="w-3.5 h-3.5 text-[#c0c1ff]" />
-              <h4 className="text-[9px] font-bold tracking-widest text-[#8c90a1] uppercase">Conversation Summary</h4>
+              <Brain className="w-3.5 h-3.5 text-[var(--ib-violet-text)]" />
+              <h4 className="text-[9px] font-bold tracking-widest text-[var(--ib-text-muted)] uppercase">Conversation Summary</h4>
             </div>
             {analysis ? (
               <div className="flex flex-col gap-3">
-                <p className="text-[10px] text-[#e5e2e1] leading-relaxed bg-[#0e0e0e] border border-[#424655]/40 rounded-xl p-3">{analysis.summary}</p>
+                <p className="text-[10px] text-[var(--ib-text)] leading-relaxed bg-[var(--ib-gray-50)] border border-[var(--ib-border)]/40 rounded-xl p-3">{analysis.summary}</p>
                 {analysis.keyPoints.length > 0 && (
                   <div>
-                    <span className="text-[8px] font-bold uppercase tracking-wider text-[#8c90a1] block mb-1.5">Key points</span>
-                    <ul className="flex flex-col gap-1">{analysis.keyPoints.map((p, i) => <li key={i} className="text-[10px] text-[#e5e2e1] leading-relaxed pl-3 relative before:content-['•'] before:absolute before:left-0 before:text-[#8c90a1]">{p}</li>)}</ul>
+                    <span className="text-[8px] font-bold uppercase tracking-wider text-[var(--ib-text-muted)] block mb-1.5">Key points</span>
+                    <ul className="flex flex-col gap-1">{analysis.keyPoints.map((p, i) => <li key={i} className="text-[10px] text-[var(--ib-text)] leading-relaxed pl-3 relative before:content-['•'] before:absolute before:left-0 before:text-[var(--ib-text-muted)]">{p}</li>)}</ul>
                   </div>
                 )}
                 {analysis.decisions.length > 0 && (
                   <div>
-                    <span className="text-[8px] font-bold uppercase tracking-wider text-[#8c90a1] block mb-1.5">Decisions</span>
-                    <ul className="flex flex-col gap-1">{analysis.decisions.map((d, i) => <li key={i} className="text-[10px] text-[#4dffb1] leading-relaxed pl-3 relative before:content-['✓'] before:absolute before:left-0">{d}</li>)}</ul>
+                    <span className="text-[8px] font-bold uppercase tracking-wider text-[var(--ib-text-muted)] block mb-1.5">Decisions</span>
+                    <ul className="flex flex-col gap-1">{analysis.decisions.map((d, i) => <li key={i} className="text-[10px] text-[var(--ib-good-dot)] leading-relaxed pl-3 relative before:content-['✓'] before:absolute before:left-0">{d}</li>)}</ul>
                   </div>
                 )}
                 {analysis.questions.length > 0 && (
                   <div>
-                    <span className="text-[8px] font-bold uppercase tracking-wider text-[#8c90a1] block mb-1.5">Open questions</span>
-                    <ul className="flex flex-col gap-1">{analysis.questions.map((q, i) => <li key={i} className="text-[10px] text-[#fdd663] leading-relaxed pl-3 relative before:content-['?'] before:absolute before:left-0">{q}</li>)}</ul>
+                    <span className="text-[8px] font-bold uppercase tracking-wider text-[var(--ib-text-muted)] block mb-1.5">Open questions</span>
+                    <ul className="flex flex-col gap-1">{analysis.questions.map((q, i) => <li key={i} className="text-[10px] text-[var(--ib-warn-text)] leading-relaxed pl-3 relative before:content-['?'] before:absolute before:left-0">{q}</li>)}</ul>
                   </div>
                 )}
                 {analysis.actionItems.length > 0 && (
                   <div>
-                    <span className="text-[8px] font-bold uppercase tracking-wider text-[#8c90a1] block mb-1.5">Action items</span>
+                    <span className="text-[8px] font-bold uppercase tracking-wider text-[var(--ib-text-muted)] block mb-1.5">Action items</span>
                     <ul className="flex flex-col gap-1">{analysis.actionItems.map((a, i) => (
-                      <li key={i} className="text-[10px] text-[#e5e2e1] leading-relaxed pl-3 relative before:content-['→'] before:absolute before:left-0">
-                        {a.description}{a.assignee && a.assignee.toLowerCase() !== 'unclear' && <span className="text-[#8c90a1]"> — {a.assignee}</span>}{a.due && <span className="text-[#8c90a1]"> ({a.due})</span>}
+                      <li key={i} className="text-[10px] text-[var(--ib-text)] leading-relaxed pl-3 relative before:content-['→'] before:absolute before:left-0">
+                        {a.description}{a.assignee && a.assignee.toLowerCase() !== 'unclear' && <span className="text-[var(--ib-text-muted)]"> — {a.assignee}</span>}{a.due && <span className="text-[var(--ib-text-muted)]"> ({a.due})</span>}
                       </li>
                     ))}</ul>
                   </div>
                 )}
                 {analysis.reminders.length > 0 && (
                   <div>
-                    <span className="text-[8px] font-bold uppercase tracking-wider text-[#8c90a1] block mb-1.5">Reminders for you</span>
+                    <span className="text-[8px] font-bold uppercase tracking-wider text-[var(--ib-text-muted)] block mb-1.5">Reminders for you</span>
                     <ul className="flex flex-col gap-1">{analysis.reminders.map((rm, i) => (
-                      <li key={i} className="text-[10px] text-[#e5e2e1] leading-relaxed pl-3 relative before:content-['⏰'] before:absolute before:left-[-2px]">
-                        {rm.text}{rm.when && <span className="text-[#8c90a1]"> ({rm.when})</span>}
+                      <li key={i} className="text-[10px] text-[var(--ib-text)] leading-relaxed pl-3 relative before:content-['⏰'] before:absolute before:left-[-2px]">
+                        {rm.text}{rm.when && <span className="text-[var(--ib-text-muted)]"> ({rm.when})</span>}
                       </li>
                     ))}</ul>
                   </div>
                 )}
                 {analysis.meetingSuggestions.length > 0 && (
                   <div>
-                    <span className="text-[8px] font-bold uppercase tracking-wider text-[#8c90a1] block mb-1.5">Meeting suggestions</span>
+                    <span className="text-[8px] font-bold uppercase tracking-wider text-[var(--ib-text-muted)] block mb-1.5">Meeting suggestions</span>
                     <div className="flex flex-col gap-1.5">{analysis.meetingSuggestions.map((m, i) => (
-                      <div key={i} className="flex items-center justify-between gap-2 bg-[#0e0e0e] border border-[#424655]/40 rounded-lg p-2">
-                        <span className="text-[10px] text-[#e5e2e1] flex-1 min-w-0 truncate">{m.title}{m.when && <span className="text-[#8c90a1]"> — {m.when}</span>}</span>
+                      <div key={i} className="flex items-center justify-between gap-2 bg-[var(--ib-gray-50)] border border-[var(--ib-border)]/40 rounded-lg p-2">
+                        <span className="text-[10px] text-[var(--ib-text)] flex-1 min-w-0 truncate">{m.title}{m.when && <span className="text-[var(--ib-text-muted)]"> — {m.when}</span>}</span>
                         <button
                           onClick={() => handleAddToCalendar(m, i)}
                           disabled={addedToCalendar.has(i)}
-                          className="text-[9px] font-bold text-[#c0c1ff] hover:text-[#e5e2e1] disabled:text-[#4dffb1] disabled:cursor-default whitespace-nowrap flex-shrink-0"
+                          className="text-[9px] font-bold text-[var(--ib-violet-text)] hover:text-[var(--ib-text)] disabled:text-[var(--ib-good-dot)] disabled:cursor-default whitespace-nowrap flex-shrink-0"
                         >
                           {addedToCalendar.has(i) ? 'Added ✓' : 'Add to calendar'}
                         </button>
@@ -1239,7 +1239,7 @@ function IntelligenceSidebar({ intelligence, messages, activeThread, currentUser
                     ))}</div>
                   </div>
                 )}
-                <button onClick={handleAnalyze} disabled={isAnalyzing} className="text-[10px] text-[#8c90a1] hover:text-[#c0c1ff] transition-colors disabled:opacity-50 self-start flex items-center gap-1">
+                <button onClick={handleAnalyze} disabled={isAnalyzing} className="text-[10px] text-[var(--ib-text-muted)] hover:text-[var(--ib-violet-text)] transition-colors disabled:opacity-50 self-start flex items-center gap-1">
                   {isAnalyzing ? <Loader2 className="w-3 h-3 animate-spin" /> : <Sparkles className="w-3 h-3" />}
                   {isAnalyzing ? 'Re-analyzing…' : 'Re-analyze'}
                 </button>
@@ -1248,23 +1248,23 @@ function IntelligenceSidebar({ intelligence, messages, activeThread, currentUser
               <button
                 onClick={handleAnalyze}
                 disabled={isAnalyzing || messages.length === 0}
-                className="w-full flex items-center justify-center gap-1.5 bg-[#0e0e0e] border border-[#424655]/40 hover:border-[#c0c1ff]/40 rounded-xl p-3 text-[10px] text-[#c0c1ff] transition-colors disabled:opacity-40"
+                className="w-full flex items-center justify-center gap-1.5 bg-[var(--ib-gray-50)] border border-[var(--ib-border)]/40 hover:border-[var(--ib-violet-text)]/40 rounded-xl p-3 text-[10px] text-[var(--ib-violet-text)] transition-colors disabled:opacity-40"
               >
                 {isAnalyzing ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Sparkles className="w-3.5 h-3.5" />}
                 {isAnalyzing ? 'Analyzing… this can take a couple of minutes' : 'Summarize this conversation'}
               </button>
             )}
-            {analyzeError && <p className="text-[10px] text-[#ffb4ab] mt-2">{analyzeError}</p>}
+            {analyzeError && <p className="text-[10px] text-[var(--ib-bad-dot)] mt-2">{analyzeError}</p>}
           </div>
         )}
         {activeThread && threadMemory && threadMemory.length > 0 && (
           <div>
-            <h4 className="text-[9px] font-bold tracking-widest text-[#8c90a1] uppercase mb-3">Remembered about this chat</h4>
+            <h4 className="text-[9px] font-bold tracking-widest text-[var(--ib-text-muted)] uppercase mb-3">Remembered about this chat</h4>
             <div className="flex flex-col gap-1.5">
               {threadMemory.map((m) => (
-                <div key={m.id} className="flex items-start gap-2 bg-[#0e0e0e] border border-[#424655]/40 rounded-lg p-2 text-[10px] leading-relaxed group">
-                  <span className="flex-1 text-[#e5e2e1]">{m.fact}</span>
-                  <button onClick={() => handleDeleteMemory(m.id)} title="Forget this" className="text-[#8c90a1] hover:text-[#ffb4ab] transition-colors opacity-0 group-hover:opacity-100 flex-shrink-0">
+                <div key={m.id} className="flex items-start gap-2 bg-[var(--ib-gray-50)] border border-[var(--ib-border)]/40 rounded-lg p-2 text-[10px] leading-relaxed group">
+                  <span className="flex-1 text-[var(--ib-text)]">{m.fact}</span>
+                  <button onClick={() => handleDeleteMemory(m.id)} title="Forget this" className="text-[var(--ib-text-muted)] hover:text-[var(--ib-bad-dot)] transition-colors opacity-0 group-hover:opacity-100 flex-shrink-0">
                     <Trash2 className="w-3 h-3" />
                   </button>
                 </div>
@@ -1274,15 +1274,15 @@ function IntelligenceSidebar({ intelligence, messages, activeThread, currentUser
         )}
         {activeThread && (
           <div>
-            <h4 className="text-[9px] font-bold tracking-widest text-[#8c90a1] uppercase mb-3">Participants</h4>
+            <h4 className="text-[9px] font-bold tracking-widest text-[var(--ib-text-muted)] uppercase mb-3">Participants</h4>
             <div className="flex flex-col gap-2">
               {activeThread.participants.map(pid => {
                 const u = getUserById(pid); if (!u) return null;
                 return (
-                  <div key={pid} onClick={() => setViewingUser(u)} className="flex items-center gap-2.5 cursor-pointer p-2 rounded-lg hover:bg-[#201f1f] transition-colors">
-                    {u.avatar ? <img src={u.avatar} alt={u.displayName} className="w-7 h-7 rounded-full object-cover flex-shrink-0" /> : <div className="w-7 h-7 rounded-full bg-[#568dff]/10 flex items-center justify-center flex-shrink-0"><span className="text-[10px] font-bold text-[#b0c6ff]">{u.displayName.charAt(0).toUpperCase()}</span></div>}
-                    <div className="flex-1 min-w-0"><p className="text-xs font-semibold text-[#e5e2e1] truncate">{u.id === currentUser?.id ? `${u.displayName} (you)` : u.displayName}</p></div>
-                    <div className={`w-2 h-2 rounded-full flex-shrink-0 ${u.status === 'online' ? 'bg-[#4dffb1]' : 'bg-[#8c90a1]'}`} />
+                  <div key={pid} onClick={() => setViewingUser(u)} className="flex items-center gap-2.5 cursor-pointer p-2 rounded-lg hover:bg-[var(--ib-gray-100)] transition-colors">
+                    {u.avatar ? <img src={u.avatar} alt={u.displayName} className="w-7 h-7 rounded-full object-cover flex-shrink-0" /> : <div className="w-7 h-7 rounded-full bg-[var(--ib-blue-500)]/10 flex items-center justify-center flex-shrink-0"><span className="text-[10px] font-bold text-[var(--ib-blue-500)]">{u.displayName.charAt(0).toUpperCase()}</span></div>}
+                    <div className="flex-1 min-w-0"><p className="text-xs font-semibold text-[var(--ib-text)] truncate">{u.id === currentUser?.id ? `${u.displayName} (you)` : u.displayName}</p></div>
+                    <div className={`w-2 h-2 rounded-full flex-shrink-0 ${u.status === 'online' ? 'bg-[var(--ib-good-dot)]' : 'bg-[var(--ib-text-muted)]'}`} />
                   </div>
                 );
               })}
@@ -1324,7 +1324,7 @@ export default function ChatsView({ onJoinMeeting, searchFilter }: ChatsViewProp
   // ── Per-chat personalization (theme accent, wallpaper, font) ─────────────
   const [personalization, setPersonalization] = useState<ChatPersonalization>(DEFAULT_PERSONALIZATION);
   const [showPersonalize, setShowPersonalize] = useState(false);
-  const accentHex = ACCENTS.find((a) => a.key === personalization.accent)?.hex || '#568dff';
+  const accentHex = ACCENTS.find((a) => a.key === personalization.accent)?.hex || 'var(--ib-blue-500)';
 
   // ── Voice messages ────────────────────────────────────────────────────────
   // Just another file attachment underneath (see isAudioAttachment/
@@ -1989,7 +1989,10 @@ export default function ChatsView({ onJoinMeeting, searchFilter }: ChatsViewProp
                       ) : (
                         <>
                           <div
-                            className={`px-3 py-2.5 rounded-2xl text-base sm:text-xs border leading-relaxed ${isMe ? 'text-white rounded-tr-sm' : 'bg-[var(--ib-surface-raised)] text-[var(--ib-text)] border-[var(--ib-border)] rounded-tl-sm'}`}
+                            // accentHex is a user-picked personalization color (can be a pale
+                            // pastel), independent of light/dark theme -- dark text is the only
+                            // choice that stays >=4.5:1 against every option in ACCENTS.
+                            className={`px-3 py-2.5 rounded-2xl text-base sm:text-xs border leading-relaxed ${isMe ? 'text-[#12161D] rounded-tr-sm' : 'bg-[var(--ib-surface-raised)] text-[var(--ib-text)] border-[var(--ib-border)] rounded-tl-sm'}`}
                             style={{
                               wordBreak: 'break-word', overflowWrap: 'anywhere', whiteSpace: 'pre-wrap',
                               ...(isMe ? { background: accentHex, borderColor: accentHex } : {}),
@@ -2100,15 +2103,17 @@ export default function ChatsView({ onJoinMeeting, searchFilter }: ChatsViewProp
                       {showEmoji && <EmojiPicker onSelect={handleEmojiSelect} onClose={() => setShowEmoji(false)} />}
                       {/* AI Writing: rewrite/tone tools, disabled on an empty draft since there's
                           nothing to rewrite. */}
-                      <button
-                        onClick={() => setShowRewriteMenu(v => !v)}
-                        disabled={!inputText.trim() || isRewriting}
-                        title="Rewrite with AI"
-                        className={`w-11 h-11 sm:w-7 sm:h-7 flex items-center justify-center rounded-lg transition-colors disabled:opacity-30 cursor-pointer ${showRewriteMenu ? 'bg-[var(--ib-blue-50)] text-[var(--ib-blue-500)]' : 'text-[var(--ib-text-muted)] hover:bg-[var(--ib-gray-100)] hover:text-[var(--ib-blue-500)]'}`}
-                      >
-                        {isRewriting ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Wand2 className="w-3.5 h-3.5" />}
-                      </button>
-                      {showRewriteMenu && <RewriteMenu onPick={handleRewrite} onClose={() => setShowRewriteMenu(false)} busy={isRewriting} />}
+                      <div className="relative">
+                        <button
+                          onClick={() => setShowRewriteMenu(v => !v)}
+                          disabled={!inputText.trim() || isRewriting}
+                          title="Rewrite with AI"
+                          className={`w-11 h-11 sm:w-7 sm:h-7 flex items-center justify-center rounded-lg transition-colors disabled:opacity-30 cursor-pointer ${showRewriteMenu ? 'bg-[var(--ib-blue-50)] text-[var(--ib-blue-500)]' : 'text-[var(--ib-text-muted)] hover:bg-[var(--ib-gray-100)] hover:text-[var(--ib-blue-500)]'}`}
+                        >
+                          {isRewriting ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Wand2 className="w-3.5 h-3.5" />}
+                        </button>
+                        {showRewriteMenu && <RewriteMenu onPick={handleRewrite} onClose={() => setShowRewriteMenu(false)} busy={isRewriting} />}
+                      </div>
                       {rewriteUndo !== null && (
                         <button onClick={handleUndoRewrite} title="Undo rewrite" className="flex items-center gap-1 text-[10px] text-[var(--ib-text-muted)] hover:text-[var(--ib-text)] px-1.5 cursor-pointer">
                           <RotateCcw className="w-3 h-3" />Undo
@@ -2175,14 +2180,14 @@ export default function ChatsView({ onJoinMeeting, searchFilter }: ChatsViewProp
       </div>
 
       <div className="hidden lg:flex flex-1 overflow-hidden">
-        <aside className="w-72 flex-shrink-0 border-r border-[#424655] overflow-hidden flex flex-col">{renderThreadList()}</aside>
+        <aside className="w-72 flex-shrink-0 border-r border-[var(--ib-border)] overflow-hidden flex flex-col">{renderThreadList()}</aside>
         <main className="flex-1 overflow-hidden flex flex-col relative">
           {renderChat()}
           {!showIntel && (
             <button
               onClick={() => toggleIntel(true)}
               title="Open Intelligence Agent"
-              className="hidden xl:flex absolute top-3 right-3 items-center gap-1.5 bg-[#1c1b1b]/95 backdrop-blur-md border border-[#424655] hover:border-[#c0c1ff]/50 text-[#c0c1ff] rounded-full pl-2.5 pr-3 py-1.5 text-[10px] font-bold shadow-lg cursor-pointer transition-all z-20"
+              className="hidden xl:flex absolute top-3 right-3 items-center gap-1.5 bg-[var(--ib-surface-raised)]/95 backdrop-blur-md border border-[var(--ib-border)] hover:border-[var(--ib-violet-text)]/50 text-[var(--ib-violet-text)] rounded-full pl-2.5 pr-3 py-1.5 text-[10px] font-bold shadow-lg cursor-pointer transition-all z-20"
             >
               <Sparkles className="w-3.5 h-3.5" />
               <ChevronsLeft className="w-3 h-3" />
