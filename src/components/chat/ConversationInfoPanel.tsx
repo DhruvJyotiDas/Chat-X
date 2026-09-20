@@ -9,6 +9,7 @@ import {
   loadChatInfoPreferences, saveChatInfoPreferences, type ChatInfoPreferences,
 } from '../../lib/chatInfoPreferences';
 import type { IBUser, RealChatMessage, RealChatThread } from '../../types';
+import { useSuppressAipaLauncher } from '../../hooks/useSuppressAipaLauncher';
 
 interface Props {
   thread: RealChatThread;
@@ -76,6 +77,7 @@ function Toggle({ checked, disabled, label, onChange, light = false }: { checked
 export default function ConversationInfoPanel({
   thread, currentUser, contact, messages, getUserById, onClose, onGroupUpdated,
 }: Props) {
+  useSuppressAipaLauncher(true);
   const isGroup = thread.type === 'group';
   const isAdmin = isGroup && thread.createdBy === currentUser.id;
   const canEditGroupInfo = isGroup && (isAdmin || !(thread.adminsEditInfo ?? true));

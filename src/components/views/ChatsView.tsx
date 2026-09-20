@@ -17,6 +17,7 @@ import { loadChatPersonalization, saveChatPersonalization, WALLPAPERS, ACCENTS, 
 import { extractIntelligence, ITEM_ICONS, ITEM_COLORS } from '../../lib/intelligence';
 import { REWRITE_MODES } from '../../lib/aiWriting';
 import { CAPTION_LANGUAGES } from '../../lib/captions';
+import { useSuppressAipaLauncher } from '../../hooks/useSuppressAipaLauncher';
 import UserProfileModal from '../chat/UserProfileModal';
 import ConversationInfoPanel from '../chat/ConversationInfoPanel';
 import GuestNameModal from '../meeting/GuestNameModal';
@@ -1305,6 +1306,7 @@ export default function ChatsView({ onJoinMeeting, searchFilter }: ChatsViewProp
   const { createMeeting, meetingError, clearMeetingError } = useMeeting();
 
   const [mobilePanel, setMobilePanel] = useState<MobilePanel>('list');
+  useSuppressAipaLauncher(mobilePanel === 'chat');
   const [selectedThreadId, setSelectedThreadIdLocal] = useState<string | null>(null);
   const [inputText, setInputText] = useState('');
   const [showNewThread, setShowNewThread] = useState(false);

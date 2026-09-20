@@ -15,6 +15,7 @@ import ConnectionTestPanel from '../meeting/ConnectionTestPanel';
 import { config } from '../../config';
 import Badge from '../ui/Badge';
 import Switch from '../ui/Switch';
+import { useSuppressAipaLauncher } from '../../hooks/useSuppressAipaLauncher';
 
 type Tab = 'profile' | 'preferences' | 'devices' | 'security' | 'account';
 
@@ -585,6 +586,7 @@ const TABS: { id: Tab; label: string; Icon: React.FC<{ className?: string }> }[]
 
 export default function SettingsModal({ onClose }: Props) {
   const [tab, setTab] = useState<Tab>('profile');
+  useSuppressAipaLauncher(true);
 
   useEffect(() => {
     const h = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };

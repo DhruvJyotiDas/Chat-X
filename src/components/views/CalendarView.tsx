@@ -11,6 +11,7 @@ import { loadCalendarEvents } from '../../lib/calendarLocal';
 import { api, type ApiCalendar, type ApiCalendarEventInput, type ApiWorkingHours, type CalendarResponse } from '../../lib/api';
 import Input from '../ui/Input';
 import Switch from '../ui/Switch';
+import { useSuppressAipaLauncher } from '../../hooks/useSuppressAipaLauncher';
 
 const EVENT_TYPES = [
   { name: 'Personal', value: '#6ea8ff' },
@@ -107,6 +108,7 @@ function EventModal({ initialDate, initialTime, event, readOnly, calendars, user
   onDelete?: (id: string) => Promise<void>;
   onRespond?: (response: CalendarResponse) => Promise<void>;
 }) {
+  useSuppressAipaLauncher(true);
   const defaultStart = initialTime ?? '09:00';
   const [title, setTitle] = useState(event?.title ?? '');
   const [date, setDate] = useState(event?.date ?? initialDate);

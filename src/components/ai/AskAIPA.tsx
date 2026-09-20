@@ -19,6 +19,8 @@ import Modal from '../ui/Modal';
 import BrandDots from '../BrandDots';
 import { useAnyOverlayOpen } from '../../lib/overlayStack';
 import { useKeyboardOpen } from '../../hooks/useKeyboardOpen';
+import { useLauncherSuppressed } from '../../lib/launcherSuppress';
+import { useReducedMotion } from '../../hooks/useReducedMotion';
 
 /**
  * Phase 3, sub-unit 2 — replaces AIAssistantPanel.tsx (deleted, sole
@@ -508,16 +510,20 @@ function Header({ conv, onClose }: { conv: Conversation; onClose: () => void }) 
 // becomes a 56px circular close button on desktop (md+) -- unchanged on
 // mobile, where the popup is a full sheet and there's nothing for a floating
 // FAB to do underneath it, so it still hides while that sheet is open.
-function Launcher({ open, onClick }: { open: boolean; onClick: () => void }) {
+function Launcher({ open, onClick, suppressed, reduceMotion }: { open: boolean; onClick: () => void; suppressed: boolean; reduceMotion: boolean }) {
   return (
     <button
       onClick={onClick}
+      aria-hidden={suppressed}
+      tabIndex={suppressed ? -1 : 0}
       aria-label={open ? 'Close AIPA' : 'Ask AIPA'}
       aria-expanded={open}
       className={`fixed z-[110] flex items-center justify-center gap-2 rounded-full bg-[var(--ib-blue-500)] text-white
-        shadow-[var(--ib-shadow-lg)] transition-all hover:-translate-y-0.5 hover:shadow-[0_16px_40px_rgba(0,102,255,0.35)]
+        shadow-[var(--ib-shadow-lg)] hover:-translate-y-0.5 hover:shadow-[0_16px_40px_rgba(0,102,255,0.35)]
         active:scale-95 cursor-pointer w-14 h-14
         focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--ib-focus)]
+        ${reduceMotion ? '' : 'transition-all duration-150'}
+        ${suppressed ? 'opacity-0 scale-90 pointer-events-none' : 'opacity-100 scale-100'}
         ${open ? 'hidden md:flex' : 'flex md:w-auto md:h-auto md:px-5 md:py-3.5'}`}
       style={{
         right: 'calc(20px + env(safe-area-inset-right))',
@@ -559,6 +565,8 @@ export default function AskAIPA({ hidden }: AskAIPAProps) {
   const overlayOpen = useAnyOverlayOpen();
   const keyboardOpen = useKeyboardOpen();
   const compact = useCompactAIPA();
+  const launcherSuppressed = useLauncherSuppressed();
+  const reduceMotion = useReducedMotion();
 
   // Esc closes the desktop popup too (Modal already handles this for the
   // mobile sheet on its own).
@@ -573,7 +581,7 @@ export default function AskAIPA({ hidden }: AskAIPAProps) {
 
   // Launcher-only visibility gates (see the module doc comment for why
   // these don't also apply to an already-open popup).
-  const launcherHidden = overlayOpen || keyboardOpen;
+  const launcherHidden = overlayOpen || keyboardOpen || launcherSuppressed;
 
   return (
     <>
@@ -639,7 +647,7 @@ export default function AskAIPA({ hidden }: AskAIPAProps) {
         </AnimatePresence>
       </div>
 
-      {(open || !launcherHidden) && <Launcher open={open} onClick={() => setOpen(v => !v)} />}
+      <Launcher open={open} onClick={() => setOpen(v => !v)} suppressed={!open && launcherHidden} reduceMotion={reduceMotion} />
     </>
   );
 }
