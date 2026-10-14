@@ -1,4 +1,4 @@
-# IB Connect
+# Chat - X
 
 IB Connect is a production communication and AI productivity application. It combines direct and group messaging, LiveKit audio/video meetings, live captions, meeting intelligence, scheduling, AI writing tools, personal AI memory/tasks/reminders, document Q&A, and AI-assisted virtual interviews behind one IB Account identity.
 
